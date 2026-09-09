@@ -1,0 +1,30 @@
+{
+  "name": "@invoiceops/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run generate && tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "generate": "prisma generate",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "pnpm run generate && tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "express": "5.2.1",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "@types/supertest": "^6.0.3",
+    "prisma": "7.10.0",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "5.0.0"
+  }
+}
