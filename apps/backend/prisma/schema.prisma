@@ -6,3 +6,39 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum OrganizationRole {
+  ADMIN
+  STUDENT
+}
+
+model User {
+  id          String                   @id @default(uuid())
+  name        String
+  rut         String                   @unique
+  email       String?
+  username    String?
+  memberships OrganizationMembership[]
+}
+
+model Organization {
+  id          String                   @id @default(uuid())
+  name        String
+  slug        String                   @unique
+  description String?
+  enabled     Boolean                  @default(true)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  memberships OrganizationMembership[]
+}
+
+model OrganizationMembership {
+  id             String           @id @default(uuid())
+  userId         String
+  organizationId String
+  role           OrganizationRole
+  user           User             @relation(fields: [userId], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+}

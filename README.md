@@ -44,7 +44,16 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
    docker compose up -d db
    ```
 
-5. En terminales separadas, inicia backend y frontend:
+5. Aplica las migraciones locales de PostgreSQL con `DATABASE_URL` configurada:
+
+   ```bash
+   pnpm --filter @invoiceops/backend exec prisma migrate dev
+   ```
+
+   Las migraciones son explícitas: el backend, Docker Compose y el arranque no
+   ejecutan cambios de esquema automáticamente.
+
+6. En terminales separadas, inicia backend y frontend:
 
    ```bash
    DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d '=' -f2-)" pnpm --filter @invoiceops/backend dev
@@ -77,6 +86,38 @@ Antes de entregar cambios, ejecuta:
 
 ```bash
 pnpm test
+```
+
+`pnpm test` ejecuta solamente pruebas unitarias y de contrato de esquema; no
+comprueba restricciones ni persistencia de PostgreSQL.
+
+## Pruebas de integración PostgreSQL
+
+Las pruebas de integración usan una base efímera llamada exactamente
+`invoiceops_test`. Crea una instancia aislada, aplica las migraciones y ejecuta
+el gate explícito:
+
+```bash
+docker run --rm --name invoiceops-test-db \
+  -e POSTGRES_USER=invoiceops \
+  -e POSTGRES_PASSWORD=invoiceops-test-password \
+  -e POSTGRES_DB=invoiceops_test \
+  -p 5433:5432 postgres:18
+
+export TEST_DATABASE_URL='postgresql://invoiceops:invoiceops-test-password@localhost:5433/invoiceops_test?schema=public'
+DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @invoiceops/backend exec prisma migrate deploy
+pnpm test:integration
+```
+
+`pnpm test:integration` falla controladamente si `TEST_DATABASE_URL` no está
+definida o no apunta a `invoiceops_test`, antes de ejecutar cualquier
+`deleteMany`. Estas pruebas limpian tablas y nunca deben usar la base local de
+Compose, una base compartida ni una base con datos que deban conservarse.
+
+Cuando finalice, detén la instancia efímera con `Ctrl-C`; `--rm` elimina el
+contenedor. Después ejecuta los gates restantes:
+
+```bash
 pnpm lint
 pnpm typecheck
 pnpm build
@@ -96,6 +137,5 @@ datos.
 
 ## Alcance actual
 
-Este scaffold no incluye autenticación, organizaciones, usuarios, facturas,
-integraciones MLflow, Model API ni blockchain. Estas capacidades pertenecen a
-los tickets posteriores.
+Este scaffold no incluye autenticación, facturas, integraciones MLflow, Model
+API ni blockchain. Estas capacidades pertenecen a los tickets posteriores.

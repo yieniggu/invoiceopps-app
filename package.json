@@ -15,7 +15,9 @@
     "format:check": "prettier --check .",
     "generate": "pnpm --filter @invoiceops/backend generate",
     "lint": "eslint .",
-    "test": "pnpm -r test",
+    "test": "pnpm run test:unit",
+    "test:integration": "pnpm --filter @invoiceops/backend test:integration",
+    "test:unit": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
