@@ -13,23 +13,26 @@ enum OrganizationRole {
 }
 
 model User {
-  id          String                   @id @default(uuid())
-  name        String
-  rut         String                   @unique
-  email       String?
-  username    String?
-  memberships OrganizationMembership[]
+  id           String                   @id @default(uuid())
+  name         String
+  rut          String                   @unique
+  email        String?
+  username     String?
+  passwordHash String?
+  memberships  OrganizationMembership[]
+  sessions     Session[]
 }
 
 model Organization {
-  id          String                   @id @default(uuid())
-  name        String
-  slug        String                   @unique
-  description String?
-  enabled     Boolean                  @default(true)
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
-  memberships OrganizationMembership[]
+  id              String                       @id @default(uuid())
+  name            String
+  slug            String                       @unique
+  description     String?
+  enabled         Boolean                      @default(true)
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+  memberships     OrganizationMembership[]
+  authorizedUsers AuthorizedUserOrganization[]
 }
 
 model OrganizationMembership {
@@ -41,4 +44,24 @@ model OrganizationMembership {
   organization   Organization     @relation(fields: [organizationId], references: [id])
 
   @@unique([userId, organizationId])
+}
+
+model AuthorizedUserOrganization {
+  id             String       @id @default(uuid())
+  rut            String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([rut, organizationId])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
 }

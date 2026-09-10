@@ -137,5 +137,35 @@ datos.
 
 ## Alcance actual
 
-Este scaffold no incluye autenticación, facturas, integraciones MLflow, Model
-API ni blockchain. Estas capacidades pertenecen a los tickets posteriores.
+### Autenticación
+
+El backend expone `POST /auth/signup` y `POST /auth/login`. El modo se define
+con `AUTH_MODE=open` (valor por defecto) o `AUTH_MODE=allowlist`. En el modo
+restringido, un operador debe registrar el RUT normalizado y la organización en
+`AuthorizedUserOrganization` antes del registro; un RUT puede estar autorizado
+para varias organizaciones y recibirá una membership `STUDENT` en cada una.
+
+`signup` recibe `name`, `rut` y `password`. `login` sólo recibe `rut` y
+`password`, responde con una cookie `httpOnly`, `SameSite=Lax` y `Secure` en
+producción, y nunca devuelve un token en JSON. Las sesiones se almacenan en
+PostgreSQL como hashes; los endpoints protegidos de tickets posteriores deben
+validar la sesión y autorización en el servidor.
+
+Ambos endpoints públicos de autenticación limitan los intentos por dirección IP
+mediante memoria local: admiten cinco intentos por ventana de 15 minutos y
+responden `429` con un mensaje seguro al excederla. El límite es por proceso y
+no se comparte entre réplicas; para producción distribuida se requiere un
+limitador compartido. La aplicación no habilita `trust proxy`, por lo que detrás
+de un proxy inverso los clientes pueden compartir la IP del proxy hasta que la
+configuración de despliegue establezca una confianza de proxy correcta.
+
+Los intentos de login de RUT inexistente o de cuentas sin `passwordHash` realizan
+la misma verificación `scrypt` contra un hash ficticio válido y reciben la misma
+respuesta genérica `401` que una contraseña incorrecta.
+
+La migración APP-02 agrega `passwordHash` nullable para conservar los usuarios
+de APP-01. Esas cuentas no pueden iniciar sesión hasta que exista un flujo
+seguro de establecimiento de contraseña.
+
+Este scaffold no incluye facturas, integraciones MLflow, Model API ni
+blockchain. Estas capacidades pertenecen a los tickets posteriores.

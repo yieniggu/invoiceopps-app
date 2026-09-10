@@ -26,9 +26,22 @@ describe("APP-01 Prisma schema contract", () => {
     expect(user).toMatch(/^\s*rut\s+String\s+@unique\b/m);
     expect(user).toMatch(/^\s*email\s+String\?(?:\s|$)/m);
     expect(user).toMatch(/^\s*username\s+String\?(?:\s|$)/m);
+    expect(user).toMatch(/^\s*passwordHash\s+String\?(?:\s|$)/m);
     expect(user).toMatch(
       /^\s*memberships\s+OrganizationMembership\[\](?:\s|$)/m,
     );
+  });
+
+  it("declares the allowlist and hashed server-side sessions", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const allowlist = modelBlock(schema, "AuthorizedUserOrganization");
+    const session = modelBlock(schema, "Session");
+
+    expect(allowlist).toMatch(/^\s*rut\s+String\b/m);
+    expect(allowlist).toMatch(/^\s*organizationId\s+String\b/m);
+    expect(allowlist).toMatch(/@@unique\(\[rut,\s*organizationId\]\)/);
+    expect(session).toMatch(/^\s*tokenHash\s+String\s+@unique\b/m);
+    expect(session).toMatch(/^\s*expiresAt\s+DateTime\b/m);
   });
 
   it("declares organizations with their required defaults and uniqueness", async () => {

@@ -1,11 +1,29 @@
 import express, { type ErrorRequestHandler } from "express";
 
+import {
+  createAuthRateLimiter,
+  type AuthRateLimiter,
+} from "./auth-rate-limit.js";
+import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
 
-export function createApp(database: DatabaseReadiness) {
+const SESSION_COOKIE_NAME = "invoiceops_session";
+const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const UNKNOWN_CLIENT_IP = "unknown";
+
+export interface AppOptions {
+  authRateLimiter?: AuthRateLimiter;
+}
+
+export function createApp(
+  database: DatabaseReadiness,
+  auth?: AuthService,
+  { authRateLimiter = createAuthRateLimiter() }: AppOptions = {},
+) {
   const app = express();
 
   app.disable("x-powered-by");
+  app.use(express.json({ limit: "16kb" }));
 
   app.get("/health/live", (_request, response) => {
     response.status(200).json({ status: "ok" });
@@ -28,12 +46,62 @@ export function createApp(database: DatabaseReadiness) {
     response.status(200).json({ status: "ok" });
   });
 
+  const limitAuthAttempts: express.RequestHandler = (
+    request,
+    response,
+    next,
+  ) => {
+    if (!authRateLimiter.allow(request.ip ?? UNKNOWN_CLIENT_IP)) {
+      response.status(429).json({
+        status: "error",
+        message: "Too many attempts. Try again later.",
+      });
+      return;
+    }
+
+    next();
+  };
+
+  app.post("/auth/signup", limitAuthAttempts, async (request, response) => {
+    if (!auth) {
+      response.status(503).json({ status: "unavailable" });
+      return;
+    }
+
+    const user = await auth.signUp(request.body);
+    response.status(201).json({ user });
+  });
+
+  app.post("/auth/login", limitAuthAttempts, async (request, response) => {
+    if (!auth) {
+      response.status(503).json({ status: "unavailable" });
+      return;
+    }
+
+    const { sessionToken, user } = await auth.login(request.body);
+    response.cookie(SESSION_COOKIE_NAME, sessionToken, {
+      httpOnly: true,
+      maxAge: SESSION_COOKIE_MAX_AGE_MS,
+      path: "/",
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+    });
+    response.status(200).json({ user });
+  });
+
   const errorHandler: ErrorRequestHandler = (
     error,
     _request,
     response,
     _next,
   ) => {
+    if (error instanceof AuthError) {
+      response
+        .status(error.status)
+        .json({ status: "error", message: error.message });
+      return;
+    }
+
     console.error("Unhandled request error", error);
     response.status(500).json({ status: "error" });
   };
