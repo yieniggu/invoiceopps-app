@@ -14,12 +14,31 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  db-test:
+    image: postgres:17-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-invoiceops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-replace-with-a-local-password}
+      POSTGRES_DB: invoiceops_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d invoiceops_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "${POSTGRES_TEST_PORT:-5433}:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+
   backend:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:-replace-with-a-local-password}@db:5432/${POSTGRES_DB:-invoiceops}?schema=public
+      TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:-replace-with-a-local-password}@db-test:5432/invoiceops_test?schema=public
       PORT: 3000
     depends_on:
       db:
@@ -51,3 +70,4 @@ services:
 
 volumes:
   postgres_data:
+  postgres_test_data:

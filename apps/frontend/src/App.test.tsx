@@ -170,4 +170,83 @@ describe("APP-03 profile", () => {
       await screen.findByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
   });
+
+  it("logs out accessibly, prevents duplicate submission, and clears the profile", async () => {
+    let completeLogout: (() => void) | undefined;
+    const logoutResponse = new Promise<Response>((resolve) => {
+      completeLogout = () => resolve(new Response(null, { status: 204 }));
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: "ada@example.test",
+              username: "ada",
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockReturnValueOnce(logoutResponse);
+
+    render(<App />);
+
+    const logoutButton = await screen.findByRole("button", {
+      name: "Cerrar sesión",
+    });
+    fireEvent.click(logoutButton);
+
+    expect(
+      screen.getByRole("button", { name: "Cerrando sesión..." }),
+    ).toHaveProperty("disabled", true);
+
+    completeLogout?.();
+
+    expect(
+      await screen.findByText("Tu sesión no está disponible o expiró."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Ada Lovelace")).toBeNull();
+    expect(fetchMock).toHaveBeenLastCalledWith("/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+  });
+
+  it("keeps the profile and announces a recoverable logout failure", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: "ada@example.test",
+              username: "ada",
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 500 }));
+
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cerrar sesión" }),
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "No fue posible cerrar la sesión. Intenta nuevamente.",
+    );
+    expect(screen.getByText("Ada Lovelace")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Cerrar sesión" }),
+    ).toHaveProperty("disabled", false);
+  });
 });

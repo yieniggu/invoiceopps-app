@@ -14,14 +14,15 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
 1. Crea un archivo `.env` local con las variables requeridas. No incluyas este
    archivo en el control de versiones.
 
-   | Variable            | Propósito                                              | Ejemplo local                                                                                   | Requerida                                                                 |
-   | ------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-   | `POSTGRES_USER`     | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                    | No, Compose usa `invoiceops` por defecto                                  |
-   | `POSTGRES_PASSWORD` | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                 | Sí, usa una contraseña propia y no la publiques                           |
-   | `POSTGRES_DB`       | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                    | No, Compose usa `invoiceops` por defecto                                  |
-   | `BACKEND_PORT`      | Puerto del host para el backend de Compose             | `3000`                                                                                          | No, Compose usa `3000` por defecto                                        |
-   | `FRONTEND_PORT`     | Puerto del host para el frontend de Compose            | `5173`                                                                                          | No, Compose usa `5173` por defecto                                        |
-   | `DATABASE_URL`      | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public` | Sí para ejecutar el backend localmente; Compose la construye internamente |
+   | Variable            | Propósito                                              | Ejemplo local                                                                                        | Requerida                                                                 |
+   | ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+   | `POSTGRES_USER`     | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
+   | `POSTGRES_PASSWORD` | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                      | Sí, usa una contraseña propia y no la publiques                           |
+   | `POSTGRES_DB`       | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
+   | `BACKEND_PORT`      | Puerto del host para el backend de Compose             | `3000`                                                                                               | No, Compose usa `3000` por defecto                                        |
+   | `FRONTEND_PORT`     | Puerto del host para el frontend de Compose            | `5173`                                                                                               | No, Compose usa `5173` por defecto                                        |
+   | `DATABASE_URL`      | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public`      | Sí para ejecutar el backend localmente; Compose la construye internamente |
+   | `TEST_DATABASE_URL` | Cadena exclusiva de las pruebas de integración         | `postgresql://invoiceops:replace-with-a-local-password@localhost:5433/invoiceops_test?schema=public` | Sí para integración; debe terminar exactamente en `invoiceops_test`       |
 
    Usa valores de ejemplo solo en tu equipo. La contraseña de ejemplo no es un
    secreto válido ni debe reutilizarse fuera del desarrollo local.
@@ -93,29 +94,29 @@ comprueba restricciones ni persistencia de PostgreSQL.
 
 ## Pruebas de integración PostgreSQL
 
-Las pruebas de integración usan una base efímera llamada exactamente
-`invoiceops_test`. Crea una instancia aislada, aplica las migraciones y ejecuta
-el gate explícito:
+Las pruebas de integración usan exclusivamente la base `invoiceops_test` del
+servicio Compose `db-test`. Ese servicio está bajo el perfil `test`, usa el
+puerto local `5433` y un volumen propio; no se inicia con `docker compose up` ni
+comparte la base ni el volumen de la aplicación. Configura `TEST_DATABASE_URL`
+en `.env` con el valor de `.env.example`, inicia el servicio aislado, aplica las
+migraciones y ejecuta el gate explícito:
 
 ```bash
-docker run --rm --name invoiceops-test-db \
-  -e POSTGRES_USER=invoiceops \
-  -e POSTGRES_PASSWORD=invoiceops-test-password \
-  -e POSTGRES_DB=invoiceops_test \
-  -p 5433:5432 postgres:18
-
-export TEST_DATABASE_URL='postgresql://invoiceops:invoiceops-test-password@localhost:5433/invoiceops_test?schema=public'
+docker compose --profile test up -d db-test
+export TEST_DATABASE_URL="$(grep '^TEST_DATABASE_URL=' .env | cut -d '=' -f2-)"
 DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @invoiceops/backend exec prisma migrate deploy
 pnpm test:integration
 ```
 
 `pnpm test:integration` falla controladamente si `TEST_DATABASE_URL` no está
 definida o no apunta a `invoiceops_test`, antes de ejecutar cualquier
-`deleteMany`. Estas pruebas limpian tablas y nunca deben usar la base local de
-Compose, una base compartida ni una base con datos que deban conservarse.
+`deleteMany`. Estas pruebas limpian tablas: nunca uses `DATABASE_URL`, la base
+`invoiceops` del servicio `db`, una base compartida ni una base con datos que
+deban conservarse.
 
-Cuando finalice, detén la instancia efímera con `Ctrl-C`; `--rm` elimina el
-contenedor. Después ejecuta los gates restantes:
+Cuando finalice, detén y elimina solo el contenedor de prueba con `docker
+compose --profile test rm --stop --force db-test`. Este comando no elimina
+volúmenes. Después ejecuta los gates restantes:
 
 ```bash
 pnpm lint
@@ -139,7 +140,7 @@ datos.
 
 ### Autenticación
 
-El backend expone `POST /auth/signup` y `POST /auth/login`. El modo se define
+El backend expone `POST /auth/signup`, `POST /auth/login` y `POST /auth/logout`. El modo se define
 con `AUTH_MODE=open` (valor por defecto) o `AUTH_MODE=allowlist`. En el modo
 restringido, un operador debe registrar el RUT normalizado y la organización en
 `AuthorizedUserOrganization` antes del registro; un RUT puede estar autorizado
@@ -150,6 +151,10 @@ para varias organizaciones y recibirá una membership `STUDENT` en cada una.
 producción, y nunca devuelve un token en JSON. Las sesiones se almacenan en
 PostgreSQL como hashes; los endpoints protegidos validan la sesión y
 autorización en el servidor.
+
+`logout` requiere la cookie válida actual, revoca solamente esa sesión por su
+hash, responde `204` y borra la cookie con los mismos atributos. No devuelve
+tokens ni revoca otras sesiones activas del usuario.
 
 Ambos endpoints públicos de autenticación limitan los intentos por dirección IP
 mediante memoria local: admiten cinco intentos por ventana de 15 minutos y

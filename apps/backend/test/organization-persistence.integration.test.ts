@@ -338,3 +338,41 @@ describe("APP-03 PostgreSQL profile persistence", () => {
     });
   });
 });
+
+describe("APP-02.1 PostgreSQL session lifecycle", () => {
+  it("revokes only the current non-expired opaque session", async () => {
+    const auth = createAuthService(prisma, "open");
+    await auth.signUp({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+      password: "correct-horse-battery-staple",
+    });
+
+    const firstLogin = await auth.login({
+      rut: "12.345.678-5",
+      password: "correct-horse-battery-staple",
+    });
+    const secondLogin = await auth.login({
+      rut: "12.345.678-5",
+      password: "correct-horse-battery-staple",
+    });
+
+    await auth.logout(firstLogin.sessionToken);
+
+    await expect(
+      auth.getProfile(firstLogin.sessionToken),
+    ).rejects.toMatchObject({
+      status: 401,
+    });
+    await expect(auth.logout(firstLogin.sessionToken)).rejects.toMatchObject({
+      status: 401,
+    });
+    await expect(
+      auth.getProfile(secondLogin.sessionToken),
+    ).resolves.toMatchObject({
+      name: "Ada Lovelace",
+      rut: "123456785",
+    });
+    expect(await prisma.session.count()).toBe(1);
+  });
+});

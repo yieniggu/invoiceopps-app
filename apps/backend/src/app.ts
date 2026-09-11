@@ -137,6 +137,22 @@ export function createApp(
     response.status(200).json({ user });
   });
 
+  app.post("/auth/logout", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    await auth.logout(sessionToken);
+    response.clearCookie(SESSION_COOKIE_NAME, {
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+    });
+    response.status(204).end();
+  });
+
   app.get("/profile", async (request, response) => {
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
     if (!auth || !sessionToken) {

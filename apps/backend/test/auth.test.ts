@@ -32,6 +32,9 @@ function createAuthServiceForHttpTest(): AuthService {
         user: { id: user.id, name: user.name, rut: user.rut },
       };
     },
+    async logout() {
+      throw new Error("logout must be configured by the test");
+    },
     async getProfile() {
       throw new Error("getProfile must be configured by the test");
     },
@@ -170,6 +173,81 @@ describe("APP-02 auth HTTP contract", () => {
 
     expect(verifiedHashes).toHaveLength(2);
     expect(verifiedHashes[0]).toBe(verifiedHashes[1]);
+  });
+
+  it("revokes only the current session and clears its compatible cookie", async () => {
+    const activeSessions = new Set(["current-session", "other-session"]);
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async logout(sessionToken: string) {
+          if (!activeSessions.delete(sessionToken)) {
+            throw new AuthError(401, "Unauthorized");
+          }
+        },
+        async getProfile(sessionToken: string) {
+          if (!activeSessions.has(sessionToken)) {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "user-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            memberships: [],
+          };
+        },
+        async updateProfile() {
+          throw new Error("not used");
+        },
+      },
+    );
+
+    const logout = await request(app)
+      .post("/auth/logout")
+      .set("Cookie", "invoiceops_session=current-session");
+    const revokedProfile = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=current-session");
+    const otherProfile = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=other-session");
+
+    expect(logout.status).toBe(204);
+    expect(String(logout.headers["set-cookie"] ?? "")).toMatch(
+      /invoiceops_session=;.*Path=\/;.*HttpOnly.*SameSite=Lax/i,
+    );
+    expect(revokedProfile.status).toBe(401);
+    expect(otherProfile.status).toBe(200);
+  });
+
+  it("returns the existing safe 401 for absent, invalid, and expired logout sessions", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async logout() {
+          throw new AuthError(401, "Unauthorized");
+        },
+      },
+    );
+
+    const absent = await request(app).post("/auth/logout");
+    const invalid = await request(app)
+      .post("/auth/logout")
+      .set("Cookie", "invoiceops_session=invalid-session");
+    const expired = await request(app)
+      .post("/auth/logout")
+      .set("Cookie", "invoiceops_session=expired-session");
+
+    expect(absent.status).toBe(401);
+    expect(invalid.status).toBe(401);
+    expect(expired.status).toBe(401);
+    expect(absent.body).toEqual(invalid.body);
+    expect(invalid.body).toEqual(expired.body);
   });
 });
 

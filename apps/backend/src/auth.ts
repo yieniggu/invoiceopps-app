@@ -39,6 +39,7 @@ export interface AuthService {
     sessionToken: string;
     user: AuthUser;
   }>;
+  logout(sessionToken: string): Promise<void>;
   getProfile(sessionToken: string): Promise<AuthProfile>;
   updateProfile(
     sessionToken: string,
@@ -197,6 +198,19 @@ export function createAuthService(
     return session.user;
   }
 
+  async function logout(sessionToken: string): Promise<void> {
+    const result = await prisma.session.deleteMany({
+      where: {
+        tokenHash: hashSessionToken(sessionToken),
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new AuthError(401, "Unauthorized");
+    }
+  }
+
   return {
     async signUp(input) {
       const signup = parseSignUp(input);
@@ -277,6 +291,7 @@ export function createAuthService(
         user: { id: user.id, name: user.name, rut: user.rut },
       };
     },
+    logout,
     getProfile,
     async updateProfile(sessionToken, input) {
       const profile = await getProfile(sessionToken);

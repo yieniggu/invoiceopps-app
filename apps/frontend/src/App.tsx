@@ -37,7 +37,9 @@ export function App() {
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [logoutError, setLogoutError] = useState<string>();
 
   const loadProfile = async () => {
     setState({ kind: "loading" });
@@ -90,6 +92,33 @@ export function App() {
       setMessage("No fue posible actualizar el perfil. Intenta nuevamente.");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const logout = async () => {
+    setIsLoggingOut(true);
+    setLogoutError(undefined);
+
+    try {
+      const response = await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+
+      if (response.status === 401) {
+        setState({ kind: "anonymous" });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Logout request failed");
+      }
+
+      setState({ kind: "anonymous" });
+    } catch {
+      setLogoutError("No fue posible cerrar la sesión. Intenta nuevamente.");
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
@@ -173,6 +202,17 @@ export function App() {
           </p>
         ) : null}
       </form>
+
+      <section aria-label="Sesión">
+        <button
+          type="button"
+          onClick={() => void logout()}
+          disabled={isLoggingOut}
+        >
+          {isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
+        </button>
+        {logoutError ? <p role="alert">{logoutError}</p> : null}
+      </section>
 
       <section aria-labelledby="memberships-title">
         <h2 id="memberships-title">Organizaciones</h2>
