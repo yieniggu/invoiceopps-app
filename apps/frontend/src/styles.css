@@ -31,7 +31,9 @@ body {
 }
 
 h1,
-p {
+p,
+h2,
+dl {
   margin: 0;
 }
 
@@ -40,9 +42,76 @@ h1 {
   line-height: 1;
 }
 
-.shell > p:last-child {
-  max-width: 36rem;
+.shell p,
+dd {
   color: #4a5a72;
-  font-size: 1.125rem;
   line-height: 1.6;
+}
+
+h2 {
+  font-size: 1.25rem;
+}
+
+section,
+form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border: 1px solid #d7dfed;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+dl {
+  display: grid;
+  gap: 0.75rem;
+}
+
+dt {
+  color: #4a5a72;
+  font-size: 0.875rem;
+}
+
+dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+label {
+  display: grid;
+  gap: 0.375rem;
+  font-weight: 700;
+}
+
+input,
+button {
+  min-height: 2.75rem;
+  border-radius: 0.5rem;
+  font: inherit;
+}
+
+input {
+  border: 1px solid #9daec8;
+  padding: 0.5rem 0.75rem;
+}
+
+button {
+  width: fit-content;
+  border: 0;
+  padding: 0.5rem 1rem;
+  background: #345cc4;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 3px solid #e29e30;
+  outline-offset: 2px;
 }

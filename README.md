@@ -148,8 +148,8 @@ para varias organizaciones y recibirá una membership `STUDENT` en cada una.
 `signup` recibe `name`, `rut` y `password`. `login` sólo recibe `rut` y
 `password`, responde con una cookie `httpOnly`, `SameSite=Lax` y `Secure` en
 producción, y nunca devuelve un token en JSON. Las sesiones se almacenan en
-PostgreSQL como hashes; los endpoints protegidos de tickets posteriores deben
-validar la sesión y autorización en el servidor.
+PostgreSQL como hashes; los endpoints protegidos validan la sesión y
+autorización en el servidor.
 
 Ambos endpoints públicos de autenticación limitan los intentos por dirección IP
 mediante memoria local: admiten cinco intentos por ventana de 15 minutos y
@@ -169,3 +169,12 @@ seguro de establecimiento de contraseña.
 
 Este scaffold no incluye facturas, integraciones MLflow, Model API ni
 blockchain. Estas capacidades pertenecen a los tickets posteriores.
+
+### Perfil
+
+`GET /profile` resuelve el perfil de la sesión cookie actual y devuelve nombre,
+RUT, email, username y memberships con organización y rol. `PATCH /profile`
+acepta exclusivamente `email` y `username`; nombre, RUT, password, roles y
+memberships no son modificables desde este endpoint. La interfaz consulta el
+perfil al iniciar, muestra la carga, una sesión expirada o anónima, y permite
+actualizar los dos datos editables sin exponer ni persistir tokens.

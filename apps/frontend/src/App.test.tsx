@@ -1,22 +1,173 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-describe("application shell", () => {
-  it("renders an accessible base shell", () => {
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+describe("APP-03 profile", () => {
+  it("resolves the authenticated profile, submits permitted fields, and announces success", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: "ada@example.test",
+              username: "ada",
+              memberships: [
+                {
+                  organization: {
+                    id: "organization-1",
+                    name: "AI Academy",
+                    slug: "ai-academy",
+                  },
+                  role: "STUDENT",
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: "ada.updated@example.test",
+              username: "ada-updated",
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
     render(<App />);
 
-    const heading = screen.getByRole("heading", {
-      level: 1,
-      name: "Base de la aplicación preparada",
-    });
-
-    expect(heading).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Cargando perfil");
     expect(
-      screen.getByRole("main", {
-        name: "Base de la aplicación preparada",
+      await screen.findByRole("heading", { name: "Mi perfil" }),
+    ).toBeTruthy();
+    expect(screen.getByText("123456785")).toBeTruthy();
+    expect(
+      (screen.getByRole("textbox", { name: "Email" }) as HTMLInputElement)
+        .value,
+    ).toBe("ada@example.test");
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Username",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("ada");
+    expect(screen.getByText("AI Academy")).toBeTruthy();
+    expect(screen.getByText("(STUDENT)")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
+      target: { value: "ada.updated@example.test" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Username" }), {
+      target: { value: "ada-updated" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    const savingButton = screen.getByRole("button", {
+      name: "Guardando cambios...",
+    });
+    expect(savingButton.hasAttribute("disabled")).toBe(true);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain(
+        "Perfil actualizado",
+      );
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/profile",
+      expect.objectContaining({
+        method: "PATCH",
+        credentials: "same-origin",
+        body: JSON.stringify({
+          email: "ada.updated@example.test",
+          username: "ada-updated",
+        }),
       }),
+    );
+  });
+
+  it("renders anonymous session expiry and a recoverable update error", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: null,
+              username: null,
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 500 }));
+
+    const { unmount } = render(<App />);
+
+    expect(
+      await screen.findByText("Tu sesión no está disponible o expiró."),
+    ).toBeTruthy();
+    unmount();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Mi perfil" });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "No fue posible actualizar el perfil. Intenta nuevamente.",
+    );
+  });
+
+  it("renders a recoverable profile loading error", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("Network unavailable"))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: null,
+              username: null,
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    render(<App />);
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "No fue posible cargar el perfil.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(
+      await screen.findByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
   });
 });

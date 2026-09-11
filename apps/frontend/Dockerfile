@@ -14,5 +14,6 @@ RUN pnpm --filter @invoiceops/frontend build
 FROM nginx:1.27-alpine
 
 COPY --from=build /workspace/apps/frontend/dist /usr/share/nginx/html
+COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

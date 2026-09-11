@@ -20,6 +20,15 @@ export interface AuthUser {
   rut: string;
 }
 
+export interface AuthProfile extends AuthUser {
+  email: string | null;
+  username: string | null;
+  memberships: Array<{
+    organization: { id: string; name: string; slug: string };
+    role: OrganizationRole;
+  }>;
+}
+
 export interface AuthService {
   signUp(input: {
     name: string;
@@ -30,6 +39,11 @@ export interface AuthService {
     sessionToken: string;
     user: AuthUser;
   }>;
+  getProfile(sessionToken: string): Promise<AuthProfile>;
+  updateProfile(
+    sessionToken: string,
+    input: { email?: string | null; username?: string | null },
+  ): Promise<AuthProfile>;
 }
 
 export interface AuthServiceOptions {
@@ -83,6 +97,10 @@ function parseLogin(input: { rut: unknown; password: unknown }) {
   } catch {
     throw new AuthError(401, "Invalid credentials");
   }
+}
+
+function hashSessionToken(sessionToken: string) {
+  return createHash("sha256").update(sessionToken).digest("base64");
 }
 
 async function hashPassword(password: string) {
@@ -143,6 +161,42 @@ export function createAuthService(
     verifyPassword: passwordVerifier = verifyPassword,
   }: AuthServiceOptions = {},
 ): AuthService {
+  async function getProfile(sessionToken: string): Promise<AuthProfile> {
+    const session = await prisma.session.findUnique({
+      where: { tokenHash: hashSessionToken(sessionToken) },
+      select: {
+        expiresAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            rut: true,
+            email: true,
+            username: true,
+            memberships: {
+              orderBy: [
+                { organization: { slug: "asc" } },
+                { organizationId: "asc" },
+              ],
+              select: {
+                role: true,
+                organization: {
+                  select: { id: true, name: true, slug: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!session || session.expiresAt <= new Date()) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    return session.user;
+  }
+
   return {
     async signUp(input) {
       const signup = parseSignUp(input);
@@ -210,12 +264,9 @@ export function createAuthService(
       }
 
       const sessionToken = randomBytes(32).toString("base64url");
-      const tokenHash = createHash("sha256")
-        .update(sessionToken)
-        .digest("base64");
       await prisma.session.create({
         data: {
-          tokenHash,
+          tokenHash: hashSessionToken(sessionToken),
           userId: user.id,
           expiresAt: new Date(Date.now() + SESSION_LIFETIME_MS),
         },
@@ -225,6 +276,17 @@ export function createAuthService(
         sessionToken,
         user: { id: user.id, name: user.name, rut: user.rut },
       };
+    },
+    getProfile,
+    async updateProfile(sessionToken, input) {
+      const profile = await getProfile(sessionToken);
+      const user = await prisma.user.update({
+        where: { id: profile.id },
+        data: input,
+        select: { email: true, username: true },
+      });
+
+      return { ...profile, ...user };
     },
   };
 }

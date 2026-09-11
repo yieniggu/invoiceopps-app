@@ -11,6 +11,54 @@ const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const UNKNOWN_CLIENT_IP = "unknown";
 
+function sessionTokenFromCookie(header: string | undefined) {
+  if (!header) {
+    return undefined;
+  }
+
+  return header
+    .split(";")
+    .map((value) => value.trim().split("="))
+    .find(([name]) => name === SESSION_COOKIE_NAME)?.[1];
+}
+
+function parseProfileUpdate(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AuthError(400, "Invalid profile update");
+  }
+
+  const entries = Object.entries(input);
+  if (
+    entries.length === 0 ||
+    entries.some(
+      ([key, value]) =>
+        (key !== "email" && key !== "username") ||
+        (value !== null && typeof value !== "string"),
+    )
+  ) {
+    throw new AuthError(400, "Invalid profile update");
+  }
+
+  return Object.fromEntries(entries) as {
+    email?: string | null;
+    username?: string | null;
+  };
+}
+
+function profileResponse(
+  profile: Awaited<ReturnType<AuthService["getProfile"]>>,
+) {
+  return {
+    profile: {
+      name: profile.name,
+      rut: profile.rut,
+      email: profile.email,
+      username: profile.username,
+      memberships: profile.memberships,
+    },
+  };
+}
+
 export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
 }
@@ -87,6 +135,29 @@ export function createApp(
       secure: process.env.NODE_ENV === "production",
     });
     response.status(200).json({ user });
+  });
+
+  app.get("/profile", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    response
+      .status(200)
+      .json(profileResponse(await auth.getProfile(sessionToken)));
+  });
+
+  app.patch("/profile", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    const input = parseProfileUpdate(request.body);
+    response
+      .status(200)
+      .json(profileResponse(await auth.updateProfile(sessionToken, input)));
   });
 
   const errorHandler: ErrorRequestHandler = (

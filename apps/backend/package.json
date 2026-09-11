@@ -11,7 +11,7 @@
     "test": "pnpm run test:unit",
     "test:integration": "pnpm run generate && vitest run test/organization-persistence.integration.test.ts",
     "test:unit": "vitest run --exclude 'test/**/*.integration.test.ts'",
-    "typecheck": "pnpm run generate && tsc --noEmit"
+    "typecheck": "pnpm run generate && tsc --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

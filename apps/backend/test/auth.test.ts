@@ -32,6 +32,12 @@ function createAuthServiceForHttpTest(): AuthService {
         user: { id: user.id, name: user.name, rut: user.rut },
       };
     },
+    async getProfile() {
+      throw new Error("getProfile must be configured by the test");
+    },
+    async updateProfile() {
+      throw new Error("updateProfile must be configured by the test");
+    },
   };
 }
 
@@ -56,14 +62,10 @@ describe("APP-02 auth HTTP contract", () => {
 
     expect.soft(signupResponse.status).toBe(201);
     expect.soft(loginResponse.status).toBe(200);
-    expect
-      .soft(
-        (loginResponse.headers["set-cookie"] ?? []).some((cookie) =>
-          /;\s*HttpOnly(?:;|$)/i.test(cookie),
-        ),
-      )
-      .toBe(true);
-    expect(loginResponse.headers["set-cookie"]?.[0]).toMatch(/SameSite=Lax/i);
+    const sessionCookie = String(loginResponse.headers["set-cookie"] ?? "");
+
+    expect.soft(sessionCookie).toMatch(/;\s*HttpOnly(?:;|$)/i);
+    expect(sessionCookie).toMatch(/SameSite=Lax/i);
     expect(loginResponse.body).not.toHaveProperty("token");
     expect(JSON.stringify(signupResponse.body)).not.toContain(
       credentials.password,
@@ -168,5 +170,164 @@ describe("APP-02 auth HTTP contract", () => {
 
     expect(verifiedHashes).toHaveLength(2);
     expect(verifiedHashes[0]).toBe(verifiedHashes[1]);
+  });
+});
+
+describe("APP-03 profile HTTP contract", () => {
+  it("returns the authenticated profile and deterministically ordered memberships", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "valid-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "user-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: "ada@example.test",
+            username: "ada",
+            memberships: [
+              {
+                organization: {
+                  id: "organization-a",
+                  name: "Data Academy",
+                  slug: "data-academy",
+                },
+                role: "ADMIN",
+              },
+              {
+                organization: {
+                  id: "organization-b",
+                  name: "AI Academy",
+                  slug: "ai-academy",
+                },
+                role: "STUDENT",
+              },
+            ],
+          };
+        },
+        async updateProfile() {
+          throw new Error("not used");
+        },
+      },
+    );
+
+    const response = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=valid-session");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      profile: {
+        name: "Ada Lovelace",
+        rut: "123456785",
+        email: "ada@example.test",
+        username: "ada",
+        memberships: [
+          {
+            organization: {
+              id: "organization-a",
+              name: "Data Academy",
+              slug: "data-academy",
+            },
+            role: "ADMIN",
+          },
+          {
+            organization: {
+              id: "organization-b",
+              name: "AI Academy",
+              slug: "ai-academy",
+            },
+            role: "STUDENT",
+          },
+        ],
+      },
+    });
+    expect(response.body).not.toHaveProperty("id");
+  });
+
+  it("returns the same safe 401 for absent, invalid, and expired sessions", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile() {
+          throw new AuthError(401, "Unauthorized");
+        },
+        async updateProfile() {
+          throw new AuthError(401, "Unauthorized");
+        },
+      },
+    );
+
+    const absent = await request(app).get("/profile");
+    const invalid = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=invalid-session");
+    const expired = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=expired-session");
+
+    expect(absent.status).toBe(401);
+    expect(invalid.status).toBe(401);
+    expect(expired.status).toBe(401);
+    expect(absent.body).toEqual(invalid.body);
+    expect(invalid.body).toEqual(expired.body);
+  });
+
+  it("updates only email and username and rejects sensitive mass assignment", async () => {
+    const updates: unknown[] = [];
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile() {
+          throw new Error("not used");
+        },
+        async updateProfile(sessionToken: string, input: unknown) {
+          if (sessionToken !== "valid-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          updates.push(input);
+          return {
+            id: "user-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: "ada.updated@example.test",
+            username: "ada-updated",
+            memberships: [],
+          };
+        },
+      },
+    );
+
+    const updated = await request(app)
+      .patch("/profile")
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ email: "ada.updated@example.test", username: "ada-updated" });
+    const rejected = await request(app)
+      .patch("/profile")
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ rut: "111111111", role: "ADMIN" });
+
+    expect(updated.status).toBe(200);
+    expect(updated.body.profile).toMatchObject({
+      email: "ada.updated@example.test",
+      username: "ada-updated",
+      rut: "123456785",
+    });
+    expect(updates).toEqual([
+      { email: "ada.updated@example.test", username: "ada-updated" },
+    ]);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toEqual({
+      status: "error",
+      message: "Invalid profile update",
+    });
   });
 });

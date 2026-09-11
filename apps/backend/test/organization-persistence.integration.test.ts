@@ -269,3 +269,72 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
     expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 });
+
+describe("APP-03 PostgreSQL profile persistence", () => {
+  it("resolves ordered memberships, updates only contact fields, and rejects expired or revoked sessions", async () => {
+    const firstOrganization = await persistence.createOrganization({
+      name: "Zeta Academy",
+      slug: "zeta-academy",
+    });
+    const secondOrganization = await persistence.createOrganization({
+      name: "Alpha Academy",
+      slug: "alpha-academy",
+    });
+    const auth = createAuthService(prisma, "open");
+    const user = await auth.signUp({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+      password: "correct-horse-battery-staple",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: user.id,
+          organizationId: firstOrganization.id,
+          role: OrganizationRole.ADMIN,
+        },
+        {
+          userId: user.id,
+          organizationId: secondOrganization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+
+    const login = await auth.login({
+      rut: "12.345.678-5",
+      password: "correct-horse-battery-staple",
+    });
+    const profile = await auth.getProfile(login.sessionToken);
+    const updated = await auth.updateProfile(login.sessionToken, {
+      email: "ada@example.test",
+      username: "ada",
+    });
+
+    expect(
+      profile.memberships.map(({ organization }) => organization.slug),
+    ).toEqual(["alpha-academy", "zeta-academy"]);
+    expect(updated).toMatchObject({
+      name: "Ada Lovelace",
+      rut: "123456785",
+      email: "ada@example.test",
+      username: "ada",
+    });
+
+    const session = await prisma.session.findFirstOrThrow({
+      where: { userId: user.id },
+    });
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { expiresAt: new Date(0) },
+    });
+    await expect(auth.getProfile(login.sessionToken)).rejects.toMatchObject({
+      status: 401,
+    });
+
+    await prisma.session.delete({ where: { id: session.id } });
+    await expect(auth.getProfile(login.sessionToken)).rejects.toMatchObject({
+      status: 401,
+    });
+  });
+});
