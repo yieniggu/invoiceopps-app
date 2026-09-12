@@ -9,6 +9,8 @@ export default defineConfig({
     proxy: {
       "/auth": "http://localhost:3000",
       "/profile": "http://localhost:3000",
+      "/groups": "http://localhost:3000",
+      "/organizations": "http://localhost:3000",
     },
   },
   test: {

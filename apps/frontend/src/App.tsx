@@ -17,6 +17,20 @@ type ProfileState =
   | { kind: "error" }
   | { kind: "authenticated"; profile: Profile };
 
+type Group = {
+  id: string;
+  name: string;
+  description: string | null;
+  organization: { id: string; name: string };
+  members: Array<{ id: string; name: string; rut: string }>;
+};
+
+type GroupsState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "loaded"; groups: Group[] };
+
 async function requestProfile() {
   const response = await fetch("/profile", { credentials: "same-origin" });
 
@@ -32,14 +46,27 @@ async function requestProfile() {
   return { kind: "authenticated", profile } as const;
 }
 
+async function requestGroups() {
+  const response = await fetch("/groups", { credentials: "same-origin" });
+
+  if (!response.ok) {
+    throw new Error("Groups request failed");
+  }
+
+  return (await response.json()) as { groups: Group[] };
+}
+
 export function App() {
   const [state, setState] = useState<ProfileState>({ kind: "loading" });
+  const [groupsState, setGroupsState] = useState<GroupsState>({ kind: "idle" });
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [message, setMessage] = useState<string>();
   const [logoutError, setLogoutError] = useState<string>();
+  const [groupError, setGroupError] = useState<string>();
+  const [isMutatingGroup, setIsMutatingGroup] = useState(false);
 
   const loadProfile = async () => {
     setState({ kind: "loading" });
@@ -51,9 +78,70 @@ export function App() {
       if (result.kind === "authenticated") {
         setEmail(result.profile.email ?? "");
         setUsername(result.profile.username ?? "");
+        if (result.profile.memberships.length > 0) {
+          setGroupsState({ kind: "loading" });
+          try {
+            setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+          } catch {
+            setGroupsState({ kind: "error" });
+          }
+        } else {
+          setGroupsState({ kind: "loaded", groups: [] });
+        }
+      } else {
+        setGroupsState({ kind: "idle" });
       }
     } catch {
       setState({ kind: "error" });
+    }
+  };
+
+  const reloadGroups = async () => {
+    setGroupError(undefined);
+    setGroupsState({ kind: "loading" });
+    try {
+      setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+    } catch {
+      setGroupsState({ kind: "error" });
+    }
+  };
+
+  const mutateGroup = async (
+    path: string,
+    method: "POST" | "PATCH" | "DELETE",
+    body?: unknown,
+  ) => {
+    setIsMutatingGroup(true);
+    setGroupError(undefined);
+    try {
+      const response = await fetch(path, {
+        method,
+        credentials: "same-origin",
+        ...(body === undefined
+          ? {}
+          : {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            }),
+      });
+
+      if (response.status === 401) {
+        setState({ kind: "anonymous" });
+        setGroupsState({ kind: "idle" });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Group mutation failed");
+      }
+
+      await reloadGroups();
+    } catch {
+      setGroupError(
+        "No fue posible actualizar los grupos. Intenta nuevamente.",
+      );
+    } finally {
+      setIsMutatingGroup(false);
     }
   };
 
@@ -227,6 +315,153 @@ export function App() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section aria-labelledby="groups-title">
+        <h2 id="groups-title">Mis grupos</h2>
+        {groupsState.kind === "loading" ? (
+          <p role="status">Cargando grupos...</p>
+        ) : null}
+        {groupsState.kind === "error" ? (
+          <>
+            <p role="alert">No fue posible cargar los grupos.</p>
+            <button type="button" onClick={() => void reloadGroups()}>
+              Reintentar grupos
+            </button>
+          </>
+        ) : null}
+        {groupsState.kind === "loaded" && groupsState.groups.length === 0 ? (
+          <p>No perteneces a grupos todavía.</p>
+        ) : null}
+        {groupsState.kind === "loaded" ? (
+          <ul>
+            {groupsState.groups.map((group) => {
+              const role = profile.memberships.find(
+                ({ organization }) => organization.id === group.organization.id,
+              )?.role;
+              const isAdmin = role === "ADMIN";
+              const path = `/organizations/${group.organization.id}/groups/${group.id}`;
+
+              return (
+                <li key={group.id}>
+                  <h3>{group.name}</h3>
+                  <p>{group.organization.name}</p>
+                  {group.description ? <p>{group.description}</p> : null}
+                  <h4>Integrantes</h4>
+                  {group.members.length === 0 ? (
+                    <p>Este grupo no tiene integrantes.</p>
+                  ) : (
+                    <ul>
+                      {group.members.map((member) => (
+                        <li key={member.id}>
+                          {member.name} ({member.rut})
+                          {isAdmin ? (
+                            <button
+                              type="button"
+                              disabled={isMutatingGroup}
+                              onClick={() =>
+                                void mutateGroup(
+                                  `${path}/members/${member.id}`,
+                                  "DELETE",
+                                )
+                              }
+                            >
+                              Quitar a {member.name}
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {isAdmin ? (
+                    <>
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const form = new FormData(event.currentTarget);
+                          void mutateGroup(path, "PATCH", {
+                            name: form.get("name"),
+                            description: form.get("description"),
+                          });
+                        }}
+                      >
+                        <label>
+                          Editar nombre de {group.name}
+                          <input
+                            name="name"
+                            defaultValue={group.name}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Editar descripción de {group.name}
+                          <input
+                            name="description"
+                            defaultValue={group.description ?? ""}
+                          />
+                        </label>
+                        <button type="submit" disabled={isMutatingGroup}>
+                          Guardar grupo
+                        </button>
+                      </form>
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const form = new FormData(event.currentTarget);
+                          void mutateGroup(`${path}/members`, "POST", {
+                            userId: form.get("userId"),
+                          });
+                        }}
+                      >
+                        <label>
+                          ID de integrante para {group.name}
+                          <input name="userId" required />
+                        </label>
+                        <button type="submit" disabled={isMutatingGroup}>
+                          Agregar integrante
+                        </button>
+                      </form>
+                      <button
+                        type="button"
+                        disabled={isMutatingGroup}
+                        onClick={() => void mutateGroup(path, "DELETE")}
+                      >
+                        Eliminar grupo {group.name}
+                      </button>
+                    </>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {profile.memberships
+          .filter(({ role }) => role === "ADMIN")
+          .map(({ organization }) => (
+            <form
+              key={organization.id}
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                void mutateGroup(
+                  `/organizations/${organization.id}/groups`,
+                  "POST",
+                  {
+                    name: form.get("name"),
+                  },
+                );
+              }}
+            >
+              <label>
+                Nuevo grupo
+                <input name="name" required />
+              </label>
+              <button type="submit" disabled={isMutatingGroup}>
+                Crear grupo en {organization.name}
+              </button>
+            </form>
+          ))}
+        {groupError ? <p role="alert">{groupError}</p> : null}
       </section>
     </main>
   );

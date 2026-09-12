@@ -42,6 +42,12 @@ describe("APP-03 profile", () => {
         ),
       )
       .mockResolvedValueOnce(
+        new Response(JSON.stringify({ groups: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             profile: {
@@ -248,5 +254,111 @@ describe("APP-03 profile", () => {
     expect(
       screen.getByRole("button", { name: "Cerrar sesión" }),
     ).toHaveProperty("disabled", false);
+  });
+});
+
+describe("APP-04 organization groups", () => {
+  it("shows group members to an organization member and administrative controls only to admins", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: null,
+              username: null,
+              memberships: [
+                {
+                  organization: {
+                    id: "organization-1",
+                    name: "AI Academy",
+                    slug: "ai-academy",
+                  },
+                  role: "ADMIN",
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            groups: [
+              {
+                id: "group-1",
+                name: "Advanced topics",
+                description: null,
+                organization: { id: "organization-1", name: "AI Academy" },
+                members: [
+                  {
+                    id: "student-1",
+                    name: "Grace Hopper",
+                    rut: "123456793",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Mis grupos" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Advanced topics")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Quitar a Grace Hopper" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Nuevo grupo" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Crear grupo en AI Academy" }),
+    ).toBeTruthy();
+  });
+
+  it("hides administrative controls from a student while keeping the empty state accessible", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              name: "Grace Hopper",
+              rut: "123456793",
+              email: null,
+              username: null,
+              memberships: [
+                {
+                  organization: {
+                    id: "organization-1",
+                    name: "AI Academy",
+                    slug: "ai-academy",
+                  },
+                  role: "STUDENT",
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ groups: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("No perteneces a grupos todavía."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Nuevo grupo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Crear grupo en/ })).toBeNull();
   });
 });

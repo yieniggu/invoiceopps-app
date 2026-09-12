@@ -61,6 +61,7 @@ describe("APP-01 Prisma schema contract", () => {
     expect(organization).toMatch(
       /^\s*memberships\s+OrganizationMembership\[\](?:\s|$)/m,
     );
+    expect(organization).toMatch(/^\s*groups\s+Group\[\](?:\s|$)/m);
   });
 
   it("prevents duplicate memberships for the same user and organization", async () => {
@@ -77,5 +78,23 @@ describe("APP-01 Prisma schema contract", () => {
     );
     expect(membership).toMatch(/^\s*role\s+\w+\b/m);
     expect(membership).toMatch(/@@unique\(\[userId,\s*organizationId\]\)/);
+  });
+
+  it("declares organization-scoped groups with unique group memberships", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const user = modelBlock(schema, "User");
+    const group = modelBlock(schema, "Group");
+    const membership = modelBlock(schema, "GroupMembership");
+
+    expect(user).toMatch(/^\s*groupMemberships\s+GroupMembership\[\](?:\s|$)/m);
+    expect(group).toMatch(/^\s*organizationId\s+String\b/m);
+    expect(group).toMatch(/^\s*name\s+String\b/m);
+    expect(group).toMatch(
+      /^\s*organization\s+Organization\s+@relation\(\s*fields:\s*\[organizationId\],\s*references:\s*\[id\][^)]*\)/m,
+    );
+    expect(group).toMatch(/^\s*memberships\s+GroupMembership\[\](?:\s|$)/m);
+    expect(membership).toMatch(/^\s*groupId\s+String\b/m);
+    expect(membership).toMatch(/^\s*userId\s+String\b/m);
+    expect(membership).toMatch(/@@unique\(\[groupId,\s*userId\]\)/);
   });
 });

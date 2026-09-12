@@ -20,6 +20,7 @@ model User {
   username     String?
   passwordHash String?
   memberships  OrganizationMembership[]
+  groupMemberships GroupMembership[]
   sessions     Session[]
 }
 
@@ -33,6 +34,7 @@ model Organization {
   updatedAt       DateTime                     @updatedAt
   memberships     OrganizationMembership[]
   authorizedUsers AuthorizedUserOrganization[]
+  groups          Group[]
 }
 
 model OrganizationMembership {
@@ -42,8 +44,34 @@ model OrganizationMembership {
   role           OrganizationRole
   user           User             @relation(fields: [userId], references: [id])
   organization   Organization     @relation(fields: [organizationId], references: [id])
+  groupMemberships GroupMembership[]
 
   @@unique([userId, organizationId])
+}
+
+model Group {
+  id             String            @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  memberships    GroupMembership[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, name])
+}
+
+model GroupMembership {
+  id             String                 @id @default(uuid())
+  groupId        String
+  userId         String
+  organizationId String
+  group          Group                  @relation(fields: [groupId, organizationId], references: [id, organizationId])
+  user           User                   @relation(fields: [userId], references: [id])
+  organizationMembership OrganizationMembership @relation(fields: [userId, organizationId], references: [userId, organizationId])
+
+  @@unique([groupId, userId])
+  @@index([userId, organizationId])
 }
 
 model AuthorizedUserOrganization {

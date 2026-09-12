@@ -14,15 +14,16 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
 1. Crea un archivo `.env` local con las variables requeridas. No incluyas este
    archivo en el control de versiones.
 
-   | Variable            | Propósito                                              | Ejemplo local                                                                                        | Requerida                                                                 |
-   | ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-   | `POSTGRES_USER`     | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
-   | `POSTGRES_PASSWORD` | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                      | Sí, usa una contraseña propia y no la publiques                           |
-   | `POSTGRES_DB`       | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
-   | `BACKEND_PORT`      | Puerto del host para el backend de Compose             | `3000`                                                                                               | No, Compose usa `3000` por defecto                                        |
-   | `FRONTEND_PORT`     | Puerto del host para el frontend de Compose            | `5173`                                                                                               | No, Compose usa `5173` por defecto                                        |
-   | `DATABASE_URL`      | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public`      | Sí para ejecutar el backend localmente; Compose la construye internamente |
-   | `TEST_DATABASE_URL` | Cadena exclusiva de las pruebas de integración         | `postgresql://invoiceops:replace-with-a-local-password@localhost:5433/invoiceops_test?schema=public` | Sí para integración; debe terminar exactamente en `invoiceops_test`       |
+   | Variable             | Propósito                                              | Ejemplo local                                                                                        | Requerida                                                                 |
+   | -------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+   | `POSTGRES_USER`      | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
+   | `POSTGRES_PASSWORD`  | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                      | Sí, usa una contraseña propia y no la publiques                           |
+   | `POSTGRES_DB`        | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
+   | `POSTGRES_TEST_PORT` | Puerto del host para PostgreSQL de integración         | `5436`                                                                                               | No, Compose usa `5436` por defecto                                        |
+   | `BACKEND_PORT`       | Puerto del host para el backend de Compose             | `3000`                                                                                               | No, Compose usa `3000` por defecto                                        |
+   | `FRONTEND_PORT`      | Puerto del host para el frontend de Compose            | `5173`                                                                                               | No, Compose usa `5173` por defecto                                        |
+   | `DATABASE_URL`       | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public`      | Sí para ejecutar el backend localmente; Compose la construye internamente |
+   | `TEST_DATABASE_URL`  | Cadena exclusiva de las pruebas de integración         | `postgresql://invoiceops:replace-with-a-local-password@localhost:5436/invoiceops_test?schema=public` | Sí para integración; debe terminar exactamente en `invoiceops_test`       |
 
    Usa valores de ejemplo solo en tu equipo. La contraseña de ejemplo no es un
    secreto válido ni debe reutilizarse fuera del desarrollo local.
@@ -96,7 +97,7 @@ comprueba restricciones ni persistencia de PostgreSQL.
 
 Las pruebas de integración usan exclusivamente la base `invoiceops_test` del
 servicio Compose `db-test`. Ese servicio está bajo el perfil `test`, usa el
-puerto local `5433` y un volumen propio; no se inicia con `docker compose up` ni
+puerto local `5436` y un volumen propio; no se inicia con `docker compose up` ni
 comparte la base ni el volumen de la aplicación. Configura `TEST_DATABASE_URL`
 en `.env` con el valor de `.env.example`, inicia el servicio aislado, aplica las
 migraciones y ejecuta el gate explícito:
@@ -125,6 +126,28 @@ pnpm build
 pnpm format:check
 docker compose config
 ```
+
+## Rollout de grupos organizacionales
+
+La migración `20260911170000_add_organization_groups` es un cambio aditivo: crea
+`Group` y `GroupMembership`, sus índices y sus claves foráneas compuestas. Antes
+de desplegar una versión de la aplicación que use grupos, aplica el esquema con
+la misma `DATABASE_URL` del entorno objetivo:
+
+```bash
+pnpm --filter @invoiceops/backend exec prisma migrate deploy
+```
+
+Las versiones anteriores de la aplicación continúan siendo compatibles mientras
+la migración ya aplicada conserve las tablas existentes. La versión con grupos
+requiere que esa migración esté desplegada antes de atender tráfico; no habilites
+las rutas de grupos contra un esquema anterior.
+
+El rollback seguro y no destructivo consiste en revertir la aplicación a la
+versión previa, manteniendo las nuevas tablas y sus datos sin usarlos. No
+ejecutes `DROP TABLE` como rollback automático: eliminar `Group` o
+`GroupMembership` con datos requiere una decisión operativa explícita, respaldo
+verificado y un plan de recuperación aprobado.
 
 ## Parada
 
@@ -183,3 +206,25 @@ acepta exclusivamente `email` y `username`; nombre, RUT, password, roles y
 memberships no son modificables desde este endpoint. La interfaz consulta el
 perfil al iniciar, muestra la carga, una sesión expirada o anónima, y permite
 actualizar los dos datos editables sin exponer ni persistir tokens.
+
+### Organization groups
+
+`Group` and `GroupMembership` are organization-scoped. A user can belong to
+multiple groups in the same organization, while the database prevents duplicate
+group-user pairs and enforces that every group member has an
+`OrganizationMembership` in that group organization.
+
+Authenticated users can call `GET /groups` to list only their groups and every
+group member in deterministic organization, group, and member order. Group
+management is scoped under `/organizations/:organizationId/groups`; only a
+current `ADMIN` of that organization can create, update, or delete a group, or
+add and remove members. The server validates the current session and resource
+organization for every request, returning safe authorization responses for
+absent sessions, non-members, and students. The ADMIN who creates a group is
+added as its first member so the group remains visible and manageable.
+
+Cookie-authenticated mutations use an Origin same-origin check in central
+middleware. Requests carrying the session cookie must include an `Origin` that
+exactly matches the request origin; cross-origin requests receive `403` before
+the mutation handler. Vite and Nginx proxy `/groups` and `/organizations/` on
+the same browser origin as the application.

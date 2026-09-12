@@ -53,7 +53,7 @@ export interface AuthServiceOptions {
 
 export class AuthError extends Error {
   constructor(
-    readonly status: 400 | 401 | 403 | 409,
+    readonly status: 400 | 401 | 403 | 404 | 409,
     message: string,
   ) {
     super(message);

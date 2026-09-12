@@ -7,6 +7,7 @@ import {
 } from "../src/generated/prisma/client.js";
 import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
+import { createGroupService } from "../src/groups.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
 
 // Validate before creating a client or issuing any destructive cleanup.
@@ -22,6 +23,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.session.deleteMany();
+  await prisma.groupMembership.deleteMany();
+  await prisma.group.deleteMany();
   await prisma.organizationMembership.deleteMany();
   await prisma.authorizedUserOrganization.deleteMany();
   await prisma.user.deleteMany();
@@ -374,5 +377,98 @@ describe("APP-02.1 PostgreSQL session lifecycle", () => {
       rut: "123456785",
     });
     expect(await prisma.session.count()).toBe(1);
+  });
+});
+
+describe("APP-04 PostgreSQL organization groups", () => {
+  it("isolates groups by organization, requires an ADMIN, and prevents invalid or duplicate members", async () => {
+    const firstOrganization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    const secondOrganization = await persistence.createOrganization({
+      name: "Data Academy",
+      slug: "data-academy",
+    });
+    const admin = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const student = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const outsider = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: admin.id,
+          organizationId: firstOrganization.id,
+          role: OrganizationRole.ADMIN,
+        },
+        {
+          userId: student.id,
+          organizationId: firstOrganization.id,
+          role: OrganizationRole.STUDENT,
+        },
+        {
+          userId: outsider.id,
+          organizationId: secondOrganization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+    const groups = createGroupService(prisma);
+
+    const zeta = await groups.createGroup(admin.id, firstOrganization.id, {
+      name: "Zeta group",
+    });
+    const alpha = await groups.createGroup(admin.id, firstOrganization.id, {
+      name: "Alpha group",
+    });
+    const populated = await groups.addMember(
+      admin.id,
+      firstOrganization.id,
+      alpha.id,
+      student.id,
+    );
+
+    expect(populated.members).toEqual([
+      { id: admin.id, name: "Ada Lovelace", rut: "123456785" },
+      { id: student.id, name: "Grace Hopper", rut: "123456793" },
+    ]);
+    await expect(
+      prisma.groupMembership.create({
+        data: {
+          groupId: alpha.id,
+          userId: outsider.id,
+          organizationId: firstOrganization.id,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    await expect(
+      groups.addMember(admin.id, firstOrganization.id, alpha.id, outsider.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      groups.addMember(admin.id, firstOrganization.id, alpha.id, student.id),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      groups.createGroup(student.id, firstOrganization.id, { name: "Denied" }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      groups.updateGroup(outsider.id, firstOrganization.id, alpha.id, {
+        name: "Denied",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(groups.listGroups(student.id)).resolves.toEqual([
+      expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
+    ]);
+    await expect(groups.listGroups(admin.id)).resolves.toEqual([
+      expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
+      expect.objectContaining({ id: zeta.id, name: "Zeta group" }),
+    ]);
   });
 });

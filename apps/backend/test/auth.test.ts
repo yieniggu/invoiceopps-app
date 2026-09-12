@@ -5,6 +5,7 @@ import { createApp } from "../src/app.js";
 import { createAuthRateLimiter } from "../src/auth-rate-limit.js";
 import { AuthError, createAuthService, type AuthService } from "../src/auth.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
+import type { GroupService } from "../src/groups.js";
 
 function createAuthServiceForHttpTest(): AuthService {
   const users = new Map<
@@ -208,6 +209,8 @@ describe("APP-02 auth HTTP contract", () => {
 
     const logout = await request(app)
       .post("/auth/logout")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=current-session");
     const revokedProfile = await request(app)
       .get("/profile")
@@ -238,9 +241,13 @@ describe("APP-02 auth HTTP contract", () => {
     const absent = await request(app).post("/auth/logout");
     const invalid = await request(app)
       .post("/auth/logout")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=invalid-session");
     const expired = await request(app)
       .post("/auth/logout")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=expired-session");
 
     expect(absent.status).toBe(401);
@@ -386,10 +393,14 @@ describe("APP-03 profile HTTP contract", () => {
 
     const updated = await request(app)
       .patch("/profile")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session")
       .send({ email: "ada.updated@example.test", username: "ada-updated" });
     const rejected = await request(app)
       .patch("/profile")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session")
       .send({ rut: "111111111", role: "ADMIN" });
 
@@ -407,5 +418,279 @@ describe("APP-03 profile HTTP contract", () => {
       status: "error",
       message: "Invalid profile update",
     });
+  });
+
+  it("rejects cookie-authenticated mutations from a different origin", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async updateProfile() {
+          throw new Error("must not be called");
+        },
+      },
+    );
+
+    const response = await request(app)
+      .patch("/profile")
+      .set("Cookie", "invoiceops_session=valid-session")
+      .set("Origin", "https://untrusted.example.test")
+      .send({ email: "ada@example.test" });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+  });
+});
+
+describe("APP-04 groups HTTP contract", () => {
+  const validOrigin = "http://127.0.0.1";
+
+  function createGroupApp(groupOverrides: Partial<GroupService> = {}) {
+    return createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "admin-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "admin-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            memberships: [],
+          };
+        },
+      },
+      {
+        groups: {
+          async listGroups() {
+            return [
+              {
+                id: "group-1",
+                name: "Advanced topics",
+                description: null,
+                organization: { id: "organization-1", name: "AI Academy" },
+                members: [
+                  {
+                    id: "student-1",
+                    name: "Grace Hopper",
+                    rut: "123456793",
+                  },
+                ],
+              },
+            ];
+          },
+          async createGroup(_userId, organizationId, input) {
+            return {
+              id: "created-group",
+              name: input.name,
+              description: input.description ?? null,
+              organization: { id: organizationId, name: "AI Academy" },
+              members: [],
+            };
+          },
+          async updateGroup() {
+            throw new Error("not used");
+          },
+          async deleteGroup() {
+            throw new Error("not used");
+          },
+          async addMember() {
+            throw new Error("not used");
+          },
+          async removeMember() {
+            throw new Error("not used");
+          },
+          ...groupOverrides,
+        } satisfies GroupService,
+      },
+    );
+  }
+
+  it("lists the authenticated user's groups with deterministic members", async () => {
+    const response = await request(createGroupApp())
+      .get("/groups")
+      .set("Cookie", "invoiceops_session=admin-session");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      groups: [
+        {
+          id: "group-1",
+          name: "Advanced topics",
+          description: null,
+          organization: { id: "organization-1", name: "AI Academy" },
+          members: [
+            { id: "student-1", name: "Grace Hopper", rut: "123456793" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("allows only an organization ADMIN to create a group", async () => {
+    const response = await request(createGroupApp())
+      .post("/organizations/organization-1/groups")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session")
+      .send({ name: "Advanced topics" });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      group: {
+        id: expect.any(String),
+        name: "Advanced topics",
+        organization: { id: "organization-1" },
+      },
+    });
+  });
+
+  it("registers every group mutation with scoped IDs and its success contract", async () => {
+    const calls: unknown[][] = [];
+    const group = {
+      id: "group-2",
+      name: "Updated topics",
+      description: "Current curriculum",
+      organization: { id: "organization-1", name: "AI Academy" },
+      members: [{ id: "student-1", name: "Grace Hopper", rut: "123456793" }],
+    };
+    const app = createGroupApp({
+      async updateGroup(userId, organizationId, groupId, input) {
+        calls.push(["update", userId, organizationId, groupId, input]);
+        return group;
+      },
+      async deleteGroup(userId, organizationId, groupId) {
+        calls.push(["delete", userId, organizationId, groupId]);
+      },
+      async addMember(userId, organizationId, groupId, memberId) {
+        calls.push(["add", userId, organizationId, groupId, memberId]);
+        return group;
+      },
+      async removeMember(userId, organizationId, groupId, memberId) {
+        calls.push(["remove", userId, organizationId, groupId, memberId]);
+      },
+    });
+    const updated = await request(app)
+      .patch("/organizations/organization-1/groups/group-2")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session")
+      .send({ name: " Updated topics ", description: " Current curriculum " });
+    const added = await request(app)
+      .post("/organizations/organization-1/groups/group-2/members")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session")
+      .send({ userId: " student-1 " });
+    const removed = await request(app)
+      .delete("/organizations/organization-1/groups/group-2/members/student-1")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session");
+    const deleted = await request(app)
+      .delete("/organizations/organization-1/groups/group-2")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session");
+
+    expect(updated.status).toBe(200);
+    expect(updated.body).toEqual({ group });
+    expect(added.status).toBe(200);
+    expect(added.body).toEqual({ group });
+    expect(removed.status).toBe(204);
+    expect(deleted.status).toBe(204);
+    expect(calls).toEqual([
+      [
+        "update",
+        "admin-1",
+        "organization-1",
+        "group-2",
+        { name: "Updated topics", description: "Current curriculum" },
+      ],
+      ["add", "admin-1", "organization-1", "group-2", "student-1"],
+      ["remove", "admin-1", "organization-1", "group-2", "student-1"],
+      ["delete", "admin-1", "organization-1", "group-2"],
+    ]);
+  });
+
+  it("rejects cross-origin requests before every group mutation handler", async () => {
+    let invoked = 0;
+    const app = createGroupApp({
+      async updateGroup() {
+        invoked += 1;
+        throw new Error("must not be called");
+      },
+      async deleteGroup() {
+        invoked += 1;
+        throw new Error("must not be called");
+      },
+      async addMember() {
+        invoked += 1;
+        throw new Error("must not be called");
+      },
+      async removeMember() {
+        invoked += 1;
+        throw new Error("must not be called");
+      },
+    });
+    const responses = await Promise.all([
+      request(app)
+        .patch("/organizations/organization-1/groups/group-2")
+        .set("Cookie", "invoiceops_session=admin-session")
+        .set("Origin", "https://untrusted.example.test")
+        .send({ name: "Updated topics" }),
+      request(app)
+        .delete("/organizations/organization-1/groups/group-2")
+        .set("Cookie", "invoiceops_session=admin-session")
+        .set("Origin", "https://untrusted.example.test"),
+      request(app)
+        .post("/organizations/organization-1/groups/group-2/members")
+        .set("Cookie", "invoiceops_session=admin-session")
+        .set("Origin", "https://untrusted.example.test")
+        .send({ userId: "student-1" }),
+      request(app)
+        .delete(
+          "/organizations/organization-1/groups/group-2/members/student-1",
+        )
+        .set("Cookie", "invoiceops_session=admin-session")
+        .set("Origin", "https://untrusted.example.test"),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+    }
+    expect(invoked).toBe(0);
+  });
+
+  it("rejects unauthenticated mutations and maps authorized service errors", async () => {
+    const app = createGroupApp({
+      async addMember() {
+        throw new AuthError(403, "Forbidden");
+      },
+    });
+
+    const unauthenticated = await request(app)
+      .patch("/organizations/organization-1/groups/group-2")
+      .send({ name: "Updated topics" });
+    const forbidden = await request(app)
+      .post("/organizations/organization-1/groups/group-2/members")
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=admin-session")
+      .send({ userId: "student-1" });
+
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body).toEqual({
+      status: "error",
+      message: "Unauthorized",
+    });
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body).toEqual({ status: "error", message: "Forbidden" });
   });
 });
