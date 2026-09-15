@@ -228,3 +228,16 @@ middleware. Requests carrying the session cookie must include an `Origin` that
 exactly matches the request origin; cross-origin requests receive `403` before
 the mutation handler. Vite and Nginx proxy `/groups` and `/organizations/` on
 the same browser origin as the application.
+
+### MLflow ownership contract
+
+For INT-02, this application remains the academic source of truth. A Workspace
+uses `Organization.slug`, an MLflow Basic Auth username uses the normalized
+`User.rut`, and the RBAC role for a group is `group-<Group.id>`. `Group.id` is
+the canonical immutable cross-repository identity; `Group.name` must never be
+used as an MLflow identity, role, resource name, or permission key.
+
+`GroupMembership` maps to assigning the group's RBAC role to the MLflow user.
+Individual ML ownership uses `User.id` as `owner_id`; group ownership uses
+`Group.id`. The complete contract and explicit out-of-scope provisioning are in
+`../dev/tickets/INT-02_ownership_academico_mlflow.md`.
