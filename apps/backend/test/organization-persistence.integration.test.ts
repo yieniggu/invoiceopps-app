@@ -8,6 +8,7 @@ import {
 import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
+import { createResourceService } from "../src/resources.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
 
 // Validate before creating a client or issuing any destructive cleanup.
@@ -23,6 +24,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.session.deleteMany();
+  await prisma.resourceReference.deleteMany();
   await prisma.groupMembership.deleteMany();
   await prisma.group.deleteMany();
   await prisma.organizationMembership.deleteMany();
@@ -470,5 +472,90 @@ describe("APP-04 PostgreSQL organization groups", () => {
       expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
       expect.objectContaining({ id: zeta.id, name: "Zeta group" }),
     ]);
+  });
+});
+
+describe("APP-05 PostgreSQL resource ownership", () => {
+  it("lists only resources from an accessible individual or group owner context", async () => {
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    const member = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const otherMember = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: member.id,
+          organizationId: organization.id,
+          role: OrganizationRole.ADMIN,
+        },
+        {
+          userId: otherMember.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+    const groups = createGroupService(prisma);
+    const group = await groups.createGroup(member.id, organization.id, {
+      name: "Advanced topics",
+    });
+    await prisma.resourceReference.createMany({
+      data: [
+        {
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: member.id,
+          createdByUserId: member.id,
+          type: "ml-experiment",
+          label: "Personal experiment",
+        },
+        {
+          organizationId: organization.id,
+          ownerType: "GROUP",
+          ownerId: group.id,
+          createdByUserId: member.id,
+          type: "ml-model",
+          label: "Group model",
+        },
+      ],
+    });
+    const resources = createResourceService(prisma);
+
+    await expect(
+      resources.listResources(member.id, {
+        organizationId: organization.id,
+        ownerType: "user",
+        ownerId: member.id,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        label: "Personal experiment",
+        ownerType: "user",
+      }),
+    ]);
+    await expect(
+      resources.listResources(member.id, {
+        organizationId: organization.id,
+        ownerType: "group",
+        ownerId: group.id,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ label: "Group model", ownerType: "group" }),
+    ]);
+    await expect(
+      resources.listResources(member.id, {
+        organizationId: organization.id,
+        ownerType: "user",
+        ownerId: otherMember.id,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

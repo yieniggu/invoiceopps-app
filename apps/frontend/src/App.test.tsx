@@ -22,6 +22,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
+              id: "user-1",
               name: "Ada Lovelace",
               rut: "123456785",
               email: "ada@example.test",
@@ -48,9 +49,16 @@ describe("APP-03 profile", () => {
         }),
       )
       .mockResolvedValueOnce(
+        new Response(JSON.stringify({ resources: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             profile: {
+              id: "user-1",
               name: "Ada Lovelace",
               rut: "123456785",
               email: "ada.updated@example.test",
@@ -120,6 +128,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
+              id: "user-1",
               name: "Ada Lovelace",
               rut: "123456785",
               email: null,
@@ -155,6 +164,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
+              id: "user-1",
               name: "Ada Lovelace",
               rut: "123456785",
               email: null,
@@ -188,6 +198,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
+              id: "user-1",
               name: "Ada Lovelace",
               rut: "123456785",
               email: "ada@example.test",
@@ -304,6 +315,12 @@ describe("APP-04 organization groups", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ resources: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
       );
 
     render(<App />);
@@ -327,6 +344,7 @@ describe("APP-04 organization groups", () => {
         new Response(
           JSON.stringify({
             profile: {
+              id: "student-1",
               name: "Grace Hopper",
               rut: "123456793",
               email: null,
@@ -348,6 +366,12 @@ describe("APP-04 organization groups", () => {
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ groups: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ resources: [] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),

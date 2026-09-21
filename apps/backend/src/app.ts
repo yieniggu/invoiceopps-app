@@ -7,6 +7,7 @@ import {
 import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
 import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
+import type { ResourceContext, ResourceService } from "./resources.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -121,6 +122,24 @@ function parseMemberInput(input: unknown) {
   return (input as { userId: string }).userId.trim();
 }
 
+function parseResourceContext(input: unknown): ResourceContext {
+  const { organizationId, ownerType, ownerId } = input as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof organizationId !== "string" ||
+    !organizationId ||
+    (ownerType !== "user" && ownerType !== "group") ||
+    typeof ownerId !== "string" ||
+    !ownerId
+  ) {
+    throw new AuthError(400, "Invalid resource context");
+  }
+
+  return { organizationId, ownerType, ownerId };
+}
+
 function requestOrigin(request: express.Request) {
   const forwardedProtocol = request.headers["x-forwarded-proto"];
   const protocol =
@@ -137,6 +156,7 @@ function profileResponse(
 ) {
   return {
     profile: {
+      id: profile.id,
       name: profile.name,
       rut: profile.rut,
       email: profile.email,
@@ -149,12 +169,17 @@ function profileResponse(
 export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
   groups?: GroupService;
+  resources?: ResourceService;
 }
 
 export function createApp(
   database: DatabaseReadiness,
   auth?: AuthService,
-  { authRateLimiter = createAuthRateLimiter(), groups }: AppOptions = {},
+  {
+    authRateLimiter = createAuthRateLimiter(),
+    groups,
+    resources,
+  }: AppOptions = {},
 ) {
   const app = express();
 
@@ -289,6 +314,19 @@ export function createApp(
 
     const profile = await auth.getProfile(sessionToken);
     response.status(200).json({ groups: await groups.listGroups(profile.id) });
+  });
+
+  app.get("/resources", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !resources || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    const profile = await auth.getProfile(sessionToken);
+    const context = parseResourceContext(request.query);
+    response
+      .status(200)
+      .json({ resources: await resources.listResources(profile.id, context) });
   });
 
   app.post(

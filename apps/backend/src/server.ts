@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { createAuthService } from "./auth.js";
 import { createDatabase } from "./database.js";
 import { createGroupService } from "./groups.js";
+import { createResourceService } from "./resources.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -13,6 +14,7 @@ const port = Number(process.env.PORT ?? 3000);
 const database = createDatabase(databaseUrl);
 const app = createApp(database, createAuthService(database.prisma), {
   groups: createGroupService(database.prisma),
+  resources: createResourceService(database.prisma),
 });
 
 app.listen(port, () => {

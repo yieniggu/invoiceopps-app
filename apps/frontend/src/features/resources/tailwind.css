@@ -1,0 +1,2 @@
+/* Feature-local Tailwind utilities only: no Preflight or global theme styles. */
+@import "tailwindcss/utilities.css" source(".");

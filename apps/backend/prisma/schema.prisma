@@ -12,6 +12,11 @@ enum OrganizationRole {
   STUDENT
 }
 
+enum ResourceOwnerType {
+  USER
+  GROUP
+}
+
 model User {
   id           String                   @id @default(uuid())
   name         String
@@ -22,6 +27,7 @@ model User {
   memberships  OrganizationMembership[]
   groupMemberships GroupMembership[]
   sessions     Session[]
+  createdResources ResourceReference[] @relation("ResourceCreatedBy")
 }
 
 model Organization {
@@ -35,6 +41,7 @@ model Organization {
   memberships     OrganizationMembership[]
   authorizedUsers AuthorizedUserOrganization[]
   groups          Group[]
+  resources       ResourceReference[]
 }
 
 model OrganizationMembership {
@@ -92,4 +99,18 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model ResourceReference {
+  id              String            @id @default(uuid())
+  organizationId  String
+  ownerType       ResourceOwnerType
+  ownerId         String
+  createdByUserId String
+  type            String
+  label           String
+  organization    Organization      @relation(fields: [organizationId], references: [id])
+  createdByUser   User              @relation("ResourceCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([organizationId, ownerType, ownerId])
 }

@@ -6,6 +6,7 @@ import { createAuthRateLimiter } from "../src/auth-rate-limit.js";
 import { AuthError, createAuthService, type AuthService } from "../src/auth.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import type { GroupService } from "../src/groups.js";
+import type { ResourceService } from "../src/resources.js";
 
 function createAuthServiceForHttpTest(): AuthService {
   const users = new Map<
@@ -308,6 +309,7 @@ describe("APP-03 profile HTTP contract", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       profile: {
+        id: "user-1",
         name: "Ada Lovelace",
         rut: "123456785",
         email: "ada@example.test",
@@ -332,7 +334,7 @@ describe("APP-03 profile HTTP contract", () => {
         ],
       },
     });
-    expect(response.body).not.toHaveProperty("id");
+    expect(response.body.profile.id).toBe("user-1");
   });
 
   it("returns the same safe 401 for absent, invalid, and expired sessions", async () => {
@@ -439,6 +441,99 @@ describe("APP-03 profile HTTP contract", () => {
 
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+  });
+});
+
+describe("APP-05 resource ownership HTTP contract", () => {
+  function createResourceApp(resourceOverrides: Partial<ResourceService> = {}) {
+    return createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "valid-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "user-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            memberships: [],
+          };
+        },
+      },
+      {
+        resources: {
+          async listResources(userId, context) {
+            return [
+              {
+                id: "resource-1",
+                type: "ml-experiment",
+                label: "Personal experiment",
+                organizationId: context.organizationId,
+                ownerType: context.ownerType,
+                ownerId: context.ownerId,
+                createdByUserId: userId,
+              },
+            ];
+          },
+          ...resourceOverrides,
+        } satisfies ResourceService,
+      },
+    );
+  }
+
+  it("lists resources only for the authenticated user's selected owner context", async () => {
+    const response = await request(createResourceApp())
+      .get("/resources")
+      .query({
+        organizationId: "organization-1",
+        ownerType: "group",
+        ownerId: "group-1",
+      })
+      .set("Cookie", "invoiceops_session=valid-session");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      resources: [
+        {
+          id: "resource-1",
+          type: "ml-experiment",
+          label: "Personal experiment",
+          organizationId: "organization-1",
+          ownerType: "group",
+          ownerId: "group-1",
+          createdByUserId: "user-1",
+        },
+      ],
+    });
+  });
+
+  it("rejects missing or invalid owner filters and preserves the current 401 response", async () => {
+    const app = createResourceApp();
+    const missing = await request(app)
+      .get("/resources")
+      .set("Cookie", "invoiceops_session=valid-session");
+    const invalid = await request(app)
+      .get("/resources")
+      .query({
+        organizationId: "organization-1",
+        ownerType: "other",
+        ownerId: "owner-1",
+      })
+      .set("Cookie", "invoiceops_session=valid-session");
+    const anonymous = await request(app).get("/resources").query({
+      organizationId: "organization-1",
+      ownerType: "user",
+      ownerId: "user-1",
+    });
+
+    expect(missing.status).toBe(400);
+    expect(invalid.status).toBe(400);
+    expect(anonymous.status).toBe(401);
   });
 });
 

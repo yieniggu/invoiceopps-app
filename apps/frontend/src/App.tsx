@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { ResourceContext } from "./features/resources/ResourceContext";
+
 type Profile = {
+  id: string;
   name: string;
   rut: string;
   email: string | null;
@@ -463,6 +466,10 @@ export function App() {
           ))}
         {groupError ? <p role="alert">{groupError}</p> : null}
       </section>
+
+      {groupsState.kind === "loaded" ? (
+        <ResourceContext profile={profile} groups={groupsState.groups} />
+      ) : null}
     </main>
   );
 }
