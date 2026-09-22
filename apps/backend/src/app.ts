@@ -7,6 +7,7 @@ import {
 import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
 import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
+import type { InvoiceDecision, InvoiceService } from "./invoices.js";
 import type { ResourceContext, ResourceService } from "./resources.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
@@ -140,6 +141,39 @@ function parseResourceContext(input: unknown): ResourceContext {
   return { organizationId, ownerType, ownerId };
 }
 
+function parseInvoiceListQuery(input: unknown) {
+  const query = input as Record<string, unknown>;
+  const context = parseResourceContext(query);
+  const q = query.q === undefined ? "" : query.q;
+  const cursor = query.cursor === undefined ? undefined : query.cursor;
+  const limit = query.limit === undefined ? 50 : Number(query.limit);
+  if (
+    typeof q !== "string" ||
+    q.trim().length > 120 ||
+    (cursor !== undefined && (typeof cursor !== "string" || !cursor)) ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100
+  ) {
+    throw new AuthError(400, "Invalid invoice query");
+  }
+  return { context, q: q.trim(), cursor, limit };
+}
+
+function parseInvoiceDecision(input: unknown): InvoiceDecision {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).length !== 1 ||
+    ((input as { decision?: unknown }).decision !== "AUTO_PROCESS" &&
+      (input as { decision?: unknown }).decision !== "MANUAL_REVIEW")
+  ) {
+    throw new AuthError(400, "Invalid invoice decision");
+  }
+  return (input as { decision: InvoiceDecision }).decision;
+}
+
 function requestOrigin(request: express.Request) {
   const forwardedProtocol = request.headers["x-forwarded-proto"];
   const protocol =
@@ -169,6 +203,7 @@ function profileResponse(
 export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
   groups?: GroupService;
+  invoices?: InvoiceService;
   resources?: ResourceService;
 }
 
@@ -178,6 +213,7 @@ export function createApp(
   {
     authRateLimiter = createAuthRateLimiter(),
     groups,
+    invoices,
     resources,
   }: AppOptions = {},
 ) {
@@ -327,6 +363,58 @@ export function createApp(
     response
       .status(200)
       .json({ resources: await resources.listResources(profile.id, context) });
+  });
+
+  app.get("/invoices", async (request, response) => {
+    const { context, q, cursor, limit } = parseInvoiceListQuery(request.query);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !invoices || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    response
+      .status(200)
+      .json(
+        await invoices.listInvoices(profile.id, context, { q, cursor, limit }),
+      );
+  });
+
+  app.get("/invoices/:invoiceId", async (request, response) => {
+    const { context } = parseInvoiceListQuery(request.query);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !invoices || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    response
+      .status(200)
+      .json(
+        await invoices.getInvoice(
+          profile.id,
+          context,
+          request.params.invoiceId,
+        ),
+      );
+  });
+
+  app.post("/invoices/:invoiceId/decision", async (request, response) => {
+    const { context } = parseInvoiceListQuery(request.query);
+    const decision = parseInvoiceDecision(request.body);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !invoices || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    response
+      .status(200)
+      .json(
+        await invoices.decideInvoice(
+          { id: profile.id, name: profile.name, rut: profile.rut },
+          context,
+          request.params.invoiceId,
+          decision,
+        ),
+      );
   });
 
   app.post(

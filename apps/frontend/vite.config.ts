@@ -11,6 +11,7 @@ export default defineConfig({
       "/auth": "http://localhost:3000",
       "/profile": "http://localhost:3000",
       "/groups": "http://localhost:3000",
+      "/invoices": "http://localhost:3000",
       "/resources": "http://localhost:3000",
       "/organizations": "http://localhost:3000",
     },

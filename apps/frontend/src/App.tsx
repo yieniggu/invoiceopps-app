@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import { ResourceContext } from "./features/resources/ResourceContext";
+import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
 
 type Profile = {
   id: string;
@@ -70,6 +71,7 @@ export function App() {
   const [logoutError, setLogoutError] = useState<string>();
   const [groupError, setGroupError] = useState<string>();
   const [isMutatingGroup, setIsMutatingGroup] = useState(false);
+  const [showInvoices, setShowInvoices] = useState(false);
 
   const loadProfile = async () => {
     setState({ kind: "loading" });
@@ -468,7 +470,24 @@ export function App() {
       </section>
 
       {groupsState.kind === "loaded" ? (
-        <ResourceContext profile={profile} groups={groupsState.groups} />
+        <>
+          <ResourceContext profile={profile} groups={groupsState.groups} />
+          <section aria-labelledby="invoices-navigation-title">
+            <h2 id="invoices-navigation-title">Facturas</h2>
+            <p>
+              Consulta y decide las facturas del contexto de trabajo elegido.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowInvoices((value) => !value)}
+            >
+              {showInvoices ? "Ocultar facturas" : "Ver facturas"}
+            </button>
+          </section>
+          {showInvoices ? (
+            <InvoiceWorkspace profile={profile} groups={groupsState.groups} />
+          ) : null}
+        </>
       ) : null}
     </main>
   );

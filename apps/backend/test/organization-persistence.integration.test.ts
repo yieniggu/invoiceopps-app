@@ -8,6 +8,7 @@ import {
 import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
+import { createInvoiceService } from "../src/invoices.js";
 import { createResourceService } from "../src/resources.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
 
@@ -24,6 +25,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.session.deleteMany();
+  await prisma.decisionEvent.deleteMany();
+  await prisma.invoice.deleteMany();
   await prisma.resourceReference.deleteMany();
   await prisma.groupMembership.deleteMany();
   await prisma.group.deleteMany();
@@ -557,5 +560,342 @@ describe("APP-05 PostgreSQL resource ownership", () => {
         ownerId: otherMember.id,
       }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("APP-06 PostgreSQL invoice domain", () => {
+  it("filters owner-scoped invoices and atomically snapshots a permitted decision audit", async () => {
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    const actor = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const otherUser = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: actor.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+        {
+          userId: otherUser.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+    await prisma.invoice.createMany({
+      data: [
+        {
+          invoiceId: "INV-001",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: actor.id,
+          createdByUserId: actor.id,
+          vendorName: "Acme Ltd.",
+          invoiceAmountCents: 500_000,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 365,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "medium",
+        },
+        {
+          invoiceId: "INV-002",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: otherUser.id,
+          createdByUserId: otherUser.id,
+          vendorName: "Other vendor",
+          invoiceAmountCents: 1,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+        },
+        {
+          invoiceId: "INV-003",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: actor.id,
+          createdByUserId: actor.id,
+          vendorName: "High amount vendor",
+          invoiceAmountCents: 500_001,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+        },
+        {
+          invoiceId: "INV-004",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: actor.id,
+          createdByUserId: actor.id,
+          vendorName: "No purchase order vendor",
+          invoiceAmountCents: 1,
+          hasPurchaseOrder: false,
+          threeWayMatch: true,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+        },
+        {
+          invoiceId: "INV-005",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: actor.id,
+          createdByUserId: actor.id,
+          vendorName: "No three-way match vendor",
+          invoiceAmountCents: 1,
+          hasPurchaseOrder: true,
+          threeWayMatch: false,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+        },
+        {
+          invoiceId: "INV-006",
+          organizationId: organization.id,
+          ownerType: "USER",
+          ownerId: actor.id,
+          createdByUserId: actor.id,
+          vendorName: "Risk ignored vendor",
+          invoiceAmountCents: 500_000,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 0,
+          previousIncidents12m: 99,
+          bankAccountRecentlyChanged: true,
+          amountVsVendorMedian: 99,
+          countryRisk: "high",
+        },
+      ],
+    });
+    const invoices = createInvoiceService(prisma);
+    const context = {
+      organizationId: organization.id,
+      ownerType: "user" as const,
+      ownerId: actor.id,
+    };
+
+    await expect(
+      invoices.listInvoices(actor.id, context, { q: "acme", limit: 50 }),
+    ).resolves.toMatchObject({
+      invoices: [{ invoiceId: "INV-001" }],
+      nextCursor: null,
+    });
+    const decided = await invoices.decideInvoice(
+      actor,
+      context,
+      "INV-001",
+      "AUTO_PROCESS",
+    );
+    await prisma.user.update({
+      where: { id: actor.id },
+      data: { name: "Ada Updated", rut: "123456785" },
+    });
+
+    expect(decided).toMatchObject({
+      invoice: { status: "AUTO_PROCESSED" },
+      auditEvent: {
+        ruleVersion: "invoice-rules-v1",
+        actor: { name: "Ada Lovelace", rut: "123456785" },
+      },
+    });
+    await expect(
+      invoices.getInvoice(actor.id, context, "INV-001"),
+    ).resolves.toMatchObject({
+      auditEvents: [{ actor: { name: "Ada Lovelace", rut: "123456785" } }],
+    });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-001", "AUTO_PROCESS"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-003", "AUTO_PROCESS"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-003", "MANUAL_REVIEW"),
+    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-004", "AUTO_PROCESS"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-004", "MANUAL_REVIEW"),
+    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-005", "AUTO_PROCESS"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-005", "MANUAL_REVIEW"),
+    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
+    await expect(
+      invoices.decideInvoice(actor, context, "INV-006", "AUTO_PROCESS"),
+    ).resolves.toMatchObject({ invoice: { status: "AUTO_PROCESSED" } });
+    await expect(
+      invoices.getInvoice(actor.id, context, "INV-002"),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      invoices.listInvoices(
+        actor.id,
+        {
+          organizationId: organization.id,
+          ownerType: "user",
+          ownerId: otherUser.id,
+        },
+        { q: "", limit: 50 },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("authorizes group owners and traverses stable cursor pages", async () => {
+    const organization = await persistence.createOrganization({
+      name: "Cursor Academy",
+      slug: "cursor-academy",
+    });
+    const member = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const nonMember = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: member.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+        {
+          userId: nonMember.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+    const group = await prisma.group.create({
+      data: { organizationId: organization.id, name: "Invoice group" },
+    });
+    await prisma.groupMembership.create({
+      data: {
+        groupId: group.id,
+        userId: member.id,
+        organizationId: organization.id,
+      },
+    });
+    await prisma.invoice.createMany({
+      data: [
+        {
+          invoiceId: "INV-GROUP",
+          organizationId: organization.id,
+          ownerType: "GROUP",
+          ownerId: group.id,
+          createdByUserId: member.id,
+          vendorName: "Group vendor",
+          invoiceAmountCents: 1,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+        },
+        ...[1, 2, 3].map((number) => ({
+          invoiceId: `INV-CURSOR-${number}`,
+          organizationId: organization.id,
+          ownerType: "USER" as const,
+          ownerId: member.id,
+          createdByUserId: member.id,
+          vendorName: `Cursor vendor ${number}`,
+          invoiceAmountCents: 1,
+          hasPurchaseOrder: true,
+          threeWayMatch: true,
+          vendorTenureDays: 1,
+          previousIncidents12m: 0,
+          bankAccountRecentlyChanged: false,
+          amountVsVendorMedian: 1,
+          countryRisk: "low",
+          createdAt: new Date(`2026-09-21T00:00:0${number}.000Z`),
+        })),
+      ],
+    });
+    const invoices = createInvoiceService(prisma);
+    const groupContext = {
+      organizationId: organization.id,
+      ownerType: "group" as const,
+      ownerId: group.id,
+    };
+
+    await expect(
+      invoices.listInvoices(member.id, groupContext, { q: "", limit: 50 }),
+    ).resolves.toMatchObject({ invoices: [{ invoiceId: "INV-GROUP" }] });
+    await expect(
+      invoices.listInvoices(nonMember.id, groupContext, { q: "", limit: 50 }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    const individualContext = {
+      organizationId: organization.id,
+      ownerType: "user" as const,
+      ownerId: member.id,
+    };
+    const firstPage = await invoices.listInvoices(
+      member.id,
+      individualContext,
+      {
+        q: "Cursor vendor",
+        limit: 1,
+      },
+    );
+    const secondPage = await invoices.listInvoices(
+      member.id,
+      individualContext,
+      {
+        q: "Cursor vendor",
+        cursor: firstPage.nextCursor ?? undefined,
+        limit: 1,
+      },
+    );
+    const thirdPage = await invoices.listInvoices(
+      member.id,
+      individualContext,
+      {
+        q: "Cursor vendor",
+        cursor: secondPage.nextCursor ?? undefined,
+        limit: 1,
+      },
+    );
+
+    expect(firstPage).toMatchObject({
+      invoices: [{ invoiceId: "INV-CURSOR-3" }],
+    });
+    expect(secondPage).toMatchObject({
+      invoices: [{ invoiceId: "INV-CURSOR-2" }],
+    });
+    expect(thirdPage).toMatchObject({
+      invoices: [{ invoiceId: "INV-CURSOR-1" }],
+      nextCursor: null,
+    });
   });
 });

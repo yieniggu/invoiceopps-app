@@ -17,6 +17,13 @@ enum ResourceOwnerType {
   GROUP
 }
 
+enum InvoiceStatus {
+  PENDING
+  AUTO_PROCESSED
+  MANUAL_REVIEW
+  CANCELLED
+}
+
 model User {
   id           String                   @id @default(uuid())
   name         String
@@ -28,6 +35,8 @@ model User {
   groupMemberships GroupMembership[]
   sessions     Session[]
   createdResources ResourceReference[] @relation("ResourceCreatedBy")
+  createdInvoices Invoice[] @relation("InvoiceCreatedBy")
+  decisionEvents DecisionEvent[]
 }
 
 model Organization {
@@ -42,6 +51,7 @@ model Organization {
   authorizedUsers AuthorizedUserOrganization[]
   groups          Group[]
   resources       ResourceReference[]
+  invoices        Invoice[]
 }
 
 model OrganizationMembership {
@@ -113,4 +123,47 @@ model ResourceReference {
   createdByUser   User              @relation("ResourceCreatedBy", fields: [createdByUserId], references: [id])
 
   @@index([organizationId, ownerType, ownerId])
+}
+
+model Invoice {
+  id                          String            @id @default(uuid())
+  invoiceId                   String
+  organizationId              String
+  ownerType                   ResourceOwnerType
+  ownerId                     String
+  createdByUserId             String
+  vendorName                  String
+  invoiceAmountCents          Int
+  hasPurchaseOrder            Boolean
+  threeWayMatch               Boolean
+  status                      InvoiceStatus     @default(PENDING)
+  vendorTenureDays            Int
+  previousIncidents12m        Int
+  bankAccountRecentlyChanged  Boolean
+  amountVsVendorMedian        Float
+  countryRisk                 String
+  createdAt                   DateTime          @default(now())
+  updatedAt                   DateTime          @updatedAt
+  organization                Organization      @relation(fields: [organizationId], references: [id])
+  createdByUser               User              @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  decisionEvents              DecisionEvent[]
+
+  @@unique([organizationId, invoiceId])
+  @@index([organizationId, ownerType, ownerId, createdAt, id])
+}
+
+model DecisionEvent {
+  id               String   @id @default(uuid())
+  invoiceId        String
+  decision         String
+  ruleVersion      String
+  actorUserId      String
+  actorName        String
+  actorRut         String
+  correlationId    String   @unique
+  createdAt        DateTime @default(now())
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id])
+  actor            User     @relation(fields: [actorUserId], references: [id])
+
+  @@index([invoiceId, createdAt, id])
 }
