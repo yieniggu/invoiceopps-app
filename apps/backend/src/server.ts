@@ -4,6 +4,7 @@ import { createDatabase } from "./database.js";
 import { createGroupService } from "./groups.js";
 import { createInvoiceService } from "./invoices.js";
 import { createResourceService } from "./resources.js";
+import { createPlatformAdministratorService } from "./platform-administrator.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -17,6 +18,7 @@ const app = createApp(database, createAuthService(database.prisma), {
   groups: createGroupService(database.prisma),
   invoices: createInvoiceService(database.prisma),
   resources: createResourceService(database.prisma),
+  platformAdministrators: createPlatformAdministratorService(database.prisma),
 });
 
 app.listen(port, () => {

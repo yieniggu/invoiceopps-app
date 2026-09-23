@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm run generate && tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "platform-administrator": "tsx src/bootstrap-platform-administrator.ts",
     "generate": "prisma generate",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",

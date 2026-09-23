@@ -9,6 +9,8 @@ import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
 import { createInvoiceService } from "../src/invoices.js";
+import { parsePlatformAdministratorCommand } from "../src/platform-administrator-command.js";
+import { createPlatformAdministratorService } from "../src/platform-administrator.js";
 import { createResourceService } from "../src/resources.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
 
@@ -24,6 +26,10 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // TRUNCATE bypasses the append-only DELETE trigger only while resetting isolated test data.
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "PlatformAdministrativeAuditEvent", "PlatformAdministrator"',
+  );
   await prisma.session.deleteMany();
   await prisma.decisionEvent.deleteMany();
   await prisma.invoice.deleteMany();
@@ -475,6 +481,470 @@ describe("APP-04 PostgreSQL organization groups", () => {
       expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
       expect.objectContaining({ id: zeta.id, name: "Zeta group" }),
     ]);
+  });
+});
+
+describe("PlatformAdministrator PostgreSQL integration", () => {
+  it("discovers every organization and group without local membership only for the platform administrator", async () => {
+    const platformUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const organizationAdministrator = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const unauthorizedUser = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: organizationAdministrator.id,
+        organizationId: organization.id,
+        role: OrganizationRole.ADMIN,
+      },
+    });
+    const groups = createGroupService(prisma);
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+    await platformAdministrators.bootstrap(platformUser.id);
+    const group = await groups.createGroup(platformUser.id, organization.id, {
+      name: "Advanced topics",
+    });
+
+    await expect(
+      platformAdministrators.listOrganizations(unauthorizedUser.id),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      platformAdministrators.listOrganizations(platformUser.id),
+    ).resolves.toEqual([
+      {
+        id: organization.id,
+        name: "AI Academy",
+        groups: [
+          {
+            id: group.id,
+            name: "Advanced topics",
+            description: null,
+            organization: { id: organization.id, name: "AI Academy" },
+            members: [],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("enforces singleton bootstrap and records immutable audit events", async () => {
+    const firstUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const secondUser = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+
+    await platformAdministrators.bootstrap(firstUser.id);
+
+    await expect(
+      platformAdministrators.bootstrap(secondUser.id),
+    ).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(
+      prisma.platformAdministrator.create({
+        data: { id: 2, userId: secondUser.id },
+      }),
+    ).rejects.toThrow();
+    expect(await prisma.platformAdministrator.count()).toBe(1);
+
+    const auditEvent =
+      await prisma.platformAdministrativeAuditEvent.findFirstOrThrow();
+    await expect(
+      prisma.platformAdministrativeAuditEvent.update({
+        where: { id: auditEvent.id },
+        data: { role: OrganizationRole.ADMIN },
+      }),
+    ).rejects.toThrow(/append-only/);
+    await expect(
+      prisma.platformAdministrativeAuditEvent.delete({
+        where: { id: auditEvent.id },
+      }),
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it("creates, promotes, demotes, and removes memberships with exact append-only audits", async () => {
+    const platformUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const firstAdministrator = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const secondAdministrator = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    const member = await persistence.createUser({
+      name: "Margaret Hamilton",
+      rut: "12.345.671-8",
+    });
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [firstAdministrator, secondAdministrator].map((user) => ({
+        userId: user.id,
+        organizationId: organization.id,
+        role: OrganizationRole.ADMIN,
+      })),
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+    await platformAdministrators.bootstrap(platformUser.id);
+
+    await platformAdministrators.createMembership(
+      platformUser.id,
+      organization.id,
+      member.id,
+      OrganizationRole.STUDENT,
+    );
+    await platformAdministrators.changeMembershipRole(
+      platformUser.id,
+      organization.id,
+      member.id,
+      OrganizationRole.ADMIN,
+    );
+    await platformAdministrators.changeMembershipRole(
+      platformUser.id,
+      organization.id,
+      member.id,
+      OrganizationRole.STUDENT,
+    );
+    await platformAdministrators.removeMembership(
+      platformUser.id,
+      organization.id,
+      member.id,
+    );
+
+    expect(
+      await prisma.organizationMembership.findMany({
+        where: { organizationId: organization.id },
+        select: { userId: true, role: true },
+        orderBy: { userId: "asc" },
+      }),
+    ).toEqual(
+      [firstAdministrator, secondAdministrator]
+        .map(({ id }) => ({ userId: id, role: OrganizationRole.ADMIN }))
+        .sort((left, right) => left.userId.localeCompare(right.userId)),
+    );
+    const auditEvents = await prisma.platformAdministrativeAuditEvent.findMany({
+      where: { organizationId: organization.id },
+      select: {
+        type: true,
+        actorUserId: true,
+        targetUserId: true,
+        organizationId: true,
+        previousRole: true,
+        role: true,
+      },
+    });
+    expect(auditEvents).toHaveLength(4);
+    expect(auditEvents).toEqual(
+      expect.arrayContaining([
+        {
+          type: "ORGANIZATION_MEMBERSHIP_CREATED",
+          actorUserId: platformUser.id,
+          targetUserId: member.id,
+          organizationId: organization.id,
+          previousRole: null,
+          role: OrganizationRole.STUDENT,
+        },
+        {
+          type: "ORGANIZATION_MEMBERSHIP_ROLE_CHANGED",
+          actorUserId: platformUser.id,
+          targetUserId: member.id,
+          organizationId: organization.id,
+          previousRole: OrganizationRole.STUDENT,
+          role: OrganizationRole.ADMIN,
+        },
+        {
+          type: "ORGANIZATION_MEMBERSHIP_ROLE_CHANGED",
+          actorUserId: platformUser.id,
+          targetUserId: member.id,
+          organizationId: organization.id,
+          previousRole: OrganizationRole.ADMIN,
+          role: OrganizationRole.STUDENT,
+        },
+        {
+          type: "ORGANIZATION_MEMBERSHIP_REMOVED",
+          actorUserId: platformUser.id,
+          targetUserId: member.id,
+          organizationId: organization.id,
+          previousRole: OrganizationRole.STUDENT,
+          role: null,
+        },
+      ]),
+    );
+  });
+
+  it("rolls back membership creation when the audit insert fails", async () => {
+    const platformUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const member = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+    await platformAdministrators.bootstrap(platformUser.id);
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        CREATE FUNCTION fail_platform_membership_audit_insert() RETURNS trigger AS $$
+        BEGIN
+          IF NEW."organizationId" = '${organization.id}' THEN
+            RAISE EXCEPTION 'induced audit failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TRIGGER fail_platform_membership_audit_insert
+        BEFORE INSERT ON "PlatformAdministrativeAuditEvent"
+        FOR EACH ROW EXECUTE FUNCTION fail_platform_membership_audit_insert();
+      `);
+      await expect(
+        platformAdministrators.createMembership(
+          platformUser.id,
+          organization.id,
+          member.id,
+          OrganizationRole.STUDENT,
+        ),
+      ).rejects.toThrow(/induced audit failure/);
+      expect(
+        await prisma.organizationMembership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: member.id,
+              organizationId: organization.id,
+            },
+          },
+        }),
+      ).toBeNull();
+      expect(
+        await prisma.platformAdministrativeAuditEvent.count({
+          where: { organizationId: organization.id },
+        }),
+      ).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS fail_platform_membership_audit_insert ON "PlatformAdministrativeAuditEvent"; DROP FUNCTION IF EXISTS fail_platform_membership_audit_insert();',
+      );
+    }
+  });
+
+  it("mutates only when a confirmed parsed command is applied", async () => {
+    const firstUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const secondUser = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+
+    for (const arguments_ of [
+      [],
+      ["bootstrap", firstUser.id],
+      ["bootstrap", firstUser.id, "--confirm-transfer"],
+      ["transfer", secondUser.id, "--confirm-bootstrap"],
+    ]) {
+      expect(() => parsePlatformAdministratorCommand(arguments_)).toThrow();
+    }
+    expect(await prisma.platformAdministrator.count()).toBe(0);
+    expect(await prisma.platformAdministrativeAuditEvent.count()).toBe(0);
+
+    const bootstrap = parsePlatformAdministratorCommand([
+      "bootstrap",
+      firstUser.id,
+      "--confirm-bootstrap",
+    ]);
+    await platformAdministrators.bootstrap(bootstrap.userId);
+    const transfer = parsePlatformAdministratorCommand([
+      "transfer",
+      secondUser.id,
+      "--confirm-transfer",
+    ]);
+    await platformAdministrators.transfer(transfer.userId);
+
+    await expect(
+      prisma.platformAdministrator.findUniqueOrThrow({ where: { id: 1 } }),
+    ).resolves.toMatchObject({ userId: secondUser.id });
+    const auditEvents = await prisma.platformAdministrativeAuditEvent.findMany({
+      select: { type: true, actorUserId: true, targetUserId: true },
+    });
+    expect(auditEvents).toHaveLength(2);
+    expect(auditEvents).toEqual(
+      expect.arrayContaining([
+        {
+          type: "PLATFORM_ADMINISTRATOR_BOOTSTRAPPED",
+          actorUserId: firstUser.id,
+          targetUserId: firstUser.id,
+        },
+        {
+          type: "PLATFORM_ADMINISTRATOR_TRANSFERRED",
+          actorUserId: firstUser.id,
+          targetUserId: secondUser.id,
+        },
+      ]),
+    );
+  });
+
+  it("rejects organization membership administration by a non-platform user", async () => {
+    const platformUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const unauthorizedUser = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const member = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: member.id,
+        organizationId: organization.id,
+        role: OrganizationRole.STUDENT,
+      },
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+    await platformAdministrators.bootstrap(platformUser.id);
+
+    await expect(
+      platformAdministrators.createMembership(
+        unauthorizedUser.id,
+        organization.id,
+        unauthorizedUser.id,
+        OrganizationRole.STUDENT,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      platformAdministrators.changeMembershipRole(
+        unauthorizedUser.id,
+        organization.id,
+        member.id,
+        OrganizationRole.ADMIN,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      platformAdministrators.removeMembership(
+        unauthorizedUser.id,
+        organization.id,
+        member.id,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await prisma.organizationMembership.count()).toBe(1);
+  });
+
+  it("retains an organization ADMIN during parallel demotion and removal attempts", async () => {
+    const platformUser = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const firstAdministrator = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    const secondAdministrator = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    const organization = await persistence.createOrganization({
+      name: "AI Academy",
+      slug: "ai-academy",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [firstAdministrator, secondAdministrator].map((user) => ({
+        userId: user.id,
+        organizationId: organization.id,
+        role: OrganizationRole.ADMIN,
+      })),
+    });
+    const platformAdministrators = createPlatformAdministratorService(prisma);
+    await platformAdministrators.bootstrap(platformUser.id);
+
+    const demotions = await Promise.allSettled([
+      platformAdministrators.changeMembershipRole(
+        platformUser.id,
+        organization.id,
+        firstAdministrator.id,
+        OrganizationRole.STUDENT,
+      ),
+      platformAdministrators.changeMembershipRole(
+        platformUser.id,
+        organization.id,
+        secondAdministrator.id,
+        OrganizationRole.STUDENT,
+      ),
+    ]);
+    expect(demotions.some((result) => result.status === "fulfilled")).toBe(
+      true,
+    );
+    expect(
+      await prisma.organizationMembership.count({
+        where: {
+          organizationId: organization.id,
+          role: OrganizationRole.ADMIN,
+        },
+      }),
+    ).toBeGreaterThanOrEqual(1);
+
+    await prisma.organizationMembership.updateMany({
+      where: { organizationId: organization.id },
+      data: { role: OrganizationRole.ADMIN },
+    });
+    const removals = await Promise.allSettled([
+      platformAdministrators.removeMembership(
+        platformUser.id,
+        organization.id,
+        firstAdministrator.id,
+      ),
+      platformAdministrators.removeMembership(
+        platformUser.id,
+        organization.id,
+        secondAdministrator.id,
+      ),
+    ]);
+    expect(removals.some((result) => result.status === "fulfilled")).toBe(true);
+    expect(
+      await prisma.organizationMembership.count({
+        where: {
+          organizationId: organization.id,
+          role: OrganizationRole.ADMIN,
+        },
+      }),
+    ).toBeGreaterThanOrEqual(1);
   });
 });
 

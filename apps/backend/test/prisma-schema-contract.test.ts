@@ -6,6 +6,12 @@ import { describe, expect, it } from "vitest";
 const schemaPath = fileURLToPath(
   new URL("../prisma/schema.prisma", import.meta.url),
 );
+const platformAdministratorMigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20260922213000_add_platform_administrator/migration.sql",
+    import.meta.url,
+  ),
+);
 
 function modelBlock(schema: string, modelName: string) {
   const match = schema.match(
@@ -96,5 +102,34 @@ describe("APP-01 Prisma schema contract", () => {
     expect(membership).toMatch(/^\s*groupId\s+String\b/m);
     expect(membership).toMatch(/^\s*userId\s+String\b/m);
     expect(membership).toMatch(/@@unique\(\[groupId,\s*userId\]\)/);
+  });
+
+  it("declares the fixed platform administrator and immutable audit events", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const migration = await readFile(
+      platformAdministratorMigrationPath,
+      "utf8",
+    );
+    const user = modelBlock(schema, "User");
+    const administrator = modelBlock(schema, "PlatformAdministrator");
+    const auditEvent = modelBlock(schema, "PlatformAdministrativeAuditEvent");
+
+    expect(user).toMatch(
+      /^\s*platformAdministrator\s+PlatformAdministrator\?(?:\s|$)/m,
+    );
+    expect(administrator).toMatch(/^\s*id\s+Int\s+@id\s+@default\(1\)/m);
+    expect(administrator).toMatch(/^\s*userId\s+String\s+@unique\b/m);
+    expect(administrator).toMatch(/onDelete:\s*Restrict/);
+    expect(auditEvent).toMatch(
+      /^\s*type\s+PlatformAdministrativeAuditEventType\b/m,
+    );
+    expect(auditEvent).toMatch(/^\s*actorUserId\s+String\b/m);
+    expect(migration).toContain(
+      'CONSTRAINT "PlatformAdministrator_singleton_check" CHECK ("id" = 1)',
+    );
+    expect(migration).toContain('BEFORE DELETE ON "PlatformAdministrator"');
+    expect(migration).toContain(
+      'BEFORE UPDATE OR DELETE ON "PlatformAdministrativeAuditEvent"',
+    );
   });
 });

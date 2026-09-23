@@ -7,6 +7,7 @@ import { AuthError, createAuthService, type AuthService } from "../src/auth.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
 import type { GroupService } from "../src/groups.js";
 import type { ResourceService } from "../src/resources.js";
+import type { PlatformAdministratorService } from "../src/platform-administrator.js";
 
 function createAuthServiceForHttpTest(): AuthService {
   const users = new Map<
@@ -199,6 +200,7 @@ describe("APP-02 auth HTTP contract", () => {
             rut: "123456785",
             email: null,
             username: null,
+            isPlatformAdministrator: false,
             memberships: [],
           };
         },
@@ -276,6 +278,7 @@ describe("APP-03 profile HTTP contract", () => {
             rut: "123456785",
             email: "ada@example.test",
             username: "ada",
+            isPlatformAdministrator: false,
             memberships: [
               {
                 organization: {
@@ -314,6 +317,7 @@ describe("APP-03 profile HTTP contract", () => {
         rut: "123456785",
         email: "ada@example.test",
         username: "ada",
+        isPlatformAdministrator: false,
         memberships: [
           {
             organization: {
@@ -335,6 +339,37 @@ describe("APP-03 profile HTTP contract", () => {
       },
     });
     expect(response.body.profile.id).toBe("user-1");
+  });
+
+  it("exposes platform administration status only from the authenticated profile", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "platform-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "platform-admin-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            isPlatformAdministrator: true,
+            memberships: [],
+          };
+        },
+      },
+    );
+
+    const response = await request(app)
+      .get("/profile")
+      .set("Cookie", "invoiceops_session=platform-session");
+
+    expect(response.status).toBe(200);
+    expect(response.body.profile.isPlatformAdministrator).toBe(true);
   });
 
   it("returns the same safe 401 for absent, invalid, and expired sessions", async () => {
@@ -387,6 +422,7 @@ describe("APP-03 profile HTTP contract", () => {
             rut: "123456785",
             email: "ada.updated@example.test",
             username: "ada-updated",
+            isPlatformAdministrator: false,
             memberships: [],
           };
         },
@@ -461,6 +497,7 @@ describe("APP-05 resource ownership HTTP contract", () => {
             rut: "123456785",
             email: null,
             username: null,
+            isPlatformAdministrator: false,
             memberships: [],
           };
         },
@@ -556,6 +593,7 @@ describe("APP-04 groups HTTP contract", () => {
             rut: "123456785",
             email: null,
             username: null,
+            isPlatformAdministrator: false,
             memberships: [],
           };
         },
@@ -787,5 +825,109 @@ describe("APP-04 groups HTTP contract", () => {
     });
     expect(forbidden.status).toBe(403);
     expect(forbidden.body).toEqual({ status: "error", message: "Forbidden" });
+  });
+});
+
+describe("platform membership HTTP contract", () => {
+  it("uses the session identity for authorized discovery and preserves CSRF checks for membership changes", async () => {
+    const calls: unknown[][] = [];
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "platform-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+
+          return {
+            id: "platform-admin-1",
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            isPlatformAdministrator: true,
+            memberships: [],
+          };
+        },
+      },
+      {
+        platformAdministrators: {
+          async bootstrap() {
+            throw new Error("not used");
+          },
+          async transfer() {
+            throw new Error("not used");
+          },
+          async listOrganizations(actorUserId) {
+            calls.push(["list", actorUserId]);
+            return [
+              {
+                id: "organization-1",
+                name: "AI Academy",
+                groups: [],
+              },
+            ];
+          },
+          async createMembership(actorUserId, organizationId, userId, role) {
+            calls.push(["create", actorUserId, organizationId, userId, role]);
+            return { userId, organizationId, role };
+          },
+          async changeMembershipRole(
+            actorUserId,
+            organizationId,
+            userId,
+            role,
+          ) {
+            calls.push(["change", actorUserId, organizationId, userId, role]);
+            return { userId, organizationId, role };
+          },
+          async removeMembership(actorUserId, organizationId, userId) {
+            calls.push(["remove", actorUserId, organizationId, userId]);
+          },
+        } satisfies PlatformAdministratorService,
+      },
+    );
+
+    const discovered = await request(app)
+      .get("/platform/organizations")
+      .set("Cookie", "invoiceops_session=platform-session");
+    const created = await request(app)
+      .post("/platform/organizations/organization-1/members")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .set("Cookie", "invoiceops_session=platform-session")
+      .send({ userId: "student-1", role: "ADMIN" });
+    const changed = await request(app)
+      .patch("/platform/organizations/organization-1/members/student-1")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .set("Cookie", "invoiceops_session=platform-session")
+      .send({ role: "STUDENT" });
+    const removed = await request(app)
+      .delete("/platform/organizations/organization-1/members/student-1")
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .set("Cookie", "invoiceops_session=platform-session");
+    const csrfRejected = await request(app)
+      .post("/platform/organizations/organization-1/members")
+      .set("Cookie", "invoiceops_session=platform-session")
+      .set("Origin", "https://untrusted.example.test")
+      .send({ userId: "student-2", role: "STUDENT" });
+
+    expect(discovered.status).toBe(200);
+    expect(discovered.body).toEqual({
+      organizations: [{ id: "organization-1", name: "AI Academy", groups: [] }],
+    });
+    expect(created.status).toBe(201);
+    expect(changed.status).toBe(200);
+    expect(removed.status).toBe(204);
+    expect(csrfRejected.status).toBe(403);
+    expect(calls).toEqual([
+      ["list", "platform-admin-1"],
+      ["create", "platform-admin-1", "organization-1", "student-1", "ADMIN"],
+      ["change", "platform-admin-1", "organization-1", "student-1", "STUDENT"],
+      ["remove", "platform-admin-1", "organization-1", "student-1"],
+    ]);
   });
 });

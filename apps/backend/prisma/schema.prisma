@@ -24,6 +24,14 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+enum PlatformAdministrativeAuditEventType {
+  PLATFORM_ADMINISTRATOR_BOOTSTRAPPED
+  PLATFORM_ADMINISTRATOR_TRANSFERRED
+  ORGANIZATION_MEMBERSHIP_CREATED
+  ORGANIZATION_MEMBERSHIP_ROLE_CHANGED
+  ORGANIZATION_MEMBERSHIP_REMOVED
+}
+
 model User {
   id           String                   @id @default(uuid())
   name         String
@@ -37,6 +45,9 @@ model User {
   createdResources ResourceReference[] @relation("ResourceCreatedBy")
   createdInvoices Invoice[] @relation("InvoiceCreatedBy")
   decisionEvents DecisionEvent[]
+  platformAdministrator PlatformAdministrator?
+  platformAdministrativeAuditEvents PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditActor")
+  platformAdministrativeAuditTargets PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditTarget")
 }
 
 model Organization {
@@ -166,4 +177,28 @@ model DecisionEvent {
   actor            User     @relation(fields: [actorUserId], references: [id])
 
   @@index([invoiceId, createdAt, id])
+}
+
+model PlatformAdministrator {
+  id        Int      @id @default(1)
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlatformAdministrativeAuditEvent {
+  id             String                               @id @default(uuid())
+  type           PlatformAdministrativeAuditEventType
+  actorUserId    String
+  targetUserId   String?
+  organizationId String?
+  previousRole   OrganizationRole?
+  role           OrganizationRole?
+  createdAt      DateTime                             @default(now())
+  actor          User                                 @relation("PlatformAdministrativeAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  target         User?                                @relation("PlatformAdministrativeAuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt, id])
+  @@index([targetUserId, createdAt, id])
 }

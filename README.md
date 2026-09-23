@@ -223,6 +223,21 @@ organization for every request, returning safe authorization responses for
 absent sessions, non-members, and students. The ADMIN who creates a group is
 added as its first member so the group remains visible and manageable.
 
+Un administrador de plataforma puede administrar grupos de cualquier
+organización, incluso sin una membership local. Esta capacidad se aplica en el
+servidor y no depende de permisos entregados por el cliente.
+
+El primer administrador de plataforma se establece fuera de HTTP mediante el
+CLI local, con una confirmación explícita:
+
+```bash
+pnpm --filter @invoiceops/backend platform-administrator bootstrap <userId> --confirm-bootstrap
+```
+
+El CLI también admite la transferencia explícita con `transfer <userId>
+--confirm-transfer`. No expone una ruta HTTP de bootstrap ni incluye secretos o
+valores operacionales en sus argumentos.
+
 Cookie-authenticated mutations use an Origin same-origin check in central
 middleware. Requests carrying the session cookie must include an `Origin` that
 exactly matches the request origin; cross-origin requests receive `403` before

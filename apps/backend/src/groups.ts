@@ -89,10 +89,20 @@ function groupNotFound() {
 
 export function createGroupService(prisma: PrismaClient): GroupService {
   async function requireAdmin(userId: string, organizationId: string) {
-    const membership = await prisma.organizationMembership.findUnique({
-      where: { userId_organizationId: { userId, organizationId } },
-      select: { role: true },
-    });
+    const [membership, platformAdministrator] = await Promise.all([
+      prisma.organizationMembership.findUnique({
+        where: { userId_organizationId: { userId, organizationId } },
+        select: { role: true },
+      }),
+      prisma.platformAdministrator.findUnique({
+        where: { id: 1 },
+        select: { userId: true },
+      }),
+    ]);
+
+    if (platformAdministrator?.userId === userId) {
+      return true;
+    }
 
     if (!membership) {
       throw groupNotFound();
@@ -101,6 +111,8 @@ export function createGroupService(prisma: PrismaClient): GroupService {
     if (membership.role !== OrganizationRole.ADMIN) {
       throw new AuthError(403, "Forbidden");
     }
+
+    return false;
   }
 
   async function requireGroup(groupId: string, organizationId: string) {
@@ -131,20 +143,27 @@ export function createGroupService(prisma: PrismaClient): GroupService {
       return groups.map(toGroupResponse);
     },
     async createGroup(userId, organizationId, input) {
-      await requireAdmin(userId, organizationId);
+      const isPlatformAdministrator = await requireAdmin(
+        userId,
+        organizationId,
+      );
       const group = await prisma.group.create({
-        data: {
-          ...input,
-          organizationId,
-          memberships: {
-            create: {
-              user: { connect: { id: userId } },
-              organizationMembership: {
-                connect: { userId_organizationId: { userId, organizationId } },
+        data: isPlatformAdministrator
+          ? { ...input, organizationId }
+          : {
+              ...input,
+              organizationId,
+              memberships: {
+                create: {
+                  user: { connect: { id: userId } },
+                  organizationMembership: {
+                    connect: {
+                      userId_organizationId: { userId, organizationId },
+                    },
+                  },
+                },
               },
             },
-          },
-        },
         include: groupInclude,
       });
 

@@ -23,6 +23,7 @@ export interface AuthUser {
 export interface AuthProfile extends AuthUser {
   email: string | null;
   username: string | null;
+  isPlatformAdministrator: boolean;
   memberships: Array<{
     organization: { id: string; name: string; slug: string };
     role: OrganizationRole;
@@ -174,6 +175,7 @@ export function createAuthService(
             rut: true,
             email: true,
             username: true,
+            platformAdministrator: { select: { id: true } },
             memberships: {
               orderBy: [
                 { organization: { slug: "asc" } },
@@ -195,7 +197,10 @@ export function createAuthService(
       throw new AuthError(401, "Unauthorized");
     }
 
-    return session.user;
+    return {
+      ...session.user,
+      isPlatformAdministrator: session.user.platformAdministrator !== null,
+    };
   }
 
   async function logout(sessionToken: string): Promise<void> {

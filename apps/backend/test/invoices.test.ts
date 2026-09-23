@@ -33,6 +33,7 @@ function createAuth(): AuthService {
         rut: "123456785",
         email: null,
         username: null,
+        isPlatformAdministrator: false,
         memberships: [],
       };
     },

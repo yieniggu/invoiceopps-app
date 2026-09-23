@@ -9,6 +9,8 @@ import type { DatabaseReadiness } from "./database.js";
 import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
 import type { InvoiceDecision, InvoiceService } from "./invoices.js";
 import type { ResourceContext, ResourceService } from "./resources.js";
+import { OrganizationRole } from "./generated/prisma/client.js";
+import type { PlatformAdministratorService } from "./platform-administrator.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -123,6 +125,33 @@ function parseMemberInput(input: unknown) {
   return (input as { userId: string }).userId.trim();
 }
 
+function parseOrganizationMembershipInput(
+  input: unknown,
+  requiresUserId: boolean,
+) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AuthError(400, "Invalid organization membership");
+  }
+
+  const record = input as Record<string, unknown>;
+  const expectedKeys = requiresUserId ? ["userId", "role"] : ["role"];
+  if (
+    Object.keys(record).length !== expectedKeys.length ||
+    expectedKeys.some((key) => !(key in record)) ||
+    (requiresUserId &&
+      (typeof record.userId !== "string" || !record.userId.trim())) ||
+    (record.role !== OrganizationRole.ADMIN &&
+      record.role !== OrganizationRole.STUDENT)
+  ) {
+    throw new AuthError(400, "Invalid organization membership");
+  }
+
+  return {
+    userId: requiresUserId ? (record.userId as string).trim() : undefined,
+    role: record.role,
+  } as { userId?: string; role: OrganizationRole };
+}
+
 function parseResourceContext(input: unknown): ResourceContext {
   const { organizationId, ownerType, ownerId } = input as Record<
     string,
@@ -195,6 +224,7 @@ function profileResponse(
       rut: profile.rut,
       email: profile.email,
       username: profile.username,
+      isPlatformAdministrator: profile.isPlatformAdministrator,
       memberships: profile.memberships,
     },
   };
@@ -205,6 +235,7 @@ export interface AppOptions {
   groups?: GroupService;
   invoices?: InvoiceService;
   resources?: ResourceService;
+  platformAdministrators?: PlatformAdministratorService;
 }
 
 export function createApp(
@@ -215,6 +246,7 @@ export function createApp(
     groups,
     invoices,
     resources,
+    platformAdministrators,
   }: AppOptions = {},
 ) {
   const app = express();
@@ -351,6 +383,76 @@ export function createApp(
     const profile = await auth.getProfile(sessionToken);
     response.status(200).json({ groups: await groups.listGroups(profile.id) });
   });
+
+  app.get("/platform/organizations", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !platformAdministrators || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+
+    const profile = await auth.getProfile(sessionToken);
+    response.status(200).json({
+      organizations: await platformAdministrators.listOrganizations(profile.id),
+    });
+  });
+
+  app.post(
+    "/platform/organizations/:organizationId/members",
+    async (request, response) => {
+      const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !platformAdministrators || !sessionToken) {
+        throw new AuthError(401, "Unauthorized");
+      }
+
+      const profile = await auth.getProfile(sessionToken);
+      const input = parseOrganizationMembershipInput(request.body, true);
+      const membership = await platformAdministrators.createMembership(
+        profile.id,
+        request.params.organizationId,
+        input.userId!,
+        input.role,
+      );
+      response.status(201).json({ membership });
+    },
+  );
+
+  app.patch(
+    "/platform/organizations/:organizationId/members/:userId",
+    async (request, response) => {
+      const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !platformAdministrators || !sessionToken) {
+        throw new AuthError(401, "Unauthorized");
+      }
+
+      const profile = await auth.getProfile(sessionToken);
+      const input = parseOrganizationMembershipInput(request.body, false);
+      const membership = await platformAdministrators.changeMembershipRole(
+        profile.id,
+        request.params.organizationId,
+        request.params.userId,
+        input.role,
+      );
+      response.status(200).json({ membership });
+    },
+  );
+
+  app.delete(
+    "/platform/organizations/:organizationId/members/:userId",
+    async (request, response) => {
+      const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !platformAdministrators || !sessionToken) {
+        throw new AuthError(401, "Unauthorized");
+      }
+
+      const profile = await auth.getProfile(sessionToken);
+      await platformAdministrators.removeMembership(
+        profile.id,
+        request.params.organizationId,
+        request.params.userId,
+      );
+      response.status(204).end();
+    },
+  );
 
   app.get("/resources", async (request, response) => {
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
