@@ -269,6 +269,186 @@ describe("APP-03 profile", () => {
 });
 
 describe("APP-04 organization groups", () => {
+  it("keeps globally discovered groups out of resource and invoice contexts for an administrator without local memberships", async () => {
+    let resolveDiscovery: ((response: Response) => void) | undefined;
+    const discovery = new Promise<Response>((resolve) => {
+      resolveDiscovery = resolve;
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            profile: {
+              id: "platform-admin-1",
+              name: "Ada Lovelace",
+              rut: "123456785",
+              email: null,
+              username: null,
+              isPlatformAdministrator: true,
+              memberships: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockReturnValueOnce(discovery);
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Cargando organizaciones administrables..."),
+    ).toBeTruthy();
+    if (!resolveDiscovery) {
+      throw new Error("Platform discovery did not start");
+    }
+    resolveDiscovery(
+      new Response(
+        JSON.stringify({
+          organizations: [
+            {
+              id: "organization-1",
+              name: "AI Academy",
+              groups: [
+                {
+                  id: "group-1",
+                  name: "Advanced topics",
+                  description: null,
+                  organization: {
+                    id: "organization-1",
+                    name: "AI Academy",
+                  },
+                  members: [],
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    expect(await screen.findByText("Advanced topics")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Nuevo grupo" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Crear grupo en AI Academy" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("No tienes organizaciones para consultar recursos."),
+    ).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(
+        ([path]) =>
+          typeof path === "string" &&
+          (path.startsWith("/resources") || path.startsWith("/invoices")),
+      ),
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver facturas" }));
+
+    expect(
+      await screen.findByText(
+        "No tienes organizaciones para consultar facturas.",
+      ),
+    ).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(
+        ([path]) =>
+          typeof path === "string" &&
+          (path.startsWith("/resources") || path.startsWith("/invoices")),
+      ),
+    ).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith("/platform/organizations", {
+      credentials: "same-origin",
+    });
+  });
+
+  it("reloads local groups when platform organization discovery fails for an administrator with memberships", async () => {
+    let groupRequestCount = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = input instanceof Request ? input.url : input.toString();
+
+      if (url === "/profile") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              profile: {
+                id: "platform-admin-1",
+                name: "Ada Lovelace",
+                rut: "123456785",
+                email: null,
+                username: null,
+                isPlatformAdministrator: true,
+                memberships: [
+                  {
+                    organization: {
+                      id: "organization-1",
+                      name: "AI Academy",
+                      slug: "ai-academy",
+                    },
+                    role: "ADMIN",
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (url === "/platform/organizations") {
+        return Promise.resolve(new Response(null, { status: 500 }));
+      }
+
+      if (url === "/groups") {
+        groupRequestCount += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              groups: [
+                {
+                  id: `group-${groupRequestCount}`,
+                  name:
+                    groupRequestCount === 1
+                      ? "Local group"
+                      : "Reloaded local group",
+                  description: null,
+                  organization: { id: "organization-1", name: "AI Academy" },
+                  members: [],
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (url.startsWith("/resources?")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ resources: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Local group")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reintentar organizaciones" }),
+    );
+
+    expect(await screen.findByText("Reloaded local group")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/groups", {
+      credentials: "same-origin",
+    });
+    expect(screen.queryByText("No fue posible cargar los grupos.")).toBeNull();
+    expect(screen.queryByText("No fue posible cargar los recursos.")).toBeNull();
+  });
+
   it("shows group members to an organization member and administrative controls only to admins", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(

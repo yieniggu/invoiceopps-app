@@ -9,6 +9,7 @@ type Profile = {
   rut: string;
   email: string | null;
   username: string | null;
+  isPlatformAdministrator: boolean;
   memberships: Array<{
     organization: { id: string; name: string; slug: string };
     role: string;
@@ -35,6 +36,18 @@ type GroupsState =
   | { kind: "error" }
   | { kind: "loaded"; groups: Group[] };
 
+type PlatformOrganizationsState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "loaded"; organizations: PlatformOrganization[] };
+
+type PlatformOrganization = {
+  id: string;
+  name: string;
+  groups: Group[];
+};
+
 async function requestProfile() {
   const response = await fetch("/profile", { credentials: "same-origin" });
 
@@ -60,9 +73,25 @@ async function requestGroups() {
   return (await response.json()) as { groups: Group[] };
 }
 
+async function requestPlatformOrganizations() {
+  const response = await fetch("/platform/organizations", {
+    credentials: "same-origin",
+  });
+
+  if (!response.ok) {
+    throw new Error("Platform organization request failed");
+  }
+
+  return (await response.json()) as {
+    organizations: PlatformOrganization[];
+  };
+}
+
 export function App() {
   const [state, setState] = useState<ProfileState>({ kind: "loading" });
   const [groupsState, setGroupsState] = useState<GroupsState>({ kind: "idle" });
+  const [platformOrganizationsState, setPlatformOrganizationsState] =
+    useState<PlatformOrganizationsState>({ kind: "idle" });
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -83,7 +112,26 @@ export function App() {
       if (result.kind === "authenticated") {
         setEmail(result.profile.email ?? "");
         setUsername(result.profile.username ?? "");
-        if (result.profile.memberships.length > 0) {
+        if (result.profile.isPlatformAdministrator) {
+          setPlatformOrganizationsState({ kind: "loading" });
+          try {
+            const discovery = await requestPlatformOrganizations();
+            setPlatformOrganizationsState({ kind: "loaded", ...discovery });
+          } catch {
+            setPlatformOrganizationsState({ kind: "error" });
+          }
+
+          if (result.profile.memberships.length > 0) {
+            setGroupsState({ kind: "loading" });
+            try {
+              setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+            } catch {
+              setGroupsState({ kind: "error" });
+            }
+          } else {
+            setGroupsState({ kind: "loaded", groups: [] });
+          }
+        } else if (result.profile.memberships.length > 0) {
           setGroupsState({ kind: "loading" });
           try {
             setGroupsState({ kind: "loaded", ...(await requestGroups()) });
@@ -95,6 +143,7 @@ export function App() {
         }
       } else {
         setGroupsState({ kind: "idle" });
+        setPlatformOrganizationsState({ kind: "idle" });
       }
     } catch {
       setState({ kind: "error" });
@@ -102,10 +151,29 @@ export function App() {
   };
 
   const reloadGroups = async () => {
+    if (state.kind !== "authenticated") {
+      return;
+    }
+
     setGroupError(undefined);
     setGroupsState({ kind: "loading" });
     try {
-      setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+      if (state.profile.isPlatformAdministrator) {
+        setPlatformOrganizationsState({ kind: "loading" });
+        try {
+          const discovery = await requestPlatformOrganizations();
+          setPlatformOrganizationsState({ kind: "loaded", ...discovery });
+        } catch {
+          setPlatformOrganizationsState({ kind: "error" });
+        }
+        if (state.profile.memberships.length > 0) {
+          setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+        } else {
+          setGroupsState({ kind: "loaded", groups: [] });
+        }
+      } else {
+        setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+      }
     } catch {
       setGroupsState({ kind: "error" });
     }
@@ -249,6 +317,15 @@ export function App() {
   }
 
   const { profile } = state;
+  const displayedGroups =
+    profile.isPlatformAdministrator &&
+    platformOrganizationsState.kind === "loaded"
+      ? (platformOrganizationsState.organizations ?? []).flatMap(
+          (organization) => organization.groups,
+        )
+      : groupsState.kind === "loaded"
+        ? groupsState.groups
+        : [];
 
   return (
     <main className="shell" aria-labelledby="page-title">
@@ -267,6 +344,9 @@ export function App() {
             <dd>{profile.rut}</dd>
           </div>
         </dl>
+        {profile.isPlatformAdministrator ? (
+          <p role="status">Administrador de plataforma</p>
+        ) : null}
       </section>
 
       <form onSubmit={saveProfile} aria-labelledby="contact-title">
@@ -309,7 +389,31 @@ export function App() {
 
       <section aria-labelledby="memberships-title">
         <h2 id="memberships-title">Organizaciones</h2>
-        {profile.memberships.length === 0 ? (
+        {profile.isPlatformAdministrator &&
+        platformOrganizationsState.kind === "loading" ? (
+          <p role="status">Cargando organizaciones administrables...</p>
+        ) : null}
+        {profile.isPlatformAdministrator &&
+        platformOrganizationsState.kind === "error" ? (
+          <>
+            <p role="alert">No fue posible cargar las organizaciones.</p>
+            <button type="button" onClick={() => void reloadGroups()}>
+              Reintentar organizaciones
+            </button>
+          </>
+        ) : null}
+        {profile.isPlatformAdministrator &&
+        platformOrganizationsState.kind === "loaded" ? (
+          (platformOrganizationsState.organizations ?? []).length === 0 ? (
+            <p>No hay organizaciones disponibles.</p>
+          ) : (
+            <ul>
+              {(platformOrganizationsState.organizations ?? []).map((organization) => (
+                <li key={organization.id}>{organization.name}</li>
+              ))}
+            </ul>
+          )
+        ) : profile.memberships.length === 0 ? (
           <p>No tienes organizaciones asignadas.</p>
         ) : (
           <ul>
@@ -335,16 +439,21 @@ export function App() {
             </button>
           </>
         ) : null}
-        {groupsState.kind === "loaded" && groupsState.groups.length === 0 ? (
-          <p>No perteneces a grupos todavía.</p>
+        {groupsState.kind === "loaded" && displayedGroups.length === 0 ? (
+          <p>
+            {profile.isPlatformAdministrator
+              ? "No hay grupos en las organizaciones administrables."
+              : "No perteneces a grupos todavía."}
+          </p>
         ) : null}
         {groupsState.kind === "loaded" ? (
           <ul>
-            {groupsState.groups.map((group) => {
+            {displayedGroups.map((group) => {
               const role = profile.memberships.find(
                 ({ organization }) => organization.id === group.organization.id,
               )?.role;
-              const isAdmin = role === "ADMIN";
+              const isAdmin =
+                role === "ADMIN" || profile.isPlatformAdministrator;
               const path = `/organizations/${group.organization.id}/groups/${group.id}`;
 
               return (
@@ -440,32 +549,36 @@ export function App() {
             })}
           </ul>
         ) : null}
-        {profile.memberships
-          .filter(({ role }) => role === "ADMIN")
-          .map(({ organization }) => (
-            <form
-              key={organization.id}
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                void mutateGroup(
-                  `/organizations/${organization.id}/groups`,
-                  "POST",
-                  {
-                    name: form.get("name"),
-                  },
-                );
-              }}
-            >
-              <label>
-                Nuevo grupo
-                <input name="name" required />
-              </label>
-              <button type="submit" disabled={isMutatingGroup}>
-                Crear grupo en {organization.name}
-              </button>
-            </form>
-          ))}
+        {(profile.isPlatformAdministrator &&
+        platformOrganizationsState.kind === "loaded"
+          ? (platformOrganizationsState.organizations ?? [])
+          : profile.memberships
+              .filter(({ role }) => role === "ADMIN")
+              .map(({ organization }) => organization)
+        ).map((organization) => (
+          <form
+            key={organization.id}
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              void mutateGroup(
+                `/organizations/${organization.id}/groups`,
+                "POST",
+                {
+                  name: form.get("name"),
+                },
+              );
+            }}
+          >
+            <label>
+              Nuevo grupo
+              <input name="name" required />
+            </label>
+            <button type="submit" disabled={isMutatingGroup}>
+              Crear grupo en {organization.name}
+            </button>
+          </form>
+        ))}
         {groupError ? <p role="alert">{groupError}</p> : null}
       </section>
 
