@@ -63,6 +63,7 @@ model Organization {
   groups          Group[]
   resources       ResourceReference[]
   invoices        Invoice[]
+  businessPolicies BusinessPolicy[]
 }
 
 model OrganizationMembership {
@@ -153,6 +154,8 @@ model Invoice {
   bankAccountRecentlyChanged  Boolean
   amountVsVendorMedian        Float
   countryRisk                 String
+  policyProbability           Decimal?
+  policyProbabilitySource     String?
   createdAt                   DateTime          @default(now())
   updatedAt                   DateTime          @updatedAt
   organization                Organization      @relation(fields: [organizationId], references: [id])
@@ -163,11 +166,31 @@ model Invoice {
   @@index([organizationId, ownerType, ownerId, createdAt, id])
 }
 
+model BusinessPolicy {
+  id                    String            @id @default(uuid())
+  organizationId        String
+  ownerType             ResourceOwnerType
+  ownerId               String
+  version               String
+  manualReviewThreshold Decimal
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  organization          Organization      @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, ownerType, ownerId, version])
+  @@index([organizationId, ownerType, ownerId])
+}
+
 model DecisionEvent {
   id               String   @id @default(uuid())
   invoiceId        String
   decision         String
   ruleVersion      String
+  mode             String
+  policyVersion    String?
+  manualReviewThreshold Decimal?
+  policyProbability Decimal?
+  policyProbabilitySource String?
   actorUserId      String
   actorName        String
   actorRut         String

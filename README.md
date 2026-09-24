@@ -256,3 +256,60 @@ used as an MLflow identity, role, resource name, or permission key.
 Individual ML ownership uses `User.id` as `owner_id`; group ownership uses
 `Group.id`. The complete contract and explicit out-of-scope provisioning are in
 `../dev/tickets/INT-02_ownership_academico_mlflow.md`.
+
+### Policies de negocio versionadas
+
+APP-07 conserva `invoice-rules-v1` sin cambios: procesa automáticamente sólo
+facturas de hasta `500000` centavos con PO y three-way match. La decisión se
+solicita con `POST /invoices/:invoiceId/decision` usando `{ "mode": "RULE_V1" }`;
+el servidor calcula y persiste el resultado, por lo que el navegador no envía
+`AUTO_PROCESS` ni `MANUAL_REVIEW` como una decisión autoritativa.
+
+El modo `PROBABILITY_POLICY` requiere una versión explícita:
+
+```json
+{
+  "mode": "PROBABILITY_POLICY",
+  "policyVersion": "ml-policy-v1"
+}
+```
+
+Las policies son owner-scoped por organización y contienen `version` y
+`manualReviewThreshold` entre 0 y 1. Las individuales sólo las administra su
+propietario; las grupales sólo un `ADMIN` de la organización. Se consultan,
+crean y actualizan mediante `GET`, `POST` y `PATCH /business-policies` en el
+mismo contexto `organizationId`, `ownerType` y `ownerId` de las facturas.
+
+Por ahora una factura puede incluir únicamente `policyProbability` con fuente
+`LOCAL_DEMONSTRATION`. No representa inferencia live, Model API ni MLflow. Si
+la probabilidad declarada falta, la policy falla controladamente y no cambia el
+estado ni crea un evento. Con probabilidad disponible, `probability >= threshold`
+resulta en `MANUAL_REVIEW`. Cada evento de auditoría conserva modo, versión,
+threshold, probabilidad y fuente evaluados.
+
+Para una demostración local repetible, con `DATABASE_URL` apuntando a la base
+local `invoiceops` en `localhost` o al servicio Compose `db`, ejecuta:
+
+```bash
+NODE_ENV=development pnpm --filter @invoiceops/backend local-demonstration
+```
+
+El comando exige `NODE_ENV=development` y rechaza destinos remotos,
+`invoiceops_test` y cualquier base distinta de `invoiceops`. Sólo crea o restablece los registros dedicados
+`LOCAL_DEMONSTRATION`: la organización `APP-07 Local Demonstration`, el usuario
+de prueba RUT `111111111` con contraseña `app-07-local-demonstration`, la policy
+`ml-policy-v1` (threshold `0.8`) y dos facturas `PENDING`. En la UI, selecciona
+esa organización y propietario individual. `DEMO-RULE-AUTO-POLICY-MANUAL`
+resulta `AUTO_PROCESS` con Rule v1 y `MANUAL_REVIEW` con la policy; la segunda,
+`DEMO-RULE-MANUAL-POLICY-AUTO`, invierte esos resultados. Ejecuta nuevamente el
+comando entre intentos para restablecer sólo esas facturas demo a `PENDING`.
+
+Antes de desplegar APP-07, aplica la migración explícita y luego la aplicación:
+
+```bash
+pnpm --filter @invoiceops/backend exec prisma migrate deploy
+```
+
+La migración es expansiva y no incluye backfill. Para rollback operativo,
+revierte la aplicación a la versión previa y conserva las columnas y la tabla
+`BusinessPolicy`; no elimines datos o esquema automáticamente.

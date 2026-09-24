@@ -24,6 +24,33 @@ function modelBlock(schema: string, modelName: string) {
 }
 
 describe("APP-01 Prisma schema contract", () => {
+  it("declares APP-07 owner-scoped business policies and local demonstration probabilities", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const invoice = modelBlock(schema, "Invoice");
+    const policy = modelBlock(schema, "BusinessPolicy");
+    const decisionEvent = modelBlock(schema, "DecisionEvent");
+
+    expect(invoice).toMatch(/^\s*policyProbability\s+Decimal\?(?:\s|$)/m);
+    expect(invoice).toMatch(/^\s*policyProbabilitySource\s+String\?(?:\s|$)/m);
+    expect(policy).toMatch(/^\s*organizationId\s+String\b/m);
+    expect(policy).toMatch(/^\s*ownerType\s+ResourceOwnerType\b/m);
+    expect(policy).toMatch(/^\s*ownerId\s+String\b/m);
+    expect(policy).toMatch(/^\s*version\s+String\b/m);
+    expect(policy).toMatch(/^\s*manualReviewThreshold\s+Decimal\b/m);
+    expect(policy).toMatch(
+      /@@unique\(\[organizationId,\s*ownerType,\s*ownerId,\s*version\]\)/,
+    );
+    expect(decisionEvent).toMatch(/^\s*mode\s+String\b/m);
+    expect(decisionEvent).toMatch(/^\s*policyVersion\s+String\?(?:\s|$)/m);
+    expect(decisionEvent).toMatch(
+      /^\s*manualReviewThreshold\s+Decimal\?(?:\s|$)/m,
+    );
+    expect(decisionEvent).toMatch(/^\s*policyProbability\s+Decimal\?(?:\s|$)/m);
+    expect(decisionEvent).toMatch(
+      /^\s*policyProbabilitySource\s+String\?(?:\s|$)/m,
+    );
+  });
+
   it("declares globally unique normalized user RUTs", async () => {
     const schema = await readFile(schemaPath, "utf8");
     const user = modelBlock(schema, "User");

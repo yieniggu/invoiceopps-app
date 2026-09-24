@@ -7,7 +7,8 @@ import {
 import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
 import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
-import type { InvoiceDecision, InvoiceService } from "./invoices.js";
+import type { BusinessPolicyService } from "./business-policies.js";
+import type { InvoiceDecisionInput, InvoiceService } from "./invoices.js";
 import type { ResourceContext, ResourceService } from "./resources.js";
 import { OrganizationRole } from "./generated/prisma/client.js";
 import type { PlatformAdministratorService } from "./platform-administrator.js";
@@ -189,18 +190,55 @@ function parseInvoiceListQuery(input: unknown) {
   return { context, q: q.trim(), cursor, limit };
 }
 
-function parseInvoiceDecision(input: unknown): InvoiceDecision {
-  if (
-    !input ||
-    typeof input !== "object" ||
-    Array.isArray(input) ||
-    Object.keys(input).length !== 1 ||
-    ((input as { decision?: unknown }).decision !== "AUTO_PROCESS" &&
-      (input as { decision?: unknown }).decision !== "MANUAL_REVIEW")
-  ) {
+function parseInvoiceDecision(input: unknown): InvoiceDecisionInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new AuthError(400, "Invalid invoice decision");
   }
-  return (input as { decision: InvoiceDecision }).decision;
+  const record = input as Record<string, unknown>;
+  if (Object.keys(record).length === 1 && record.mode === "RULE_V1") {
+    return { mode: "RULE_V1" };
+  }
+  if (
+    Object.keys(record).length === 2 &&
+    record.mode === "PROBABILITY_POLICY" &&
+    typeof record.policyVersion === "string" &&
+    record.policyVersion.trim() &&
+    record.policyVersion.trim().length <= 120
+  ) {
+    return {
+      mode: "PROBABILITY_POLICY",
+      policyVersion: record.policyVersion.trim(),
+    };
+  }
+  throw new AuthError(400, "Invalid invoice decision");
+}
+
+function parseBusinessPolicy(input: unknown, requiresVersion: boolean) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new AuthError(400, "Invalid business policy");
+  }
+  const record = input as Record<string, unknown>;
+  const expectedKeys = requiresVersion
+    ? ["version", "manualReviewThreshold"]
+    : ["manualReviewThreshold"];
+  if (
+    Object.keys(record).length !== expectedKeys.length ||
+    expectedKeys.some((key) => !(key in record)) ||
+    (requiresVersion &&
+      (typeof record.version !== "string" ||
+        !record.version.trim() ||
+        record.version.trim().length > 120)) ||
+    typeof record.manualReviewThreshold !== "number" ||
+    !Number.isFinite(record.manualReviewThreshold) ||
+    record.manualReviewThreshold < 0 ||
+    record.manualReviewThreshold > 1
+  ) {
+    throw new AuthError(400, "Invalid business policy");
+  }
+  return {
+    ...(requiresVersion ? { version: (record.version as string).trim() } : {}),
+    manualReviewThreshold: record.manualReviewThreshold,
+  };
 }
 
 function requestOrigin(request: express.Request) {
@@ -234,6 +272,7 @@ export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
   groups?: GroupService;
   invoices?: InvoiceService;
+  businessPolicies?: BusinessPolicyService;
   resources?: ResourceService;
   platformAdministrators?: PlatformAdministratorService;
 }
@@ -245,6 +284,7 @@ export function createApp(
     authRateLimiter = createAuthRateLimiter(),
     groups,
     invoices,
+    businessPolicies,
     resources,
     platformAdministrators,
   }: AppOptions = {},
@@ -481,6 +521,56 @@ export function createApp(
       );
   });
 
+  app.get("/business-policies", async (request, response) => {
+    const context = parseResourceContext(request.query);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !businessPolicies || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    response.status(200).json({
+      policies: await businessPolicies.listPolicies(profile.id, context),
+    });
+  });
+
+  app.post("/business-policies", async (request, response) => {
+    const context = parseResourceContext(request.query);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !businessPolicies || !sessionToken) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    const input = parseBusinessPolicy(request.body, true);
+    response.status(201).json({
+      policy: await businessPolicies.createPolicy(profile.id, context, {
+        version: input.version!,
+        manualReviewThreshold: input.manualReviewThreshold,
+      }),
+    });
+  });
+
+  app.patch("/business-policies/:version", async (request, response) => {
+    const context = parseResourceContext(request.query);
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (
+      !auth ||
+      !businessPolicies ||
+      !sessionToken ||
+      !request.params.version
+    ) {
+      throw new AuthError(401, "Unauthorized");
+    }
+    const profile = await auth.getProfile(sessionToken);
+    response.status(200).json({
+      policy: await businessPolicies.updatePolicy(
+        profile.id,
+        context,
+        request.params.version,
+        parseBusinessPolicy(request.body, false),
+      ),
+    });
+  });
+
   app.get("/invoices/:invoiceId", async (request, response) => {
     const { context } = parseInvoiceListQuery(request.query);
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
@@ -501,7 +591,7 @@ export function createApp(
 
   app.post("/invoices/:invoiceId/decision", async (request, response) => {
     const { context } = parseInvoiceListQuery(request.query);
-    const decision = parseInvoiceDecision(request.body);
+    const input = parseInvoiceDecision(request.body);
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
     if (!auth || !invoices || !sessionToken) {
       throw new AuthError(401, "Unauthorized");
@@ -514,7 +604,7 @@ export function createApp(
           { id: profile.id, name: profile.name, rut: profile.rut },
           context,
           request.params.invoiceId,
-          decision,
+          input,
         ),
       );
   });

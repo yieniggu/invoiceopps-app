@@ -58,6 +58,8 @@ function createInvoiceService(): InvoiceService {
             hasPurchaseOrder: true,
             threeWayMatch: true,
             status: "PENDING",
+            policyProbability: null,
+            policyProbabilitySource: null,
           },
         ],
         nextCursor: null,
@@ -75,6 +77,8 @@ function createInvoiceService(): InvoiceService {
           hasPurchaseOrder: true,
           threeWayMatch: true,
           status: "PENDING",
+          policyProbability: null,
+          policyProbabilitySource: null,
           riskContext: {
             vendorTenureDays: 365,
             previousIncidents12m: 0,
@@ -88,7 +92,7 @@ function createInvoiceService(): InvoiceService {
         auditEvents: [],
       };
     },
-    async decideInvoice(user, receivedContext, invoiceId, decision) {
+    async decideInvoice(user, receivedContext, invoiceId, input) {
       expect(user).toMatchObject({
         id: "user-1",
         name: "Ada Lovelace",
@@ -96,7 +100,7 @@ function createInvoiceService(): InvoiceService {
       });
       expect(receivedContext).toEqual(context);
       expect(invoiceId).toBe("INV-001");
-      expect(decision).toBe("AUTO_PROCESS");
+      expect(input).toEqual({ mode: "RULE_V1" });
       return {
         invoice: {
           invoiceId,
@@ -104,8 +108,13 @@ function createInvoiceService(): InvoiceService {
           updatedAt: "2026-09-21T00:01:00.000Z",
         },
         auditEvent: {
-          decision,
+          decision: "AUTO_PROCESS",
           ruleVersion: "invoice-rules-v1",
+          mode: "RULE_V1",
+          policyVersion: null,
+          manualReviewThreshold: null,
+          policyProbability: null,
+          policyProbabilitySource: null,
           actor: { name: "Ada Lovelace", rut: "123456785" },
           correlationId: "correlation-1",
           createdAt: "2026-09-21T00:01:00.000Z",
@@ -133,7 +142,7 @@ describe("APP-06 invoice HTTP contract", () => {
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session")
-      .send({ decision: "AUTO_PROCESS" });
+      .send({ mode: "RULE_V1" });
 
     expect(list.status).toBe(200);
     expect(list.body.invoices[0]).toMatchObject({ invoiceId: "INV-001" });
@@ -167,7 +176,7 @@ describe("APP-06 invoice HTTP contract", () => {
     const decision = await request(app)
       .post(`/invoices/INV-001/decision?${new URLSearchParams(context)}`)
       .set("Cookie", "invoiceops_session=valid-session")
-      .send({ decision: "AUTO_PROCESS" });
+      .send({ mode: "RULE_V1" });
 
     expect(decision.status).toBe(403);
     expect(decision.body).toEqual({ status: "error", message: "Forbidden" });

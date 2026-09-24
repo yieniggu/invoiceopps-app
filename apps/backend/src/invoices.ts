@@ -11,8 +11,11 @@ import type { ResourceContext } from "./resources.js";
 
 export const RULE_VERSION = "invoice-rules-v1";
 export const AUTO_PROCESS_LIMIT_CENTS = 500_000;
+export const LOCAL_DEMONSTRATION = "LOCAL_DEMONSTRATION";
 
 export type InvoiceDecision = "AUTO_PROCESS" | "MANUAL_REVIEW";
+export type InvoiceDecisionInput =
+  { mode: "RULE_V1" } | { mode: "PROBABILITY_POLICY"; policyVersion: string };
 type CountryRisk = "low" | "medium" | "high";
 
 type InvoiceListItem = {
@@ -22,6 +25,8 @@ type InvoiceListItem = {
   hasPurchaseOrder: boolean;
   threeWayMatch: boolean;
   status: InvoiceStatus;
+  policyProbability: number | null;
+  policyProbabilitySource: string | null;
 };
 
 type InvoiceDetail = InvoiceListItem & {
@@ -51,7 +56,7 @@ export interface InvoiceService {
     actor: AuthUser,
     context: ResourceContext,
     invoiceId: string,
-    decision: InvoiceDecision,
+    input: InvoiceDecisionInput,
   ): Promise<{
     invoice: { invoiceId: string; status: InvoiceStatus; updatedAt: string };
     auditEvent: AuditEvent;
@@ -61,6 +66,11 @@ export interface InvoiceService {
 export type AuditEvent = {
   decision: InvoiceDecision;
   ruleVersion: string;
+  mode: "RULE_V1" | "PROBABILITY_POLICY";
+  policyVersion: string | null;
+  manualReviewThreshold: number | null;
+  policyProbability: number | null;
+  policyProbabilitySource: string | null;
   actor: { name: string; rut: string };
   correlationId: string;
   createdAt: string;
@@ -113,8 +123,13 @@ function toListItem(invoice: {
   hasPurchaseOrder: boolean;
   threeWayMatch: boolean;
   status: InvoiceStatus;
+  policyProbability: { toNumber(): number } | null;
+  policyProbabilitySource: string | null;
 }): InvoiceListItem {
-  return invoice;
+  return {
+    ...invoice,
+    policyProbability: invoice.policyProbability?.toNumber() ?? null,
+  };
 }
 
 function encodeCursor(createdAt: Date, id: string) {
@@ -162,6 +177,11 @@ function expectedDecision(invoice: {
 function auditEventResponse(event: {
   decision: string;
   ruleVersion: string;
+  mode: string;
+  policyVersion: string | null;
+  manualReviewThreshold: { toNumber(): number } | null;
+  policyProbability: { toNumber(): number } | null;
+  policyProbabilitySource: string | null;
   actorName: string;
   actorRut: string;
   correlationId: string;
@@ -170,6 +190,11 @@ function auditEventResponse(event: {
   return {
     decision: event.decision as InvoiceDecision,
     ruleVersion: event.ruleVersion,
+    mode: event.mode as AuditEvent["mode"],
+    policyVersion: event.policyVersion,
+    manualReviewThreshold: event.manualReviewThreshold?.toNumber() ?? null,
+    policyProbability: event.policyProbability?.toNumber() ?? null,
+    policyProbabilitySource: event.policyProbabilitySource,
     actor: { name: event.actorName, rut: event.actorRut },
     correlationId: event.correlationId,
     createdAt: event.createdAt.toISOString(),
@@ -249,7 +274,7 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
         auditEvents: invoice.decisionEvents.map(auditEventResponse),
       };
     },
-    async decideInvoice(actor, context, invoiceId, decision) {
+    async decideInvoice(actor, context, invoiceId, input) {
       await authorizeContext(prisma, actor.id, context);
       return prisma.$transaction(async (transaction) => {
         const invoice = await transaction.invoice.findFirst({
@@ -261,12 +286,38 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
           },
         });
         if (!invoice) throw inaccessibleContext();
-        if (
-          invoice.status !== InvoiceStatus.PENDING ||
-          expectedDecision(invoice) !== decision
-        ) {
+        if (invoice.status !== InvoiceStatus.PENDING) {
           throw new AuthError(409, "Invoice decision is not permitted");
         }
+        const policy =
+          input.mode === "PROBABILITY_POLICY"
+            ? await transaction.businessPolicy.findFirst({
+                where: {
+                  organizationId: context.organizationId,
+                  ownerType: ownerType(context.ownerType),
+                  ownerId: context.ownerId,
+                  version: input.policyVersion,
+                },
+              })
+            : null;
+        if (input.mode === "PROBABILITY_POLICY" && !policy) {
+          throw new AuthError(404, "Business policy not found");
+        }
+        if (
+          input.mode === "PROBABILITY_POLICY" &&
+          (invoice.policyProbability === null ||
+            invoice.policyProbabilitySource !== LOCAL_DEMONSTRATION)
+        ) {
+          throw new AuthError(409, "Invoice probability is not available");
+        }
+        const probability = invoice.policyProbability?.toNumber() ?? null;
+        const threshold = policy?.manualReviewThreshold.toNumber() ?? null;
+        const decision =
+          input.mode === "RULE_V1"
+            ? expectedDecision(invoice)
+            : probability! >= threshold!
+              ? "MANUAL_REVIEW"
+              : "AUTO_PROCESS";
         const status =
           decision === "AUTO_PROCESS"
             ? InvoiceStatus.AUTO_PROCESSED
@@ -281,7 +332,16 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
           data: {
             invoiceId: invoice.id,
             decision,
-            ruleVersion: RULE_VERSION,
+            ruleVersion:
+              input.mode === "RULE_V1" ? RULE_VERSION : input.policyVersion,
+            mode: input.mode,
+            policyVersion: policy?.version,
+            manualReviewThreshold: threshold,
+            policyProbability: probability,
+            policyProbabilitySource:
+              input.mode === "PROBABILITY_POLICY"
+                ? invoice.policyProbabilitySource
+                : null,
             actorUserId: actor.id,
             actorName: actor.name,
             actorRut: actor.rut,

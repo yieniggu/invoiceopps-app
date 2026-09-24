@@ -323,9 +323,71 @@ describe("APP-06 invoice workspace", () => {
 
     render(<InvoiceWorkspace profile={profile} groups={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Procesar" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Aplicar Rule v1" }),
+    );
 
     expect(await screen.findByText("Ada Lovelace (123456785)")).toBeTruthy();
     expect(screen.getByText("AUTO_PROCESSED")).toBeTruthy();
+  });
+
+  it("offers distinct Rule v1 and policy controls for a pending invoice", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            invoices: [
+              {
+                invoiceId: "INV-001",
+                vendorName: "Acme Ltd.",
+                invoiceAmountCents: 500000,
+                hasPurchaseOrder: true,
+                threeWayMatch: true,
+                status: "PENDING",
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            invoice: {
+              invoiceId: "INV-001",
+              vendorName: "Acme Ltd.",
+              invoiceAmountCents: 500000,
+              hasPurchaseOrder: true,
+              threeWayMatch: true,
+              status: "PENDING",
+              policyProbability: 0.8,
+              policyProbabilitySource: "LOCAL_DEMONSTRATION",
+              riskContext: {
+                vendorTenureDays: 365,
+                previousIncidents12m: 0,
+                bankAccountRecentlyChanged: false,
+                amountVsVendorMedian: 1,
+                countryRisk: "medium",
+              },
+              createdAt: "2026-09-21T00:00:00.000Z",
+              updatedAt: "2026-09-21T00:00:00.000Z",
+            },
+            auditEvents: [],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<InvoiceWorkspace profile={profile} groups={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Aplicar Rule v1" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Aplicar policy" })).toBeTruthy();
+    expect(screen.getByText(/Fuente:/).textContent).toContain(
+      "LOCAL_DEMONSTRATION",
+    );
   });
 });

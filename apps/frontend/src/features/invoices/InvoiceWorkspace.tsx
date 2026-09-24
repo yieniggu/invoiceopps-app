@@ -29,6 +29,8 @@ type InvoiceListItem = {
   hasPurchaseOrder: boolean;
   threeWayMatch: boolean;
   status: string;
+  policyProbability: number | null;
+  policyProbabilitySource: string | null;
 };
 type InvoiceDetail = InvoiceListItem & {
   riskContext: {
@@ -44,6 +46,11 @@ type InvoiceDetail = InvoiceListItem & {
 type AuditEvent = {
   decision: string;
   ruleVersion: string;
+  mode: string;
+  policyVersion: string | null;
+  manualReviewThreshold: number | null;
+  policyProbability: number | null;
+  policyProbabilitySource: string | null;
   actor: { name: string; rut: string };
   correlationId: string;
   createdAt: string;
@@ -122,6 +129,7 @@ export function InvoiceWorkspace({
   });
   const [isDeciding, setIsDeciding] = useState(false);
   const [decisionError, setDecisionError] = useState<string>();
+  const [policyVersion, setPolicyVersion] = useState("");
 
   useEffect(() => {
     if (!selectedContext) {
@@ -269,7 +277,11 @@ export function InvoiceWorkspace({
     selectedContext?.ownerType,
   ]);
 
-  const decide = async (decision: "AUTO_PROCESS" | "MANUAL_REVIEW") => {
+  const decide = async (
+    input:
+      | { mode: "RULE_V1" }
+      | { mode: "PROBABILITY_POLICY"; policyVersion: string },
+  ) => {
     if (!detailId || !selectedContext) return;
     setIsDeciding(true);
     setDecisionError(undefined);
@@ -285,7 +297,7 @@ export function InvoiceWorkspace({
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision }),
+          body: JSON.stringify(input),
         },
       );
       if (!response.ok) throw new Error("Invoice decision failed");
@@ -357,6 +369,8 @@ export function InvoiceWorkspace({
             deciding={isDeciding}
             error={decisionError}
             onDecide={decide}
+            policyVersion={policyVersion}
+            onPolicyVersionChange={setPolicyVersion}
           />
         ) : null}
       </section>
@@ -499,11 +513,19 @@ function InvoiceDetailView({
   deciding,
   error,
   onDecide,
+  policyVersion,
+  onPolicyVersionChange,
 }: {
   detail: Extract<DetailState, { kind: "loaded" }>;
   deciding: boolean;
   error?: string;
-  onDecide: (decision: "AUTO_PROCESS" | "MANUAL_REVIEW") => void;
+  onDecide: (
+    input:
+      | { mode: "RULE_V1" }
+      | { mode: "PROBABILITY_POLICY"; policyVersion: string },
+  ) => void;
+  policyVersion: string;
+  onPolicyVersionChange: (value: string) => void;
 }) {
   const { invoice, auditEvents } = detail;
   return (
@@ -553,20 +575,37 @@ function InvoiceDetailView({
             <button
               type="button"
               disabled={deciding}
-              onClick={() => void onDecide("AUTO_PROCESS")}
+              onClick={() => void onDecide({ mode: "RULE_V1" })}
               className="rounded-md bg-slate-900 px-3 py-2 font-semibold text-white"
             >
-              {deciding ? "Registrando decisión..." : "Procesar"}
+              {deciding ? "Registrando decisión..." : "Aplicar Rule v1"}
             </button>
+            <label className="grid gap-1 text-sm font-semibold">
+              Versión de policy
+              <input
+                value={policyVersion}
+                onChange={(event) => onPolicyVersionChange(event.target.value)}
+                placeholder="ml-policy-v1"
+              />
+            </label>
             <button
               type="button"
-              disabled={deciding}
-              onClick={() => void onDecide("MANUAL_REVIEW")}
+              disabled={deciding || !policyVersion.trim()}
+              onClick={() =>
+                void onDecide({
+                  mode: "PROBABILITY_POLICY",
+                  policyVersion: policyVersion.trim(),
+                })
+              }
               className="rounded-md border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800"
             >
-              Revisión manual
+              Aplicar policy
             </button>
           </div>
+          <p className="text-sm text-slate-600">
+            Probabilidad: {invoice.policyProbability ?? "no declarada"} ·
+            Fuente: {invoice.policyProbabilitySource ?? "no declarada"}
+          </p>
           {error ? <p role="alert">{error}</p> : null}
         </section>
       ) : null}
@@ -582,6 +621,9 @@ function InvoiceDetailView({
                   <th>Fecha</th>
                   <th>Decisión</th>
                   <th>Regla</th>
+                  <th>Modo</th>
+                  <th>Policy</th>
+                  <th>Probabilidad</th>
                   <th>Actor</th>
                   <th>Correlación</th>
                 </tr>
@@ -592,6 +634,14 @@ function InvoiceDetailView({
                     <td>{event.createdAt}</td>
                     <td>{event.decision}</td>
                     <td>{event.ruleVersion}</td>
+                    <td>{event.mode}</td>
+                    <td>{event.policyVersion ?? "-"}</td>
+                    <td>
+                      {event.policyProbability ?? "-"}
+                      {event.manualReviewThreshold !== null
+                        ? ` / ${event.manualReviewThreshold}`
+                        : ""}
+                    </td>
                     <td>
                       {event.actor.name} ({event.actor.rut})
                     </td>

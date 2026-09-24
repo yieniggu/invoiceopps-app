@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
 import { createAuthService } from "./auth.js";
+import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
 import { createGroupService } from "./groups.js";
 import { createInvoiceService } from "./invoices.js";
@@ -17,6 +18,7 @@ const database = createDatabase(databaseUrl);
 const app = createApp(database, createAuthService(database.prisma), {
   groups: createGroupService(database.prisma),
   invoices: createInvoiceService(database.prisma),
+  businessPolicies: createBusinessPolicyService(database.prisma),
   resources: createResourceService(database.prisma),
   platformAdministrators: createPlatformAdministratorService(database.prisma),
 });
