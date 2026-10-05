@@ -408,9 +408,11 @@ export function App() {
             <p>No hay organizaciones disponibles.</p>
           ) : (
             <ul>
-              {(platformOrganizationsState.organizations ?? []).map((organization) => (
-                <li key={organization.id}>{organization.name}</li>
-              ))}
+              {(platformOrganizationsState.organizations ?? []).map(
+                (organization) => (
+                  <li key={organization.id}>{organization.name}</li>
+                ),
+              )}
             </ul>
           )
         ) : profile.memberships.length === 0 ? (

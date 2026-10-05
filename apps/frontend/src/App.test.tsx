@@ -364,75 +364,77 @@ describe("APP-04 organization groups", () => {
 
   it("reloads local groups when platform organization discovery fails for an administrator with memberships", async () => {
     let groupRequestCount = 0;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-      const url = input instanceof Request ? input.url : input.toString();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        const url = input instanceof Request ? input.url : input.toString();
 
-      if (url === "/profile") {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              profile: {
-                id: "platform-admin-1",
-                name: "Ada Lovelace",
-                rut: "123456785",
-                email: null,
-                username: null,
-                isPlatformAdministrator: true,
-                memberships: [
-                  {
-                    organization: {
-                      id: "organization-1",
-                      name: "AI Academy",
-                      slug: "ai-academy",
+        if (url === "/profile") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                profile: {
+                  id: "platform-admin-1",
+                  name: "Ada Lovelace",
+                  rut: "123456785",
+                  email: null,
+                  username: null,
+                  isPlatformAdministrator: true,
+                  memberships: [
+                    {
+                      organization: {
+                        id: "organization-1",
+                        name: "AI Academy",
+                        slug: "ai-academy",
+                      },
+                      role: "ADMIN",
                     },
-                    role: "ADMIN",
+                  ],
+                },
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+
+        if (url === "/platform/organizations") {
+          return Promise.resolve(new Response(null, { status: 500 }));
+        }
+
+        if (url === "/groups") {
+          groupRequestCount += 1;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                groups: [
+                  {
+                    id: `group-${groupRequestCount}`,
+                    name:
+                      groupRequestCount === 1
+                        ? "Local group"
+                        : "Reloaded local group",
+                    description: null,
+                    organization: { id: "organization-1", name: "AI Academy" },
+                    members: [],
                   },
                 ],
-              },
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+
+        if (url.startsWith("/resources?")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ resources: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
             }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
-        );
-      }
+          );
+        }
 
-      if (url === "/platform/organizations") {
-        return Promise.resolve(new Response(null, { status: 500 }));
-      }
-
-      if (url === "/groups") {
-        groupRequestCount += 1;
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              groups: [
-                {
-                  id: `group-${groupRequestCount}`,
-                  name:
-                    groupRequestCount === 1
-                      ? "Local group"
-                      : "Reloaded local group",
-                  description: null,
-                  organization: { id: "organization-1", name: "AI Academy" },
-                  members: [],
-                },
-              ],
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
-        );
-      }
-
-      if (url.startsWith("/resources?")) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ resources: [] }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      }
-
-      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
-    });
+        return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+      });
 
     render(<App />);
 
@@ -446,7 +448,9 @@ describe("APP-04 organization groups", () => {
       credentials: "same-origin",
     });
     expect(screen.queryByText("No fue posible cargar los grupos.")).toBeNull();
-    expect(screen.queryByText("No fue posible cargar los recursos.")).toBeNull();
+    expect(
+      screen.queryByText("No fue posible cargar los recursos."),
+    ).toBeNull();
   });
 
   it("shows group members to an organization member and administrative controls only to admins", async () => {
