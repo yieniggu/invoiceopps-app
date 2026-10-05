@@ -86,7 +86,7 @@ export function createModelApiClient({
       } catch {
         throw new Error("Model API response was invalid");
       }
-      if (!isPrediction(payload))
+      if (!isPrediction(payload) || payload.model_id !== modelId)
         throw new Error("Model API response was invalid");
 
       return {

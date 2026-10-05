@@ -1,5 +1,5 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   OrganizationRole,
@@ -9,6 +9,7 @@ import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
 import { createInvoiceService } from "../src/invoices.js";
+import { createModelApiClient } from "../src/model-api-client.js";
 import { createBusinessPolicyService } from "../src/business-policies.js";
 import { seedLocalDemonstration } from "../src/local-demonstration.js";
 import { parsePlatformAdministratorCommand } from "../src/platform-administrator-command.js";
@@ -1376,6 +1377,147 @@ describe("APP-06 PostgreSQL invoice domain", () => {
       }),
     ).resolves.toMatchObject({ status: "MANUAL_REVIEW" });
     await expect(prisma.decisionEvent.count()).resolves.toBe(3);
+  });
+
+  it("persists model ID mismatch fallback without foreign metadata and accepts a matching model ID", async () => {
+    const organization = await persistence.createOrganization({
+      name: "Model identity academy",
+      slug: "model-identity-academy",
+    });
+    const actor = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: actor.id,
+        organizationId: organization.id,
+        role: OrganizationRole.STUDENT,
+      },
+    });
+    const context = {
+      organizationId: organization.id,
+      ownerType: "user" as const,
+      ownerId: actor.id,
+    };
+    await prisma.invoice.createMany({
+      data: ["INV-MISMATCH", "INV-MATCH"].map((invoiceId) => ({
+        invoiceId,
+        organizationId: organization.id,
+        ownerType: "USER" as const,
+        ownerId: actor.id,
+        createdByUserId: actor.id,
+        vendorName: "Model identity vendor",
+        invoiceAmountCents: invoiceId === "INV-MISMATCH" ? 1 : 2,
+        hasPurchaseOrder: true,
+        threeWayMatch: true,
+        vendorTenureDays: 1,
+        previousIncidents12m: 0,
+        bankAccountRecentlyChanged: false,
+        amountVsVendorMedian: 1,
+        countryRisk: "low",
+      })),
+    });
+    await createBusinessPolicyService(prisma).createPolicy(actor.id, context, {
+      version: "model-identity-v1",
+      manualReviewThreshold: 0.8,
+    });
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const invoiceAmount = JSON.parse(init.body as string) as {
+        invoice_amount_cents: number;
+      };
+      return new Response(
+        JSON.stringify({
+          model_id:
+            invoiceAmount.invoice_amount_cents === 1
+              ? "other-model"
+              : "invoice-review",
+          model_version: "7",
+          run_id: "provider-run",
+          probability: 0.1,
+        }),
+        { status: 200 },
+      );
+    });
+    const invoices = createInvoiceService(
+      prisma,
+      createModelApiClient({
+        baseUrl: "http://model-api.test",
+        modelId: "invoice-review",
+        fetch,
+      }),
+    );
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const mismatch = await invoices.decideInvoice(
+        actor,
+        context,
+        "INV-MISMATCH",
+        {
+          mode: "PROBABILITY_POLICY",
+          policyVersion: "model-identity-v1",
+        },
+      );
+      expect(mismatch).toMatchObject({
+        invoice: { status: "MANUAL_REVIEW" },
+        auditEvent: {
+          decision: "MANUAL_REVIEW",
+          recommendation: "MANUAL_REVIEW",
+          policyProbabilitySource: "MODEL_API_FALLBACK",
+          policyProbability: null,
+          modelId: null,
+          modelVersion: null,
+          modelRunId: null,
+        },
+      });
+      const storedMismatch = await prisma.invoice.findFirstOrThrow({
+        where: { invoiceId: "INV-MISMATCH" },
+        include: { decisionEvents: true },
+      });
+      expect(storedMismatch.status).toBe("MANUAL_REVIEW");
+      expect(storedMismatch.decisionEvents).toHaveLength(1);
+      expect(storedMismatch.decisionEvents[0]).toMatchObject({
+        decision: "MANUAL_REVIEW",
+        recommendation: "MANUAL_REVIEW",
+        policyProbabilitySource: "MODEL_API_FALLBACK",
+        policyProbability: null,
+        modelId: null,
+        modelVersion: null,
+        modelRunId: null,
+      });
+
+      const matched = await invoices.decideInvoice(
+        actor,
+        context,
+        "INV-MATCH",
+        {
+          mode: "PROBABILITY_POLICY",
+          policyVersion: "model-identity-v1",
+        },
+      );
+      expect(matched.invoice.status).toBe("AUTO_PROCESSED");
+      const storedMatch = await prisma.invoice.findFirstOrThrow({
+        where: { invoiceId: "INV-MATCH" },
+        include: { decisionEvents: true },
+      });
+      expect(storedMatch.status).toBe("AUTO_PROCESSED");
+      expect(storedMatch.decisionEvents).toHaveLength(1);
+      expect(storedMatch.decisionEvents[0]).toMatchObject({
+        policyProbabilitySource: "MODEL_API",
+        modelId: "invoice-review",
+        modelVersion: "7",
+        modelRunId: "provider-run",
+      });
+      expect(storedMatch.decisionEvents[0]?.policyProbability?.toNumber()).toBe(
+        0.1,
+      );
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(errorLog).toHaveBeenCalledWith("Model API inference failed", {
+        invoiceId: "INV-MISMATCH",
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("isolates personal and group policy administration while allowing authorized policy reads", async () => {

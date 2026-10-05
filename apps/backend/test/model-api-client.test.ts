@@ -83,6 +83,26 @@ describe("Model API client", () => {
     );
   });
 
+  it("rejects a valid response belonging to another model", async () => {
+    const client = createModelApiClient({
+      baseUrl: "http://model-api.test",
+      modelId: "invoice-review",
+      fetch: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            model_id: "other-model",
+            model_version: "12",
+            run_id: "run-123",
+            probability: 0.8,
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(client.predict(invoice)).rejects.toThrow("Model API");
+  });
+
   it.each([
     [new Response(null, { status: 503 })],
     [new Response("not json", { status: 200 })],

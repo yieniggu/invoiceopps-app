@@ -9,6 +9,7 @@ import {
   InvoiceStatus,
   type PrismaClient,
 } from "../src/generated/prisma/client.js";
+import { createModelApiClient } from "../src/model-api-client.js";
 
 const actor: AuthUser = {
   id: "user-1",
@@ -111,5 +112,108 @@ describe("PROBABILITY_POLICY local validation", () => {
     ).rejects.toMatchObject({ status: 404 });
 
     expect(predict).not.toHaveBeenCalled();
+  });
+
+  it("audits a foreign model response as manual-review fallback without model metadata", async () => {
+    const invoice = {
+      id: "invoice-1",
+      invoiceId: "INV-001",
+      status: InvoiceStatus.PENDING,
+      invoiceAmountCents: 125_000,
+      vendorTenureDays: 365,
+      previousIncidents12m: 1,
+      amountVsVendorMedian: 1.25,
+      hasPurchaseOrder: true,
+      threeWayMatch: true,
+      bankAccountRecentlyChanged: false,
+      countryRisk: "low",
+      updatedAt: new Date("2026-09-21T00:01:00.000Z"),
+    };
+    const policy = {
+      version: "ml-policy-v1",
+      manualReviewThreshold: { toNumber: () => 0.8 },
+    };
+    const createEvent = vi.fn(async ({ data }) => ({
+      ...data,
+      manualReviewThreshold: { toNumber: () => data.manualReviewThreshold },
+      actorName: actor.name,
+      actorRut: actor.rut,
+      createdAt: new Date("2026-09-21T00:01:00.000Z"),
+    }));
+    const transaction = {
+      invoice: {
+        findFirst: vi.fn().mockResolvedValue(invoice),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({
+          ...invoice,
+          status: InvoiceStatus.MANUAL_REVIEW,
+        }),
+      },
+      businessPolicy: { findFirst: vi.fn().mockResolvedValue(policy) },
+      decisionEvent: { create: createEvent },
+    };
+    const prisma = {
+      organizationMembership: {
+        findUnique: vi.fn().mockResolvedValue({ userId: actor.id }),
+      },
+      invoice: { findFirst: vi.fn().mockResolvedValue(invoice) },
+      businessPolicy: { findFirst: vi.fn().mockResolvedValue(policy) },
+      $transaction: vi.fn(async (callback) => callback(transaction)),
+    } as unknown as PrismaClient;
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          model_id: "other-model",
+          model_version: "7",
+          run_id: "foreign-run",
+          probability: 0.1,
+        }),
+        { status: 200 },
+      ),
+    );
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const service = createInvoiceService(
+        prisma,
+        createModelApiClient({
+          baseUrl: "http://model-api.test",
+          modelId: "invoice-review",
+          fetch,
+        }),
+      );
+
+      const result = await service.decideInvoice(
+        actor,
+        context,
+        "INV-001",
+        probabilityInput,
+      );
+
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(result.invoice.status).toBe(InvoiceStatus.MANUAL_REVIEW);
+      expect(result.auditEvent).toMatchObject({
+        decision: "MANUAL_REVIEW",
+        recommendation: "MANUAL_REVIEW",
+        policyProbabilitySource: "MODEL_API_FALLBACK",
+        policyProbability: null,
+        modelId: null,
+        modelVersion: null,
+        modelRunId: null,
+      });
+      expect(createEvent).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          policyProbabilitySource: "MODEL_API_FALLBACK",
+          policyProbability: null,
+          modelId: null,
+          modelVersion: null,
+          modelRunId: null,
+        }),
+      });
+      expect(errorLog).toHaveBeenCalledWith("Model API inference failed", {
+        invoiceId: "INV-001",
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });

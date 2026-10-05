@@ -297,6 +297,69 @@ inferencia disponible, `probability >= threshold` resulta en `MANUAL_REVIEW`.
 Cada evento de auditoría conserva modo, versión, threshold, probabilidad, fuente,
 recomendación y, cuando existe inferencia, modelo lógico, versión y run.
 
+### Contrato App ↔ Model API (INT-01, v1)
+
+La fuente de verdad del request y response HTTP es `PredictRequest` y
+`PredictResponse` en Model API; el adaptador de la aplicación está en
+`apps/backend/src/model-api-client.ts`. No existe un repositorio de contratos
+independiente. La versión `v1` describe el contrato documentado; **no** añade
+un segmento a la URL ni un campo al JSON. El ID lógico estable del catálogo
+actual es `invoice-review`; configura ese valor en `MODEL_API_MODEL_ID` junto
+con `MODEL_API_URL`. La aplicación codifica el ID como un único segmento de URL.
+
+`POST /models/{model_id}/predict` recibe únicamente estas ocho features:
+
+```json
+{
+  "invoice_amount_cents": 125000,
+  "vendor_tenure_days": 365,
+  "previous_incidents_12m": 1,
+  "amount_vs_vendor_median": 1.25,
+  "has_purchase_order": true,
+  "three_way_match": true,
+  "bank_account_recently_changed": false,
+  "country_risk": "low"
+}
+```
+
+Los tres primeros campos son enteros JSON; `amount_vs_vendor_median` es
+numérico; los tres siguientes son booleanos JSON y `country_risk` es string.
+Model API exige presencia, tipos estrictos y ausencia de campos adicionales;
+rechaza con `422` el body inválido. `low`, `medium` y `high` son las categorías
+entrenadas que envía la aplicación; el schema público actual del proveedor
+admite cualquier string en `country_risk` y no restringe el dominio a esas tres.
+No se transmiten identificadores de factura, credenciales ni datos de MLflow.
+
+Respuesta exitosa de ejemplo:
+
+```json
+{
+  "model_id": "invoice-review",
+  "model_version": "7",
+  "run_id": "run-123",
+  "probability": 0.8
+}
+```
+
+`model_id` identifica el modelo lógico solicitado; `model_version` y `run_id`
+son identificadores string no vacíos de la instancia servida, no parámetros
+MLflow del consumidor. `probability` es un número finito entre 0 y 1 (inclusive)
+de la clase positiva `1`, correspondiente a revisión manual; no es una decisión.
+La aplicación valida estos cuatro campos y exige que `model_id` coincida
+exactamente con el ID configurado. Un ID ajeno, JSON inválido, respuesta HTTP no
+exitosa, timeout de 2 segundos o probabilidad inválida disparan el fallback
+auditable `MANUAL_REVIEW` / `MODEL_API_FALLBACK`, con probabilidad y metadata de
+modelo nulas. La aplicación conserva el cálculo de threshold y recomendación.
+
+El proveedor responde `404` para ID desconocido, `422` para request inválido y
+`503` para modelo conocido no disponible o inferencia inválida/fallida; el
+cliente no expone el detalle de esos errores. Para compatibilidad v1, conservar
+los ocho campos de entrada, los cuatro campos de salida, sus tipos y la semántica
+de probabilidad e ID; añadir campos de salida es tolerado por el cliente actual,
+pero cambiar o eliminar campos existentes requiere un contrato versionado nuevo
+y coordinación de ambos repositorios. No se exige una versión de modelo fija:
+el champion puede cambiar manteniendo el mismo contrato HTTP.
+
 La migración APP-08 es aditiva: agrega los campos de auditoría nullable y permite
 la fuente `MODEL_API_FALLBACK`. Para revertir una aplicación, se revierte el
 código y se conservan las columnas y eventos existentes; no se ejecuta un `DROP`
