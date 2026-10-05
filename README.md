@@ -24,6 +24,8 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
    | `FRONTEND_PORT`      | Puerto del host para el frontend de Compose            | `5173`                                                                                               | No, Compose usa `5173` por defecto                                        |
    | `DATABASE_URL`       | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public`      | Sí para ejecutar el backend localmente; Compose la construye internamente |
    | `TEST_DATABASE_URL`  | Cadena exclusiva de las pruebas de integración         | `postgresql://invoiceops:replace-with-a-local-password@localhost:5436/invoiceops_test?schema=public` | Sí para integración; debe terminar exactamente en `invoiceops_test`       |
+   | `MODEL_API_URL`      | URL base del proveedor de inferencia                   | Sin valor por defecto                                                                                | Sólo para inferencia live; debe configurarse junto a `MODEL_API_MODEL_ID` |
+   | `MODEL_API_MODEL_ID` | Identificador del modelo a invocar                     | Sin valor por defecto                                                                                | Sólo para inferencia live; debe configurarse junto a `MODEL_API_URL`      |
 
    Usa valores de ejemplo solo en tu equipo. La contraseña de ejemplo no es un
    secreto válido ni debe reutilizarse fuera del desarrollo local.
@@ -195,8 +197,9 @@ La migración APP-02 agrega `passwordHash` nullable para conservar los usuarios
 de APP-01. Esas cuentas no pueden iniciar sesión hasta que exista un flujo
 seguro de establecimiento de contraseña.
 
-Este scaffold no incluye facturas, integraciones MLflow, Model API ni
-blockchain. Estas capacidades pertenecen a los tickets posteriores.
+Este scaffold incluye facturas y la integración opcional con Model API descrita
+en este documento. Las integraciones MLflow y blockchain pertenecen a tickets
+posteriores.
 
 ### Perfil
 
@@ -280,12 +283,24 @@ propietario; las grupales sólo un `ADMIN` de la organización. Se consultan,
 crean y actualizan mediante `GET`, `POST` y `PATCH /business-policies` en el
 mismo contexto `organizationId`, `ownerType` y `ownerId` de las facturas.
 
-Por ahora una factura puede incluir únicamente `policyProbability` con fuente
-`LOCAL_DEMONSTRATION`. No representa inferencia live, Model API ni MLflow. Si
-la probabilidad declarada falta, la policy falla controladamente y no cambia el
-estado ni crea un evento. Con probabilidad disponible, `probability >= threshold`
-resulta en `MANUAL_REVIEW`. Cada evento de auditoría conserva modo, versión,
-threshold, probabilidad y fuente evaluados.
+`PROBABILITY_POLICY` invoca el Model API sólo cuando `MODEL_API_URL` y
+`MODEL_API_MODEL_ID` están configuradas. No existe una URL ni un modelo por
+defecto. Si falta cualquiera de las dos variables, el proveedor se considera no
+disponible; también se trata así un timeout, error HTTP o respuesta inválida. En
+esos casos el cliente recibe la respuesta normal de la decisión y el servidor
+persiste únicamente el fallback seguro `MANUAL_REVIEW`, con
+`policyProbabilitySource: "MODEL_API_FALLBACK"` y metadata de modelo nula. No se
+exponen detalles del proveedor en la respuesta HTTP.
+
+`RULE_V1` permanece disponible e independiente de esta configuración. Con
+inferencia disponible, `probability >= threshold` resulta en `MANUAL_REVIEW`.
+Cada evento de auditoría conserva modo, versión, threshold, probabilidad, fuente,
+recomendación y, cuando existe inferencia, modelo lógico, versión y run.
+
+La migración APP-08 es aditiva: agrega los campos de auditoría nullable y permite
+la fuente `MODEL_API_FALLBACK`. Para revertir una aplicación, se revierte el
+código y se conservan las columnas y eventos existentes; no se ejecuta un `DROP`
+automático.
 
 Para una demostración local repetible, con `DATABASE_URL` apuntando a la base
 local `invoiceops` en `localhost` o al servicio Compose `db`, ejecuta:

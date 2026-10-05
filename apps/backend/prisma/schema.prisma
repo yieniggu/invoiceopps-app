@@ -191,6 +191,10 @@ model DecisionEvent {
   manualReviewThreshold Decimal?
   policyProbability Decimal?
   policyProbabilitySource String?
+  modelId          String?
+  modelVersion     String?
+  modelRunId       String?
+  recommendation   String?
   actorUserId      String
   actorName        String
   actorRut         String

@@ -69,9 +69,34 @@ describe("APP-06 invoice workspace", () => {
               {
                 decision: "AUTO_PROCESS",
                 ruleVersion: "invoice-rules-v1",
+                mode: "PROBABILITY_POLICY",
+                policyVersion: "ml-policy-v1",
+                manualReviewThreshold: 0.7,
+                policyProbability: 0.8,
+                policyProbabilitySource: "MODEL_API",
+                modelId: "invoice-review",
+                modelVersion: "12",
+                modelRunId: "run-123",
+                recommendation: "AUTO_PROCESS",
                 actor: { name: "Ada Lovelace", rut: "123456785" },
                 correlationId: "correlation-1",
                 createdAt: "2026-09-21T00:01:00.000Z",
+              },
+              {
+                decision: "MANUAL_REVIEW",
+                ruleVersion: "ml-policy-v1",
+                mode: "PROBABILITY_POLICY",
+                policyVersion: "ml-policy-v1",
+                manualReviewThreshold: 0.7,
+                policyProbability: null,
+                policyProbabilitySource: "MODEL_API_FALLBACK",
+                modelId: null,
+                modelVersion: null,
+                modelRunId: null,
+                recommendation: "MANUAL_REVIEW",
+                actor: { name: "Ada Lovelace", rut: "123456785" },
+                correlationId: "correlation-2",
+                createdAt: "2026-09-21T00:02:00.000Z",
               },
             ],
           }),
@@ -84,8 +109,12 @@ describe("APP-06 invoice workspace", () => {
     expect(await screen.findByText("Acme Ltd.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ver INV-001" }));
 
-    expect(await screen.findByText("Ada Lovelace (123456785)")).toBeTruthy();
+    expect(
+      (await screen.findAllByText("Ada Lovelace (123456785)")).length,
+    ).toBeGreaterThan(0);
     expect(screen.queryByText("user-1")).toBeNull();
+    expect(screen.getByText("invoice-review v12 (run-123)")).toBeTruthy();
+    expect(screen.getByText("Fallback: revisión manual")).toBeTruthy();
   });
 
   it("shows a recoverable list error", async () => {

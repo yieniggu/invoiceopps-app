@@ -1,5 +1,5 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { AuthError, type AuthService } from "../src/auth.js";
@@ -60,6 +60,10 @@ function createInvoiceService(): InvoiceService {
             status: "PENDING",
             policyProbability: null,
             policyProbabilitySource: null,
+            modelId: null,
+            modelVersion: null,
+            modelRunId: null,
+            recommendation: null,
           },
         ],
         nextCursor: null,
@@ -79,6 +83,10 @@ function createInvoiceService(): InvoiceService {
           status: "PENDING",
           policyProbability: null,
           policyProbabilitySource: null,
+          modelId: null,
+          modelVersion: null,
+          modelRunId: null,
+          recommendation: null,
           riskContext: {
             vendorTenureDays: 365,
             previousIncidents12m: 0,
@@ -115,6 +123,10 @@ function createInvoiceService(): InvoiceService {
           manualReviewThreshold: null,
           policyProbability: null,
           policyProbabilitySource: null,
+          modelId: null,
+          modelVersion: null,
+          modelRunId: null,
+          recommendation: null,
           actor: { name: "Ada Lovelace", rut: "123456785" },
           correlationId: "correlation-1",
           createdAt: "2026-09-21T00:01:00.000Z",
@@ -180,5 +192,89 @@ describe("APP-06 invoice HTTP contract", () => {
 
     expect(decision.status).toBe(403);
     expect(decision.body).toEqual({ status: "error", message: "Forbidden" });
+  });
+
+  it("keeps CSRF, authentication, and ownership boundaries for probability decisions", async () => {
+    const decideInvoice = vi.fn(
+      async (actor, receivedContext, invoiceId, input) => {
+        if (receivedContext.ownerId !== actor.id) {
+          throw new AuthError(404, "Invoice not found");
+        }
+        expect(invoiceId).toBe("INV-001");
+        expect(input).toEqual({
+          mode: "PROBABILITY_POLICY",
+          policyVersion: "ml-policy-v1",
+        });
+        return {
+          invoice: {
+            invoiceId,
+            status: "MANUAL_REVIEW" as const,
+            updatedAt: "2026-09-21T00:01:00.000Z",
+          },
+          auditEvent: {
+            decision: "MANUAL_REVIEW" as const,
+            ruleVersion: "ml-policy-v1",
+            mode: "PROBABILITY_POLICY" as const,
+            policyVersion: "ml-policy-v1",
+            manualReviewThreshold: 0.8,
+            policyProbability: null,
+            policyProbabilitySource: "MODEL_API_FALLBACK",
+            modelId: null,
+            modelVersion: null,
+            modelRunId: null,
+            recommendation: "MANUAL_REVIEW" as const,
+            actor: { name: "Ada Lovelace", rut: "123456785" },
+            correlationId: "correlation-1",
+            createdAt: "2026-09-21T00:01:00.000Z",
+          },
+        };
+      },
+    );
+    const app = createApp({ isReady: async () => true }, createAuth(), {
+      invoices: { ...createInvoiceService(), decideInvoice },
+    });
+    const decisionPath = `/invoices/INV-001/decision?${new URLSearchParams(context)}`;
+    const csrfRejected = await request(app)
+      .post(decisionPath)
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
+    const unauthenticated = await request(app)
+      .post(decisionPath)
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
+    const crossOwner = await request(app)
+      .post(
+        `/invoices/INV-001/decision?${new URLSearchParams({ ...context, ownerId: "user-2" })}`,
+      )
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
+    const permitted = await request(app)
+      .post(decisionPath)
+      .set("Host", "127.0.0.1")
+      .set("Origin", "http://127.0.0.1")
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
+
+    expect(csrfRejected.status).toBe(403);
+    expect(unauthenticated.status).toBe(401);
+    expect(crossOwner.status).toBe(404);
+    expect(crossOwner.body).toEqual({
+      status: "error",
+      message: "Invoice not found",
+    });
+    expect(permitted.status).toBe(200);
+    expect(permitted.body.auditEvent.policyProbabilitySource).toBe(
+      "MODEL_API_FALLBACK",
+    );
+    expect(decideInvoice).toHaveBeenCalledTimes(2);
+    expect(decideInvoice).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "user-1" }),
+      context,
+      "INV-001",
+      { mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" },
+    );
   });
 });

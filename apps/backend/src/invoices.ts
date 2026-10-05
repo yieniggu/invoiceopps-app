@@ -8,10 +8,13 @@ import {
 } from "./generated/prisma/client.js";
 import { AuthError, type AuthUser } from "./auth.js";
 import type { ResourceContext } from "./resources.js";
+import type { ModelApiClient, ModelPrediction } from "./model-api-client.js";
 
 export const RULE_VERSION = "invoice-rules-v1";
 export const AUTO_PROCESS_LIMIT_CENTS = 500_000;
 export const LOCAL_DEMONSTRATION = "LOCAL_DEMONSTRATION";
+export const MODEL_API = "MODEL_API";
+export const MODEL_API_FALLBACK = "MODEL_API_FALLBACK";
 
 export type InvoiceDecision = "AUTO_PROCESS" | "MANUAL_REVIEW";
 export type InvoiceDecisionInput =
@@ -71,6 +74,10 @@ export type AuditEvent = {
   manualReviewThreshold: number | null;
   policyProbability: number | null;
   policyProbabilitySource: string | null;
+  modelId: string | null;
+  modelVersion: string | null;
+  modelRunId: string | null;
+  recommendation: string | null;
   actor: { name: string; rut: string };
   correlationId: string;
   createdAt: string;
@@ -182,6 +189,10 @@ function auditEventResponse(event: {
   manualReviewThreshold: { toNumber(): number } | null;
   policyProbability: { toNumber(): number } | null;
   policyProbabilitySource: string | null;
+  modelId: string | null;
+  modelVersion: string | null;
+  modelRunId: string | null;
+  recommendation: string | null;
   actorName: string;
   actorRut: string;
   correlationId: string;
@@ -195,13 +206,20 @@ function auditEventResponse(event: {
     manualReviewThreshold: event.manualReviewThreshold?.toNumber() ?? null,
     policyProbability: event.policyProbability?.toNumber() ?? null,
     policyProbabilitySource: event.policyProbabilitySource,
+    modelId: event.modelId,
+    modelVersion: event.modelVersion,
+    modelRunId: event.modelRunId,
+    recommendation: event.recommendation as InvoiceDecision | null,
     actor: { name: event.actorName, rut: event.actorRut },
     correlationId: event.correlationId,
     createdAt: event.createdAt.toISOString(),
   };
 }
 
-export function createInvoiceService(prisma: PrismaClient): InvoiceService {
+export function createInvoiceService(
+  prisma: PrismaClient,
+  modelApi?: ModelApiClient,
+): InvoiceService {
   return {
     async listInvoices(userId, context, query) {
       await authorizeContext(prisma, userId, context);
@@ -276,6 +294,37 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
     },
     async decideInvoice(actor, context, invoiceId, input) {
       await authorizeContext(prisma, actor.id, context);
+      let prediction: ModelPrediction | null = null;
+      if (input.mode === "PROBABILITY_POLICY") {
+        const invoice = await prisma.invoice.findFirst({
+          where: {
+            organizationId: context.organizationId,
+            ownerType: ownerType(context.ownerType),
+            ownerId: context.ownerId,
+            invoiceId,
+          },
+        });
+        if (!invoice) throw inaccessibleContext();
+        if (invoice.status !== InvoiceStatus.PENDING) {
+          throw new AuthError(409, "Invoice decision is not permitted");
+        }
+        const policy = await prisma.businessPolicy.findFirst({
+          where: {
+            organizationId: context.organizationId,
+            ownerType: ownerType(context.ownerType),
+            ownerId: context.ownerId,
+            version: input.policyVersion,
+          },
+        });
+        if (!policy) throw new AuthError(404, "Business policy not found");
+        try {
+          if (!modelApi) throw new Error("Model API is unavailable");
+          prediction = await modelApi.predict(invoice);
+        } catch {
+          // Provider details remain internal; the persisted fallback is auditable.
+          console.error("Model API inference failed", { invoiceId });
+        }
+      }
       return prisma.$transaction(async (transaction) => {
         const invoice = await transaction.invoice.findFirst({
           where: {
@@ -303,21 +352,16 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
         if (input.mode === "PROBABILITY_POLICY" && !policy) {
           throw new AuthError(404, "Business policy not found");
         }
-        if (
-          input.mode === "PROBABILITY_POLICY" &&
-          (invoice.policyProbability === null ||
-            invoice.policyProbabilitySource !== LOCAL_DEMONSTRATION)
-        ) {
-          throw new AuthError(409, "Invoice probability is not available");
-        }
-        const probability = invoice.policyProbability?.toNumber() ?? null;
+        const probability = prediction?.probability ?? null;
         const threshold = policy?.manualReviewThreshold.toNumber() ?? null;
         const decision =
           input.mode === "RULE_V1"
             ? expectedDecision(invoice)
-            : probability! >= threshold!
+            : !prediction
               ? "MANUAL_REVIEW"
-              : "AUTO_PROCESS";
+              : probability! >= threshold!
+                ? "MANUAL_REVIEW"
+                : "AUTO_PROCESS";
         const status =
           decision === "AUTO_PROCESS"
             ? InvoiceStatus.AUTO_PROCESSED
@@ -340,8 +384,15 @@ export function createInvoiceService(prisma: PrismaClient): InvoiceService {
             policyProbability: probability,
             policyProbabilitySource:
               input.mode === "PROBABILITY_POLICY"
-                ? invoice.policyProbabilitySource
+                ? prediction
+                  ? MODEL_API
+                  : MODEL_API_FALLBACK
                 : null,
+            modelId: prediction?.modelId ?? null,
+            modelVersion: prediction?.modelVersion ?? null,
+            modelRunId: prediction?.runId ?? null,
+            recommendation:
+              input.mode === "PROBABILITY_POLICY" ? decision : null,
             actorUserId: actor.id,
             actorName: actor.name,
             actorRut: actor.rut,

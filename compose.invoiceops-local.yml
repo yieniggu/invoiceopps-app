@@ -1,0 +1,54 @@
+# Apply only to a dedicated local App Compose project.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${LOCAL_APP_DB_PORT:-5545}:5432"
+
+  backend:
+    depends_on:
+      model-api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      MODEL_API_URL: http://model-api:8000
+      MODEL_API_MODEL_ID: invoice-review
+    ports: !override
+      - "127.0.0.1:${LOCAL_BACKEND_PORT:-5300}:3000"
+    networks:
+      - default
+      - invoiceops_local_link
+
+  frontend:
+    ports: !override
+      - "127.0.0.1:${LOCAL_FRONTEND_PORT:-5174}:80"
+
+  model-api:
+    build:
+      context: ../invoiceops-model-api
+      dockerfile: Dockerfile
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/models/invoice-review/health', timeout=2).close()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_API_ARTIFACT_DOWNLOAD_MODE: proxy-http
+      MLFLOW_TRACKING_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:?Set local MLflow username}
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:?Set local MLflow password}
+      MODEL_API_ADMIN_TOKEN: ${LOCAL_MODEL_API_ADMIN_TOKEN:?Set local Model API admin token}
+    ports:
+      - "127.0.0.1:${LOCAL_MODEL_API_PORT:-5800}:8000"
+    networks:
+      - invoiceops_local_link
+
+networks:
+  invoiceops_local_link:
+    external: true
+    name: invoiceops-local-link

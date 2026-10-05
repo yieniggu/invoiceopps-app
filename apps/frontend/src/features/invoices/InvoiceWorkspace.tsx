@@ -51,6 +51,10 @@ type AuditEvent = {
   manualReviewThreshold: number | null;
   policyProbability: number | null;
   policyProbabilitySource: string | null;
+  modelId: string | null;
+  modelVersion: string | null;
+  modelRunId: string | null;
+  recommendation: string | null;
   actor: { name: string; rut: string };
   correlationId: string;
   createdAt: string;
@@ -624,6 +628,7 @@ function InvoiceDetailView({
                   <th>Modo</th>
                   <th>Policy</th>
                   <th>Probabilidad</th>
+                  <th>Modelo</th>
                   <th>Actor</th>
                   <th>Correlación</th>
                 </tr>
@@ -641,6 +646,13 @@ function InvoiceDetailView({
                       {event.manualReviewThreshold !== null
                         ? ` / ${event.manualReviewThreshold}`
                         : ""}
+                    </td>
+                    <td>
+                      {event.policyProbabilitySource === "MODEL_API_FALLBACK"
+                        ? "Fallback: revisión manual"
+                        : event.modelId
+                          ? `${event.modelId} v${event.modelVersion} (${event.modelRunId})`
+                          : "-"}
                     </td>
                     <td>
                       {event.actor.name} ({event.actor.rut})

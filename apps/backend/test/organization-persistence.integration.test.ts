@@ -1280,7 +1280,7 @@ describe("APP-06 PostgreSQL invoice domain", () => {
           hasPurchaseOrder: true,
           threeWayMatch: true,
           vendorTenureDays: 1,
-          previousIncidents12m: 0,
+          previousIncidents12m: 99,
           bankAccountRecentlyChanged: false,
           amountVsVendorMedian: 1,
           countryRisk: "low",
@@ -1288,7 +1288,19 @@ describe("APP-06 PostgreSQL invoice domain", () => {
       ],
     });
     const policies = createBusinessPolicyService(prisma);
-    const invoices = createInvoiceService(prisma);
+    const invoices = createInvoiceService(prisma, {
+      async predict(invoice) {
+        if (invoice.previousIncidents12m === 99) {
+          throw new Error("provider unavailable");
+        }
+        return {
+          modelId: "invoice-review",
+          modelVersion: "12",
+          runId: "run-123",
+          probability: 0.8,
+        };
+      },
+    });
     await policies.createPolicy(actor.id, context, {
       version: "ml-policy-v1",
       manualReviewThreshold: 0.8,
@@ -1306,7 +1318,11 @@ describe("APP-06 PostgreSQL invoice domain", () => {
         policyVersion: "ml-policy-v1",
         manualReviewThreshold: 0.8,
         policyProbability: 0.8,
-        policyProbabilitySource: "LOCAL_DEMONSTRATION",
+        policyProbabilitySource: "MODEL_API",
+        modelId: "invoice-review",
+        modelVersion: "12",
+        modelRunId: "run-123",
+        recommendation: "MANUAL_REVIEW",
       },
     });
     await policies.updatePolicy(actor.id, context, "ml-policy-v1", {
@@ -1343,13 +1359,23 @@ describe("APP-06 PostgreSQL invoice domain", () => {
         mode: "PROBABILITY_POLICY",
         policyVersion: "ml-policy-v1",
       }),
-    ).rejects.toMatchObject({ status: 409 });
+    ).resolves.toMatchObject({
+      invoice: { status: "MANUAL_REVIEW" },
+      auditEvent: {
+        policyProbability: null,
+        policyProbabilitySource: "MODEL_API_FALLBACK",
+        modelId: null,
+        modelVersion: null,
+        modelRunId: null,
+        recommendation: "MANUAL_REVIEW",
+      },
+    });
     await expect(
       prisma.invoice.findFirstOrThrow({
         where: { invoiceId: "INV-POLICY-MISSING" },
       }),
-    ).resolves.toMatchObject({ status: "PENDING" });
-    await expect(prisma.decisionEvent.count()).resolves.toBe(2);
+    ).resolves.toMatchObject({ status: "MANUAL_REVIEW" });
+    await expect(prisma.decisionEvent.count()).resolves.toBe(3);
   });
 
   it("isolates personal and group policy administration while allowing authorized policy reads", async () => {
@@ -1497,7 +1523,16 @@ describe("APP-06 PostgreSQL invoice domain", () => {
       ownerType: "user" as const,
       ownerId: user.id,
     };
-    const invoices = createInvoiceService(prisma);
+    const invoices = createInvoiceService(prisma, {
+      async predict(invoice) {
+        return {
+          modelId: "invoice-review",
+          modelVersion: "test",
+          runId: "local-demonstration",
+          probability: invoice.invoiceAmountCents === 100_000 ? 0.8 : 0.2,
+        };
+      },
+    });
 
     await expect(
       invoices.decideInvoice(user, context, "DEMO-RULE-AUTO-POLICY-MANUAL", {

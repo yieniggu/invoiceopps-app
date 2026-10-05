@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -9,6 +10,12 @@ const schemaPath = fileURLToPath(
 const platformAdministratorMigrationPath = fileURLToPath(
   new URL(
     "../prisma/migrations/20260922213000_add_platform_administrator/migration.sql",
+    import.meta.url,
+  ),
+);
+const modelInferenceMigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20260927213500_add_model_inference_audit/migration.sql",
     import.meta.url,
   ),
 );
@@ -24,6 +31,110 @@ function modelBlock(schema: string, modelName: string) {
 }
 
 describe("APP-01 Prisma schema contract", () => {
+  it("rejects incomplete inference snapshots without accepting SQL UNKNOWN", async () => {
+    const migration = await readFile(modelInferenceMigrationPath, "utf8");
+    const snapshotCheck = migration.match(
+      /ADD CONSTRAINT "DecisionEvent_model_inference_snapshot_check" CHECK \(([\s\S]*?)\);/,
+    );
+    const sourceCheck = migration.match(
+      /ADD CONSTRAINT "DecisionEvent_policyProbability_source_check" CHECK \((.*?)\);/,
+    );
+    const priorMigration = await readFile(
+      fileURLToPath(
+        new URL(
+          "../prisma/migrations/20260923203000_add_business_policies/migration.sql",
+          import.meta.url,
+        ),
+      ),
+      "utf8",
+    );
+    const probabilityCheck = priorMigration.match(
+      /ADD CONSTRAINT "DecisionEvent_policyProbability_range_check" CHECK \((.*?)\);/,
+    );
+    expect(snapshotCheck).not.toBeNull();
+    expect(sourceCheck).not.toBeNull();
+    expect(probabilityCheck).not.toBeNull();
+
+    // SQLite executes the migration's actual CHECK expressions in memory. These
+    // operators share SQL three-valued NULL logic with PostgreSQL; this does not
+    // validate PostgreSQL migration execution or production data compatibility.
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec(`CREATE TABLE "DecisionEvent" (
+        "policyProbabilitySource" TEXT,
+        "modelId" TEXT,
+        "modelVersion" TEXT,
+        "modelRunId" TEXT,
+        "policyProbability" REAL,
+        "recommendation" TEXT,
+        CHECK (${probabilityCheck![1]}),
+        CHECK (${sourceCheck![1]}),
+        CHECK (${snapshotCheck![1]})
+      )`);
+      const insert = database.prepare(
+        `INSERT INTO "DecisionEvent" VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      const evaluate =
+        database.prepare(`SELECT ${snapshotCheck![1]} AS allowed FROM (
+        SELECT ? AS "policyProbabilitySource", ? AS "modelId", ? AS "modelVersion",
+               ? AS "modelRunId", ? AS "policyProbability", ? AS "recommendation"
+      )`);
+      type AuditTuple = [
+        string | null,
+        string | null,
+        string | null,
+        string | null,
+        number | null,
+        string | null,
+      ];
+      const valid: AuditTuple[] = [
+        [null, null, null, null, null, null],
+        [null, null, null, null, 0.4, null],
+        ["MODEL_API", "model", "v1", "run", 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API_FALLBACK", null, null, null, null, "MANUAL_REVIEW"],
+        ["LOCAL_DEMONSTRATION", null, null, null, 0.4, null],
+        ["LOCAL_DEMONSTRATION", null, null, null, null, null],
+      ];
+      const invalid: AuditTuple[] = [
+        [null, "model", null, null, null, null],
+        [null, null, "v1", null, null, null],
+        [null, null, null, "run", null, null],
+        [null, "model", "v1", "run", 0.4, "MANUAL_REVIEW"],
+        [null, null, null, null, null, "MANUAL_REVIEW"],
+        ["MODEL_API", "model", null, "run", 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API", null, "v1", "run", 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API", "model", "v1", null, 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API", "model", "v1", "run", null, "MANUAL_REVIEW"],
+        ["MODEL_API", "model", "v1", "run", 0.4, null],
+        ["MODEL_API_FALLBACK", "model", null, null, null, "MANUAL_REVIEW"],
+        ["MODEL_API_FALLBACK", null, "v1", null, null, "MANUAL_REVIEW"],
+        ["MODEL_API_FALLBACK", null, null, "run", null, "MANUAL_REVIEW"],
+        ["MODEL_API_FALLBACK", null, null, null, 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API_FALLBACK", null, null, null, null, null],
+        ["MODEL_API_FALLBACK", null, null, null, null, "AUTO_PROCESS"],
+        ["LOCAL_DEMONSTRATION", "model", null, null, 0.4, null],
+        ["LOCAL_DEMONSTRATION", null, "v1", null, 0.4, null],
+        ["LOCAL_DEMONSTRATION", null, null, "run", 0.4, null],
+        ["LOCAL_DEMONSTRATION", null, null, null, 0.4, "MANUAL_REVIEW"],
+        ["MODEL_API", "model", "v1", "run", 1.1, "MANUAL_REVIEW"],
+        ["UNRECOGNIZED", null, null, null, null, null],
+      ];
+
+      for (const row of valid) {
+        expect(evaluate.get(...row)).toEqual({ allowed: 1 });
+        expect(() => insert.run(...row)).not.toThrow();
+      }
+      for (const row of invalid) {
+        if (row[0] !== "UNRECOGNIZED" && row[4] !== 1.1) {
+          expect(evaluate.get(...row)).toEqual({ allowed: 0 });
+        }
+        expect(() => insert.run(...row)).toThrow();
+      }
+    } finally {
+      database.close();
+    }
+  });
+
   it("declares APP-07 owner-scoped business policies and local demonstration probabilities", async () => {
     const schema = await readFile(schemaPath, "utf8");
     const invoice = modelBlock(schema, "Invoice");
