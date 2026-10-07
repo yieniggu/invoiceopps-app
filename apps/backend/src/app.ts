@@ -12,6 +12,8 @@ import type { InvoiceDecisionInput, InvoiceService } from "./invoices.js";
 import type { ResourceContext, ResourceService } from "./resources.js";
 import { OrganizationRole } from "./generated/prisma/client.js";
 import type { PlatformAdministratorService } from "./platform-administrator.js";
+import type { MlflowResourceService } from "./mlflow-resources.js";
+import { MlflowReadError, withMlflowDeadline } from "./mlflow-read-client.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -274,6 +276,7 @@ export interface AppOptions {
   invoices?: InvoiceService;
   businessPolicies?: BusinessPolicyService;
   resources?: ResourceService;
+  mlflowResources?: MlflowResourceService;
   platformAdministrators?: PlatformAdministratorService;
 }
 
@@ -286,6 +289,7 @@ export function createApp(
     invoices,
     businessPolicies,
     resources,
+    mlflowResources,
     platformAdministrators,
   }: AppOptions = {},
 ) {
@@ -507,6 +511,36 @@ export function createApp(
       .json({ resources: await resources.listResources(profile.id, context) });
   });
 
+  app.get("/mlflow/resources", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !sessionToken) throw new AuthError(401, "Unauthorized");
+    const startedAt = Date.now();
+    response.locals.mlflowStartedAt = startedAt;
+    const result = await withMlflowDeadline(async (signal) => {
+      const profile = await auth.getProfile(sessionToken);
+      signal.throwIfAborted();
+      if (Object.keys(request.query).length !== 3) {
+        throw new AuthError(400, "Invalid resource context");
+      }
+      const context = parseResourceContext(request.query);
+      const uuid =
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+      if (!uuid.test(context.organizationId) || !uuid.test(context.ownerId)) {
+        throw new AuthError(400, "Invalid resource context");
+      }
+      if (!mlflowResources) throw new MlflowReadError(503, "NOT_CONFIGURED");
+      return mlflowResources.listResources(profile, context, signal);
+    });
+    console.info(
+      JSON.stringify({
+        feature: "mlflow-resources",
+        outcome: "success",
+        elapsedMs: Date.now() - startedAt,
+      }),
+    );
+    response.status(200).json(result);
+  });
+
   app.get("/invoices", async (request, response) => {
     const { context, q, cursor, limit } = parseInvoiceListQuery(request.query);
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
@@ -712,6 +746,26 @@ export function createApp(
       response
         .status(error.status)
         .json({ status: "error", message: error.message });
+      return;
+    }
+
+    if (error instanceof MlflowReadError) {
+      const startedAt: unknown = response.locals.mlflowStartedAt;
+      console.warn(
+        JSON.stringify({
+          feature: "mlflow-resources",
+          outcome: "failure",
+          code: error.code,
+          ...(typeof startedAt === "number"
+            ? { elapsedMs: Math.max(0, Date.now() - startedAt) }
+            : {}),
+        }),
+      );
+      response.status(error.status).json({
+        status: "error",
+        code: error.code,
+        message: "MLflow resources unavailable",
+      });
       return;
     }
 

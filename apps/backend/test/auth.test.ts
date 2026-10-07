@@ -1,5 +1,5 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { createAuthRateLimiter } from "../src/auth-rate-limit.js";
@@ -8,6 +8,8 @@ import type { PrismaClient } from "../src/generated/prisma/client.js";
 import type { GroupService } from "../src/groups.js";
 import type { ResourceService } from "../src/resources.js";
 import type { PlatformAdministratorService } from "../src/platform-administrator.js";
+import { createMlflowResourceService } from "../src/mlflow-resources.js";
+import { MlflowReadError } from "../src/mlflow-read-client.js";
 
 function createAuthServiceForHttpTest(): AuthService {
   const users = new Map<
@@ -571,6 +573,305 @@ describe("APP-05 resource ownership HTTP contract", () => {
     expect(missing.status).toBe(400);
     expect(invalid.status).toBe(400);
     expect(anonymous.status).toBe(401);
+  });
+});
+
+describe("APP-09 live MLflow resources HTTP contract", () => {
+  const ownerId = "a11ce000-0000-4000-8000-000000000001";
+  const organizationId = "a11ce000-0000-4000-8000-000000000002";
+  const query = {
+    organizationId,
+    ownerType: "user",
+    ownerId,
+  };
+  const payload = {
+    experiment: {
+      id: "experiment-1",
+      name: "student/123456785/invoice-risk",
+    },
+    runs: [{ runId: "own-run" }],
+    registeredModel: null,
+    versions: [],
+    truncated: false,
+    fetchedAt: "2026-10-05T00:00:00.000Z",
+  };
+
+  it("logs bounded elapsed time and safe codes for successful, invalid and unavailable reads", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const app = createApp(
+        { isReady: async () => true },
+        {
+          ...createAuthServiceForHttpTest(),
+          async getProfile() {
+            return {
+              id: ownerId,
+              name: "Ada",
+              rut: "123456785",
+              email: null,
+              username: null,
+              isPlatformAdministrator: false,
+              memberships: [],
+            };
+          },
+        },
+        {
+          mlflowResources: {
+            listResources: vi
+              .fn()
+              .mockResolvedValueOnce(payload)
+              .mockRejectedValueOnce(
+                new MlflowReadError(502, "INVALID_RESPONSE"),
+              )
+              .mockRejectedValueOnce(new MlflowReadError(503, "UNAVAILABLE")),
+          },
+        },
+      );
+      for (const expected of [200, 502, 503]) {
+        const response = await request(app)
+          .get("/mlflow/resources")
+          .query(query)
+          .set("Cookie", "invoiceops_session=valid-session");
+        expect(response.status).toBe(expected);
+      }
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(2);
+      const entries = [
+        info.mock.calls[0][0],
+        ...warn.mock.calls.map(([message]) => message),
+      ].map((message: string) => JSON.parse(message));
+      expect(
+        entries.map(({ outcome, code }: { outcome: string; code?: string }) => [
+          outcome,
+          code,
+        ]),
+      ).toEqual([
+        ["success", undefined],
+        ["failure", "INVALID_RESPONSE"],
+        ["failure", "UNAVAILABLE"],
+      ]);
+      for (const entry of entries) {
+        expect(entry.feature).toBe("mlflow-resources");
+        expect(entry.elapsedMs).toEqual(expect.any(Number));
+        expect(entry.elapsedMs).toBeGreaterThanOrEqual(0);
+        expect(JSON.stringify(entry)).not.toMatch(
+          /123456785|valid-session|password|https?:\/\//,
+        );
+      }
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("requires an authenticated session for the new resource endpoint", async () => {
+    const response = await request(
+      createApp({ isReady: async () => true }, createAuthServiceForHttpTest()),
+    )
+      .get("/mlflow/resources")
+      .query(query);
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects invalid query and unavailable configuration without turning either into an empty result", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile() {
+          return {
+            id: ownerId,
+            rut: "123456785",
+            name: "Ada",
+            email: null,
+            username: null,
+            isPlatformAdministrator: false,
+            memberships: [],
+          };
+        },
+      },
+    );
+    const invalid = await request(app)
+      .get("/mlflow/resources")
+      .query({ ...query, ownerType: "foreign" })
+      .set("Cookie", "invoiceops_session=valid-session");
+    const missing = await request(app)
+      .get("/mlflow/resources")
+      .query(query)
+      .set("Cookie", "invoiceops_session=valid-session");
+    const extra = await request(app)
+      .get("/mlflow/resources")
+      .query({ ...query, workspace: "foreign" })
+      .set("Cookie", "invoiceops_session=valid-session");
+    expect(invalid.status).toBe(400);
+    expect(extra.status).toBe(400);
+    expect(missing.status).toBe(503);
+    expect(missing.body.code).toBe("NOT_CONFIGURED");
+  });
+
+  it("serves the authorized owner on the new route rather than treating it as missing", async () => {
+    const listResources = vi.fn().mockResolvedValue(payload);
+    // Preserve the existing injection convention while testing the future slot.
+    const options = {
+      resources: {
+        async listResources() {
+          return [];
+        },
+      } satisfies ResourceService,
+      mlflowResources: { listResources },
+    };
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile(sessionToken: string) {
+          if (sessionToken !== "valid-session") {
+            throw new AuthError(401, "Unauthorized");
+          }
+          return {
+            id: ownerId,
+            name: "Ada Lovelace",
+            rut: "123456785",
+            email: null,
+            username: null,
+            isPlatformAdministrator: false,
+            memberships: [
+              {
+                organization: {
+                  id: organizationId,
+                  name: "Data Academy",
+                  slug: "data-academy",
+                },
+                role: "STUDENT" as const,
+              },
+            ],
+          };
+        },
+      },
+      options,
+    );
+
+    const response = await request(app)
+      .get("/mlflow/resources")
+      .query(query)
+      .set("Cookie", "invoiceops_session=valid-session");
+
+    expect(response.status).toBe(200);
+    expect(listResources).toHaveBeenCalledWith(
+      expect.objectContaining({ id: ownerId, rut: "123456785" }),
+      { organizationId, ownerType: "user", ownerId },
+      expect.any(AbortSignal),
+    );
+    expect(response.body.experiment).toEqual(payload.experiment);
+    expect(response.body.runs).toEqual(payload.runs);
+    expect(response.body.registeredModel).toBeNull();
+    expect(response.body.versions).toEqual([]);
+    expect(response.body.truncated).toBe(false);
+    expect(response.body.fetchedAt).toBe(payload.fetchedAt);
+  });
+
+  it("returns 404 for a foreign context before 503 for a valid context when the reader is unconfigured", async () => {
+    const organizationMembership = vi
+      .fn()
+      .mockImplementation(({ where }) =>
+        where.userId_organizationId.organizationId === organizationId
+          ? { userId: ownerId }
+          : null,
+      );
+    const prisma = {
+      organizationMembership: { findUnique: organizationMembership },
+      organization: {
+        findUnique: vi.fn().mockResolvedValue({ slug: "data-academy" }),
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ rut: "123456785" }) },
+      group: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "a11ce000-0000-4000-8000-000000000005",
+        }),
+      },
+      groupMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        async getProfile() {
+          return {
+            id: ownerId,
+            name: "Ada",
+            rut: "123456785",
+            email: null,
+            username: null,
+            isPlatformAdministrator: false,
+            memberships: [],
+          };
+        },
+      },
+      { mlflowResources: createMlflowResourceService(prisma, undefined) },
+    );
+    const foreign = await request(app)
+      .get("/mlflow/resources")
+      .query({
+        ...query,
+        organizationId: "a11ce000-0000-4000-8000-000000000003",
+      })
+      .set("Cookie", "invoiceops_session=valid-session");
+    const valid = await request(app)
+      .get("/mlflow/resources")
+      .query(query)
+      .set("Cookie", "invoiceops_session=valid-session");
+    const foreignGroup = await request(app)
+      .get("/mlflow/resources")
+      .query({
+        ...query,
+        ownerType: "group",
+        ownerId: "a11ce000-0000-4000-8000-000000000005",
+      })
+      .set("Cookie", "invoiceops_session=valid-session");
+    expect(foreign.status).toBe(404);
+    expect(foreignGroup.status).toBe(404);
+    expect(valid.status).toBe(503);
+    expect(valid.body.code).toBe("NOT_CONFIGURED");
+    expect(organizationMembership).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns 503 for a stuck profile lookup and never starts discovery after the response expires", async () => {
+    let releaseProfile:
+      | ((profile: Awaited<ReturnType<AuthService["getProfile"]>>) => void)
+      | undefined;
+    const profilePending = new Promise<
+      Awaited<ReturnType<AuthService["getProfile"]>>
+    >((resolve) => {
+      releaseProfile = resolve;
+    });
+    const listResources = vi.fn().mockResolvedValue(payload);
+    const app = createApp(
+      { isReady: async () => true },
+      {
+        ...createAuthServiceForHttpTest(),
+        getProfile: () => profilePending,
+      },
+      { mlflowResources: { listResources } },
+    );
+    const response = await request(app)
+      .get("/mlflow/resources")
+      .query(query)
+      .set("Cookie", "invoiceops_session=valid-session");
+    expect(response.status, JSON.stringify(response.body)).toBe(503);
+    expect(response.body.code).toBe("UNAVAILABLE");
+    releaseProfile?.({
+      id: ownerId,
+      rut: "123456785",
+      name: "Ada",
+      email: null,
+      username: null,
+      isPlatformAdministrator: false,
+      memberships: [],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(listResources).not.toHaveBeenCalled();
   });
 });
 

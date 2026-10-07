@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ResourceContext } from "./ResourceContext";
 
+vi.mock("./MlflowResources", () => ({ MlflowResources: () => null }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

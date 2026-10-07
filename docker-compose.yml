@@ -41,6 +41,10 @@ services:
       TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:-replace-with-a-local-password}@db-test:5432/invoiceops_test?schema=public
       MODEL_API_URL: ${MODEL_API_URL:-}
       MODEL_API_MODEL_ID: ${MODEL_API_MODEL_ID:-}
+      MLFLOW_READ_URL: ${MLFLOW_READ_URL:-}
+      MLFLOW_UI_URL: ${MLFLOW_UI_URL:-}
+      MLFLOW_READ_USERNAME: ${MLFLOW_READ_USERNAME:-}
+      MLFLOW_READ_PASSWORD: ${MLFLOW_READ_PASSWORD:-}
       PORT: 3000
     depends_on:
       db:

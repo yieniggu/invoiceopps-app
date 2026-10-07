@@ -34,48 +34,61 @@ function toOwnerType(ownerType: ResourceContext["ownerType"]) {
     : ResourceOwnerType.GROUP;
 }
 
+export async function assertResourceContext(
+  prisma: PrismaClient,
+  userId: string,
+  context: ResourceContext,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const organizationMembership = await prisma.organizationMembership.findUnique(
+    {
+      where: {
+        userId_organizationId: {
+          userId,
+          organizationId: context.organizationId,
+        },
+      },
+      select: { userId: true },
+    },
+  );
+  signal?.throwIfAborted();
+
+  if (!organizationMembership) {
+    throw resourceContextNotFound();
+  }
+
+  if (context.ownerType === "user" && context.ownerId !== userId) {
+    throw resourceContextNotFound();
+  }
+
+  if (context.ownerType === "group") {
+    const group = await prisma.group.findFirst({
+      where: {
+        id: context.ownerId,
+        organizationId: context.organizationId,
+      },
+      select: { id: true },
+    });
+    signal?.throwIfAborted();
+    const groupMembership = group
+      ? await prisma.groupMembership.findUnique({
+          where: { groupId_userId: { groupId: group.id, userId } },
+          select: { userId: true },
+        })
+      : null;
+    signal?.throwIfAborted();
+
+    if (!groupMembership) {
+      throw resourceContextNotFound();
+    }
+  }
+}
+
 export function createResourceService(prisma: PrismaClient): ResourceService {
   return {
     async listResources(userId, context) {
-      const organizationMembership =
-        await prisma.organizationMembership.findUnique({
-          where: {
-            userId_organizationId: {
-              userId,
-              organizationId: context.organizationId,
-            },
-          },
-          select: { userId: true },
-        });
-
-      if (!organizationMembership) {
-        throw resourceContextNotFound();
-      }
-
-      if (context.ownerType === "user" && context.ownerId !== userId) {
-        throw resourceContextNotFound();
-      }
-
-      if (context.ownerType === "group") {
-        const group = await prisma.group.findFirst({
-          where: {
-            id: context.ownerId,
-            organizationId: context.organizationId,
-          },
-          select: { id: true },
-        });
-        const groupMembership = group
-          ? await prisma.groupMembership.findUnique({
-              where: { groupId_userId: { groupId: group.id, userId } },
-              select: { userId: true },
-            })
-          : null;
-
-        if (!groupMembership) {
-          throw resourceContextNotFound();
-        }
-      }
-
+      await assertResourceContext(prisma, userId, context);
       const resources = await prisma.resourceReference.findMany({
         where: {
           organizationId: context.organizationId,

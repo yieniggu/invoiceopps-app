@@ -13,6 +13,7 @@ export default defineConfig({
       "/groups": "http://localhost:3000",
       "/invoices": "http://localhost:3000",
       "/resources": "http://localhost:3000",
+      "/mlflow/resources": "http://localhost:3000",
       "/organizations": "http://localhost:3000",
     },
   },

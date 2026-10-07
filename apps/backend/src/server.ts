@@ -7,6 +7,8 @@ import { createInvoiceService } from "./invoices.js";
 import { createModelApiClient } from "./model-api-client.js";
 import { createResourceService } from "./resources.js";
 import { createPlatformAdministratorService } from "./platform-administrator.js";
+import { createMlflowReadClient } from "./mlflow-read-client.js";
+import { createMlflowResourceService } from "./mlflow-resources.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const modelApiUrl = process.env.MODEL_API_URL;
@@ -17,6 +19,20 @@ if (!databaseUrl) {
 }
 const port = Number(process.env.PORT ?? 3000);
 const database = createDatabase(databaseUrl);
+const mlflowConfig = [
+  process.env.MLFLOW_READ_URL,
+  process.env.MLFLOW_UI_URL,
+  process.env.MLFLOW_READ_USERNAME,
+  process.env.MLFLOW_READ_PASSWORD,
+];
+const mlflowClient = mlflowConfig.every(Boolean)
+  ? createMlflowReadClient({
+      readUrl: mlflowConfig[0]!,
+      uiUrl: mlflowConfig[1]!,
+      username: mlflowConfig[2]!,
+      password: mlflowConfig[3]!,
+    })
+  : undefined;
 const app = createApp(database, createAuthService(database.prisma), {
   groups: createGroupService(database.prisma),
   invoices: createInvoiceService(
@@ -27,6 +43,11 @@ const app = createApp(database, createAuthService(database.prisma), {
   ),
   businessPolicies: createBusinessPolicyService(database.prisma),
   resources: createResourceService(database.prisma),
+  mlflowResources: createMlflowResourceService(
+    database.prisma,
+    mlflowClient,
+    mlflowClient?.uiOrigin,
+  ),
   platformAdministrators: createPlatformAdministratorService(database.prisma),
 });
 

@@ -197,8 +197,8 @@ La migración APP-02 agrega `passwordHash` nullable para conservar los usuarios
 de APP-01. Esas cuentas no pueden iniciar sesión hasta que exista un flujo
 seguro de establecimiento de contraseña.
 
-Este scaffold incluye facturas y la integración opcional con Model API descrita
-en este documento. Las integraciones MLflow y blockchain pertenecen a tickets
+Este scaffold incluye facturas, integración opcional con Model API y lectura
+acotada de recursos MLflow. La integración blockchain pertenece a tickets
 posteriores.
 
 ### Perfil
@@ -259,6 +259,87 @@ used as an MLflow identity, role, resource name, or permission key.
 Individual ML ownership uses `User.id` as `owner_id`; group ownership uses
 `Group.id`. The complete contract and explicit out-of-scope provisioning are in
 `../dev/tickets/INT-02_ownership_academico_mlflow.md`.
+
+### Consulta de recursos MLflow (APP-09)
+
+`GET /mlflow/resources?organizationId=<id>&ownerType=user|group&ownerId=<id>`
+requiere la sesión de InvoiceOps. El backend comprueba la membership de la
+organización y del grupo (o el propietario individual) antes de consultar al
+proveedor. La pantalla de recursos reutiliza el selector de propietario: consulta
+al abrir y cambiar de contexto, y cada 15 segundos mientras la pestaña está
+visible. Un fallo conserva la última lectura exitosa del mismo contexto con
+aviso de datos anteriores; sin lectura previa ofrece reintento.
+
+Configura **en el entorno del backend** las cuatro variables siguientes (todas
+juntas); en Compose se pasan al contenedor backend. No son variables `VITE_*`:
+
+| Variable               | Uso                                                                                                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MLFLOW_READ_URL`      | Origen REST de MLflow, sin ruta ni credenciales (por ejemplo, `http://127.0.0.1:5000` fuera de Compose; en Compose, sólo una dirección alcanzable desde el contenedor). |
+| `MLFLOW_UI_URL`        | Origen al que puede navegar el navegador, independiente del origen REST; no debe apuntar a un hostname interno de Compose.                                              |
+| `MLFLOW_READ_USERNAME` | Cuenta de servicio dedicada a lectura, no cuenta administradora.                                                                                                        |
+| `MLFLOW_READ_PASSWORD` | Contraseña de esa cuenta; nunca se entrega al navegador.                                                                                                                |
+
+La cuenta y los permisos mínimos admitidos por MLflow 3.16 se crean
+**manualmente por el operador**: `USE` sobre cada Workspace objetivo y `READ`
+sobre los Experiments y Registered Models concretos. MLflow no admite `READ`
+como permiso de Workspace. `USE` también permite crear recursos nuevos en ese
+Workspace; por tanto, la cuenta no es estrictamente de solo lectura para todas
+las operaciones. No concedas `EDIT` ni `MANAGE` para habilitar esta consulta.
+MLFLOW-07 conserva la responsabilidad de aprovisionamiento y reconciliación.
+El cliente usa Basic Auth y el header
+`X-MLFLOW-WORKSPACE` únicamente desde el backend. Un origen HTTP se acepta sólo
+para loopback local; otros destinos requieren HTTPS. Orígenes con path, query,
+fragmento o usuario embebido se rechazan al arrancar. En Compose, `localhost`
+del backend es su propio contenedor, no el servicio MLflow: para una instancia
+en otro contenedor o host, el operador debe proporcionar un origen HTTPS
+alcanzable; no se habilita HTTP a otros hosts por conveniencia. Configuración
+ausente o parcial deja sólo esta feature en `503 NOT_CONFIGURED`; el resto de
+la aplicación permanece disponible. El backend no aprovisiona usuarios ni
+concede permisos.
+
+La lectura devuelve a lo sumo 25 runs y 25 versiones por actualización; si hay
+continuación, `truncated: true` señala que la lista no es exhaustiva. Respuestas
+MLflow inválidas devuelven `502 INVALID_RESPONSE`; errores HTTP, permisos
+insuficientes y timeouts de 3 segundos en total (perfil, comprobaciones en
+PostgreSQL y lectura REST) devuelven `503 UNAVAILABLE`. El límite corta la
+espera HTTP y evita iniciar consultas adicionales al expirar; no cancela una
+consulta PostgreSQL ya enviada, porque Prisma no ofrece esa cancelación en
+este flujo. Incluso sin configurar el proveedor, un contexto ajeno responde
+`404` antes de informar `503 NOT_CONFIGURED` para un contexto autorizado.
+La respuesta no incluye credenciales ni URLs provistas por MLflow. Los enlaces
+de Experiments, Runs y Model Registry se construyen desde `MLFLOW_UI_URL` y
+las rutas de la UI de MLflow 3.16.1 con `?workspace=` en el fragmento. El
+navegador debe poder autenticarse **por separado** en la UI de MLflow: la cookie
+de InvoiceOps y la cuenta de lectura del backend no proporcionan SSO ni acceso
+del navegador. Los permisos nativos de MLflow siguen vigentes al abrir el enlace.
+En la validación histórica local con MLflow 3.16.0, una cuenta técnica con `USE` sólo en
+el Workspace académico y `READ` exacto sobre sus recursos pudo leerlos por API,
+pero `GET /` de la UI respondió `403` aun al añadir `?workspace=` a la URL base.
+Por tanto, probar sólo la URL y el fragmento no acreditaba navegación. El pin
+publicado `3.16.1` resolvió ese bloqueo en el stack local: una identidad no
+administradora abrió en Chrome, desde el enlace renderizado por InvoiceOps,
+la página real de una versión en el Workspace seleccionado. El documento inicial
+devolvió `200`, mientras el acceso anónimo conservó `401`, una ruta desconocida
+conservó `403` y fail-closed permaneció activo. La identidad tuvo `USE` sólo en
+su Workspace y `READ` sobre recursos concretos; no se concedió acceso adicional
+al Workspace predeterminado. Esta prueba host-local no demuestra SSO ni TLS o
+despliegue Compose productivo: cada navegador aún debe autenticarse en MLflow.
+Las rutas se contrastaron inicialmente con el código publicado de MLflow 3.16.0:
+[`experiment-tracking/routes.ts`](https://github.com/mlflow/mlflow/blob/v3.16.0/mlflow/server/js/src/experiment-tracking/routes.ts),
+[`model-registry/routes.ts`](https://github.com/mlflow/mlflow/blob/v3.16.0/mlflow/server/js/src/model-registry/routes.ts)
+y [`WorkspaceUtils.ts`](https://github.com/mlflow/mlflow/blob/v3.16.0/mlflow/server/js/src/workspaces/utils/WorkspaceUtils.ts).
+
+**Despliegue:** configura ambos orígenes para el entorno y una cuenta técnica
+con `USE` en los Workspaces necesarios y `READ` sobre los recursos exactos;
+confirma una lectura individual y otra grupal, recursos ausentes, permisos
+insuficientes, enlaces y sesión de navegador con un operador autorizado. Esta
+comprobación contra el proveedor operado no forma parte de las pruebas
+unitarias. **Rollback:** retira las
+cuatro variables y vuelve a desplegar el backend (la vista muestra un error
+recuperable), o revierte la versión de aplicación; no hay migraciones ni datos
+que deshacer. La rotación o revocación de la cuenta de lectura es operativa e
+independiente de InvoiceOps.
 
 ### Policies de negocio versionadas
 

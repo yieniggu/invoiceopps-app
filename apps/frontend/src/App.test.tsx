@@ -9,6 +9,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+// Profile and group tests retain their HTTP fixture sequence.
+// MLflow is tested in its own feature suite.
+vi.mock("./features/resources/MlflowResources", () => ({
+  MlflowResources: () => null,
+}));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

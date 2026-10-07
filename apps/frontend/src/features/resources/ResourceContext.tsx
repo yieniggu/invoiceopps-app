@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "./Button";
+import { MlflowResources } from "./MlflowResources";
 import "./tailwind.css";
 
 type Profile = {
@@ -185,6 +186,16 @@ export function ResourceContext({
             </li>
           ))}
         </ul>
+      ) : null}
+      {selectedContext ? (
+        <MlflowResources
+          key={selectedValue}
+          context={{
+            organizationId: selectedContext.organizationId,
+            ownerType: selectedContext.ownerType,
+            ownerId: selectedContext.ownerId,
+          }}
+        />
       ) : null}
     </section>
   );
