@@ -1,0 +1,71 @@
+{
+  "provenance": {
+    "engine": "Python eth-hash 0.8.0 via eth_hash.auto.keccak, existing apps/v1/invoice_ops/invoice-ai/.venv",
+    "reference": "apps/v1/invoice_ops/invoice-ai/src/invoiceops/evidence.py:140-154,169-185,204-247,531-555",
+    "method": "Python json.dumps(wrapper, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf8'); keccak(bytes); three leaves ordered by event UUID; parent=keccak(left_bytes32+right_bytes32), duplicate final odd leaf",
+    "emptyKeccak": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+  },
+  "fallback": {
+    "event": {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "invoiceId": "00000000-0000-4000-8000-000000000004",
+      "correlationId": "00000000-0000-4000-8000-000000000002",
+      "createdAt": "2026-10-07T12:34:56.000Z",
+      "decision": "MANUAL_REVIEW",
+      "mode": "PROBABILITY_POLICY",
+      "ruleVersion": "ml-policy-v1",
+      "policyVersion": "ml-policy-v1",
+      "manualReviewThreshold": "0.8000",
+      "policyProbability": null,
+      "policyProbabilitySource": "MODEL_API_FALLBACK",
+      "modelId": null,
+      "modelVersion": null,
+      "modelRunId": null,
+      "recommendation": "MANUAL_REVIEW",
+      "actorName": "Not part of evidence",
+      "actorRut": "123456785"
+    },
+    "context": {
+      "organizationId": "00000000-0000-4000-8000-000000000005",
+      "ownerId": "00000000-0000-4000-8000-000000000006",
+      "ownerType": "GROUP"
+    },
+    "canonical": "{\"canonical_version\":\"invoice-evidence-canonical-v2\",\"evidence\":{\"correlation_id\":\"00000000-0000-4000-8000-000000000002\",\"decision\":\"MANUAL_REVIEW\",\"decision_event_id\":\"00000000-0000-4000-8000-000000000003\",\"evaluated_at\":\"2026-10-07T12:34:56.000Z\",\"evidence_version\":\"invoice-evidence-v2\",\"invoice_record_id\":\"00000000-0000-4000-8000-000000000004\",\"manual_review_threshold\":\"0.8\",\"mode\":\"PROBABILITY_POLICY\",\"model_id\":null,\"model_run_id\":null,\"model_version\":null,\"organization_id\":\"00000000-0000-4000-8000-000000000005\",\"owner_id\":\"00000000-0000-4000-8000-000000000006\",\"owner_type\":\"group\",\"policy_probability\":null,\"policy_probability_source\":\"MODEL_API_FALLBACK\",\"policy_version\":\"ml-policy-v1\",\"recommendation\":\"MANUAL_REVIEW\",\"rule_version\":\"ml-policy-v1\"}}",
+    "leafHash": "0x8fc2f395bf98832f2cd3255cef3475d1816d8adc03fad47cc7df16f6f146234e"
+  },
+  "threeLeaf": {
+    "ids": [
+      "00000000-0000-4000-8000-000000000003",
+      "00000000-0000-4000-8000-000000000007",
+      "00000000-0000-4000-8000-000000000009"
+    ],
+    "leaves": [
+      "0x8fc2f395bf98832f2cd3255cef3475d1816d8adc03fad47cc7df16f6f146234e",
+      "0xa95a66caf05e8cfcacd68c6af56c4df1cb84304f749e058fc8b5815758321cad",
+      "0xa8c9057d10c5feaad9537321f73f7fccf2f89157b7b56b079f30987b652e64ae"
+    ],
+    "parent01": "0x3e5740e16290c540ee05f085b33d5cf5e43ce9aed294a78d3bea5efa5a6dfd66",
+    "parent22": "0x864903752716c865f2a908533ed555f3bacbc7f3deee9732b88d11781ae235cd",
+    "root": "0x1e732326d76d16cb1367d6f125f67f6ca24db56df124baf8a8d28259a03d3bb8",
+    "firstProof": [
+      [
+        "right",
+        "0xa95a66caf05e8cfcacd68c6af56c4df1cb84304f749e058fc8b5815758321cad"
+      ],
+      [
+        "right",
+        "0x864903752716c865f2a908533ed555f3bacbc7f3deee9732b88d11781ae235cd"
+      ]
+    ],
+    "lastProof": [
+      [
+        "right",
+        "0xa8c9057d10c5feaad9537321f73f7fccf2f89157b7b56b079f30987b652e64ae"
+      ],
+      [
+        "left",
+        "0x3e5740e16290c540ee05f085b33d5cf5e43ce9aed294a78d3bea5efa5a6dfd66"
+      ]
+    ]
+  }
+}

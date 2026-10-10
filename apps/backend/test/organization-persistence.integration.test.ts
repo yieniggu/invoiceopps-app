@@ -8,7 +8,10 @@ import {
 import { AuthError, createAuthService } from "../src/auth.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
-import { createInvoiceService } from "../src/invoices.js";
+import {
+  createInvoiceService,
+  EvidencePersistenceError,
+} from "../src/invoices.js";
 import { createModelApiClient } from "../src/model-api-client.js";
 import { createBusinessPolicyService } from "../src/business-policies.js";
 import { seedLocalDemonstration } from "../src/local-demonstration.js";
@@ -16,6 +19,11 @@ import { parsePlatformAdministratorCommand } from "../src/platform-administrator
 import { createPlatformAdministratorService } from "../src/platform-administrator.js";
 import { createResourceService } from "../src/resources.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
+import {
+  buildEvidenceV2Payload,
+  canonicalizeEvidenceV2,
+  hashEvidenceV2Bytes,
+} from "../src/evidence.js";
 
 // Validate before creating a client or issuing any destructive cleanup.
 const databaseUrl = requireTestDatabaseUrl(process.env.TEST_DATABASE_URL);
@@ -25,11 +33,18 @@ const prisma = new PrismaClient({
 const persistence = createOrganizationPersistence(prisma);
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  try {
+    await resetOwnedTestDatabase();
+  } finally {
+    await prisma.$disconnect();
+  }
 });
 
-beforeEach(async () => {
+async function resetOwnedTestDatabase() {
   // TRUNCATE bypasses the append-only DELETE trigger only while resetting isolated test data.
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
+  );
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "PlatformAdministrativeAuditEvent", "PlatformAdministrator"',
   );
@@ -44,6 +59,311 @@ beforeEach(async () => {
   await prisma.authorizedUserOrganization.deleteMany();
   await prisma.user.deleteMany();
   await prisma.organization.deleteMany();
+}
+
+beforeEach(resetOwnedTestDatabase);
+
+describe("APP-10 decision evidence atomicity", () => {
+  async function fixture(owner: "user" | "group" = "user") {
+    const organization = await persistence.createOrganization({
+      name: "Evidence Academy",
+      slug: "evidence-academy",
+    });
+    const actor = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const outsider = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: actor.id,
+        organizationId: organization.id,
+        role:
+          owner === "group" ? OrganizationRole.ADMIN : OrganizationRole.STUDENT,
+      },
+    });
+    const group =
+      owner === "group"
+        ? await prisma.group.create({
+            data: { organizationId: organization.id, name: "Evidence group" },
+          })
+        : null;
+    if (group)
+      await prisma.groupMembership.create({
+        data: {
+          organizationId: organization.id,
+          groupId: group.id,
+          userId: actor.id,
+        },
+      });
+    const context = {
+      organizationId: organization.id,
+      ownerType: owner,
+      ownerId: group?.id ?? actor.id,
+    };
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceId: "INV-EVIDENCE",
+        organizationId: organization.id,
+        ownerType: owner === "user" ? "USER" : "GROUP",
+        ownerId: context.ownerId,
+        createdByUserId: actor.id,
+        vendorName: "Evidence vendor",
+        invoiceAmountCents: 1,
+        hasPurchaseOrder: true,
+        threeWayMatch: true,
+        vendorTenureDays: 1,
+        previousIncidents12m: 0,
+        bankAccountRecentlyChanged: false,
+        amountVsVendorMedian: 1,
+        countryRisk: "low",
+      },
+    });
+    return { actor, outsider, context, invoice };
+  }
+
+  async function assertEvidence(
+    invoiceId: string,
+    context: Awaited<ReturnType<typeof fixture>>["context"],
+  ) {
+    const event = await prisma.decisionEvent.findFirstOrThrow({
+      where: { invoiceId },
+    });
+    const record = await prisma.evidenceRecord.findFirstOrThrow({
+      where: { decisionEventId: event.id },
+    });
+    const payload = buildEvidenceV2Payload({
+      event: {
+        ...event,
+        manualReviewThreshold: event.manualReviewThreshold?.toString() ?? null,
+        policyProbability: event.policyProbability?.toString() ?? null,
+      },
+      context,
+    });
+    const bytes = canonicalizeEvidenceV2(payload);
+    expect(record).toMatchObject({
+      invoiceRecordId: invoiceId,
+      organizationId: context.organizationId,
+      ownerType: context.ownerType.toUpperCase(),
+      ownerId: context.ownerId,
+      evidenceVersion: "invoice-evidence-v2",
+      canonicalVersion: "invoice-evidence-canonical-v2",
+    });
+    expect(Buffer.from(record.canonicalPayload)).toEqual(Buffer.from(bytes));
+    expect(Buffer.from(record.leafHash)).toEqual(
+      Buffer.from(hashEvidenceV2Bytes(bytes).slice(2), "hex"),
+    );
+    expect(
+      JSON.parse(Buffer.from(record.canonicalPayload).toString("utf8"))
+        .evidence,
+    ).toEqual(payload);
+    return payload;
+  }
+
+  it("persists exact Rule v1 evidence, denies foreign owners and organizations, and rejects repeated decisions", async () => {
+    const { actor, outsider, context, invoice } = await fixture();
+    const service = createInvoiceService(prisma);
+    await expect(
+      service.decideInvoice(outsider, context, invoice.invoiceId, {
+        mode: "RULE_V1",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      service.decideInvoice(
+        actor,
+        { ...context, organizationId: outsider.id },
+        invoice.invoiceId,
+        { mode: "RULE_V1" },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await prisma.decisionEvent.count()).toBe(0);
+    expect(await prisma.evidenceRecord.count()).toBe(0);
+    const result = await service.decideInvoice(
+      actor,
+      context,
+      invoice.invoiceId,
+      { mode: "RULE_V1" },
+    );
+    expect(result.invoice.status).toBe("AUTO_PROCESSED");
+    expect(result.auditEvent).not.toHaveProperty("evidence");
+    expect((await assertEvidence(invoice.id, context)).decision).toBe(
+      "AUTO_PROCESS",
+    );
+    await expect(
+      service.decideInvoice(actor, context, invoice.invoiceId, {
+        mode: "RULE_V1",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.decisionEvent.count()).toBe(1);
+    expect(await prisma.evidenceRecord.count()).toBe(1);
+  });
+
+  it("snapshots persisted Decimal and timestamp from model success and fallback in group context", async () => {
+    const { actor, outsider, context, invoice } = await fixture("group");
+    const policy = await createBusinessPolicyService(prisma).createPolicy(
+      actor.id,
+      context,
+      { version: "model-v1", manualReviewThreshold: 0.8 },
+    );
+    const predict = vi.fn(async () => ({
+      probability: 0.1,
+      modelId: "invoice-review",
+      modelVersion: "7",
+      runId: "run-123",
+    }));
+    const service = createInvoiceService(prisma, { predict });
+    await expect(
+      service.decideInvoice(outsider, context, invoice.invoiceId, {
+        mode: "PROBABILITY_POLICY",
+        policyVersion: policy.version,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(predict).not.toHaveBeenCalled();
+    await service.decideInvoice(actor, context, invoice.invoiceId, {
+      mode: "PROBABILITY_POLICY",
+      policyVersion: policy.version,
+    });
+    const payload = await assertEvidence(invoice.id, context);
+    const event = await prisma.decisionEvent.findFirstOrThrow({
+      where: { invoiceId: invoice.id },
+    });
+    expect(payload).toMatchObject({
+      policy_probability_source: "MODEL_API",
+      manual_review_threshold: event.manualReviewThreshold?.toString(),
+      policy_probability: event.policyProbability?.toString(),
+      evaluated_at: event.createdAt.toISOString(),
+      owner_type: "group",
+    });
+    const second = await prisma.invoice.create({
+      data: {
+        invoiceId: "INV-FALLBACK",
+        organizationId: context.organizationId,
+        ownerType: "GROUP",
+        ownerId: context.ownerId,
+        createdByUserId: actor.id,
+        vendorName: "Fallback vendor",
+        invoiceAmountCents: 2,
+        hasPurchaseOrder: true,
+        threeWayMatch: true,
+        vendorTenureDays: 1,
+        previousIncidents12m: 0,
+        bankAccountRecentlyChanged: false,
+        amountVsVendorMedian: 1,
+        countryRisk: "low",
+      },
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await createInvoiceService(prisma, {
+        async predict() {
+          throw new Error("provider unavailable");
+        },
+      }).decideInvoice(actor, context, second.invoiceId, {
+        mode: "PROBABILITY_POLICY",
+        policyVersion: policy.version,
+      });
+    } finally {
+      errorLog.mockRestore();
+    }
+    expect(await assertEvidence(second.id, context)).toMatchObject({
+      policy_probability_source: "MODEL_API_FALLBACK",
+      policy_probability: null,
+      recommendation: "MANUAL_REVIEW",
+    });
+    expect(await prisma.evidenceRecord.count()).toBe(2);
+  });
+
+  it("rolls back invoice and event when canonical construction fails", async () => {
+    const { actor, context, invoice } = await fixture();
+    await createBusinessPolicyService(prisma).createPolicy(actor.id, context, {
+      version: "bad-model-v1",
+      manualReviewThreshold: 0.8,
+    });
+    const service = createInvoiceService(prisma, {
+      async predict() {
+        return {
+          probability: 0.1,
+          modelId: "",
+          modelVersion: "7",
+          runId: "run-123",
+        };
+      },
+    });
+    await expect(
+      service.decideInvoice(actor, context, invoice.invoiceId, {
+        mode: "PROBABILITY_POLICY",
+        policyVersion: "bad-model-v1",
+      }),
+    ).rejects.toMatchObject({
+      category: "CONSTRUCTION",
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    } satisfies Partial<EvidencePersistenceError>);
+    expect(
+      (await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } }))
+        .status,
+    ).toBe("PENDING");
+    expect(await prisma.decisionEvent.count()).toBe(0);
+    expect(await prisma.evidenceRecord.count()).toBe(0);
+  });
+
+  it("rolls back invoice and event when evidence insertion fails in PostgreSQL", async () => {
+    const { actor, context, invoice } = await fixture();
+    try {
+      await prisma.$executeRawUnsafe(
+        `CREATE FUNCTION fail_evidence_insert() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'induced evidence failure'; END; $$ LANGUAGE plpgsql`,
+      );
+      await prisma.$executeRawUnsafe(
+        'CREATE TRIGGER fail_evidence_insert BEFORE INSERT ON "EvidenceRecord" FOR EACH ROW EXECUTE FUNCTION fail_evidence_insert()',
+      );
+      await expect(
+        createInvoiceService(prisma).decideInvoice(
+          actor,
+          context,
+          invoice.invoiceId,
+          { mode: "RULE_V1" },
+        ),
+      ).rejects.toMatchObject({
+        category: "INSERTION",
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      } satisfies Partial<EvidencePersistenceError>);
+      expect(
+        (await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } }))
+          .status,
+      ).toBe("PENDING");
+      expect(await prisma.decisionEvent.count()).toBe(0);
+      expect(await prisma.evidenceRecord.count()).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS fail_evidence_insert ON "EvidenceRecord"; DROP FUNCTION IF EXISTS fail_evidence_insert()',
+      );
+    }
+  });
+
+  it("allows exactly one concurrent transition, event, and evidence record", async () => {
+    const { actor, context, invoice } = await fixture();
+    const service = createInvoiceService(prisma);
+    const results = await Promise.allSettled(
+      Array.from({ length: 2 }, () =>
+        service.decideInvoice(actor, context, invoice.invoiceId, {
+          mode: "RULE_V1",
+        }),
+      ),
+    );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ status: 409 }),
+      }),
+    ]);
+    expect(await prisma.decisionEvent.count()).toBe(1);
+    expect(await prisma.evidenceRecord.count()).toBe(1);
+    await assertEvidence(invoice.id, context);
+  });
 });
 
 describe("APP-01 PostgreSQL persistence", () => {

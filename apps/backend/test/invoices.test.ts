@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { AuthError, type AuthService } from "../src/auth.js";
-import type { InvoiceService } from "../src/invoices.js";
+import {
+  EvidencePersistenceError,
+  type InvoiceService,
+} from "../src/invoices.js";
 
 const context = {
   organizationId: "organization-1",
@@ -137,6 +140,48 @@ function createInvoiceService(): InvoiceService {
 }
 
 describe("APP-06 invoice HTTP contract", () => {
+  it.each(["CONSTRUCTION", "INSERTION"] as const)(
+    "keeps %s failures behind a safe 500 and emits only allowlisted diagnostics",
+    async (category) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const app = createApp({ isReady: async () => true }, createAuth(), {
+          invoices: {
+            ...createInvoiceService(),
+            async decideInvoice() {
+              const error = new EvidencePersistenceError(
+                category,
+                "00000000-0000-4000-8000-000000000003",
+              );
+              Object.assign(error, {
+                cause: "secret SQL RUT invoice connection URL",
+              });
+              throw error;
+            },
+          },
+        });
+        const response = await request(app)
+          .post(`/invoices/INV-001/decision?${new URLSearchParams(context)}`)
+          .set("Host", "127.0.0.1")
+          .set("Origin", "http://127.0.0.1")
+          .set("Cookie", "invoiceops_session=valid-session")
+          .send({ mode: "RULE_V1" });
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({ status: "error" });
+        expect(errorLog).toHaveBeenCalledOnce();
+        expect(JSON.parse(errorLog.mock.calls[0][0])).toEqual({
+          feature: "invoice-evidence",
+          outcome: "failure",
+          category,
+          correlationId: "00000000-0000-4000-8000-000000000003",
+        });
+        expect(errorLog.mock.calls[0][0]).not.toContain("secret");
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
   it("lists, reads, and decides invoices in the active authorized context", async () => {
     const app = createApp({ isReady: async () => true }, createAuth(), {
       invoices: createInvoiceService(),

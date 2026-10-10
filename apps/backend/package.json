@@ -11,11 +11,12 @@
     "generate": "prisma generate",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",
-    "test:integration": "pnpm run generate && vitest run test/organization-persistence.integration.test.ts",
+    "test:integration": "node scripts/test-integration.mjs",
     "test:unit": "vitest run --exclude 'test/**/*.integration.test.ts'",
     "typecheck": "pnpm run generate && tsc --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "express": "5.2.1",

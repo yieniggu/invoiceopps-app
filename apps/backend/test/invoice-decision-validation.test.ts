@@ -12,12 +12,12 @@ import {
 import { createModelApiClient } from "../src/model-api-client.js";
 
 const actor: AuthUser = {
-  id: "user-1",
+  id: "00000000-0000-4000-8000-000000000001",
   name: "Ada Lovelace",
   rut: "123456785",
 };
 const context = {
-  organizationId: "organization-1",
+  organizationId: "00000000-0000-4000-8000-000000000002",
   ownerType: "user" as const,
   ownerId: actor.id,
 };
@@ -116,8 +116,11 @@ describe("PROBABILITY_POLICY local validation", () => {
 
   it("audits a foreign model response as manual-review fallback without model metadata", async () => {
     const invoice = {
-      id: "invoice-1",
+      id: "00000000-0000-4000-8000-000000000003",
       invoiceId: "INV-001",
+      organizationId: context.organizationId,
+      ownerType: "USER",
+      ownerId: actor.id,
       status: InvoiceStatus.PENDING,
       invoiceAmountCents: 125_000,
       vendorTenureDays: 365,
@@ -135,7 +138,11 @@ describe("PROBABILITY_POLICY local validation", () => {
     };
     const createEvent = vi.fn(async ({ data }) => ({
       ...data,
-      manualReviewThreshold: { toNumber: () => data.manualReviewThreshold },
+      id: "00000000-0000-4000-8000-000000000004",
+      manualReviewThreshold: {
+        toNumber: () => data.manualReviewThreshold,
+        toString: () => String(data.manualReviewThreshold),
+      },
       actorName: actor.name,
       actorRut: actor.rut,
       createdAt: new Date("2026-09-21T00:01:00.000Z"),
@@ -151,6 +158,11 @@ describe("PROBABILITY_POLICY local validation", () => {
       },
       businessPolicy: { findFirst: vi.fn().mockResolvedValue(policy) },
       decisionEvent: { create: createEvent },
+      organizationMembership: {
+        findUnique: vi.fn().mockResolvedValue({ userId: actor.id }),
+      },
+      groupMembership: { findFirst: vi.fn() },
+      evidenceRecord: { create: vi.fn().mockResolvedValue({}) },
     };
     const prisma = {
       organizationMembership: {
@@ -209,6 +221,7 @@ describe("PROBABILITY_POLICY local validation", () => {
           modelRunId: null,
         }),
       });
+      expect(transaction.evidenceRecord.create).toHaveBeenCalledOnce();
       expect(errorLog).toHaveBeenCalledWith("Model API inference failed", {
         invoiceId: "INV-001",
       });

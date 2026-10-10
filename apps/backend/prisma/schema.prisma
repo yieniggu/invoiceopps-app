@@ -202,8 +202,60 @@ model DecisionEvent {
   createdAt        DateTime @default(now())
   invoice          Invoice  @relation(fields: [invoiceId], references: [id])
   actor            User     @relation(fields: [actorUserId], references: [id])
+  evidenceRecords  EvidenceRecord[]
 
   @@index([invoiceId, createdAt, id])
+}
+
+model EvidenceRecord {
+  id               String            @id @default(uuid())
+  decisionEventId  String
+  evidenceVersion  String
+  canonicalVersion String
+  invoiceRecordId  String
+  organizationId   String
+  ownerType        ResourceOwnerType
+  ownerId          String
+  canonicalPayload Bytes             @db.ByteA
+  leafHash         Bytes             @db.ByteA
+  createdAt        DateTime          @default(now())
+  decisionEvent    DecisionEvent     @relation(fields: [decisionEventId], references: [id], onDelete: Restrict)
+  batchItems       EvidenceBatchItem[]
+
+  @@unique([decisionEventId, evidenceVersion])
+  @@unique([id, organizationId, ownerType, ownerId])
+  @@index([organizationId, ownerType, ownerId, decisionEventId])
+}
+
+model EvidenceBatch {
+  id             String            @id @default(uuid())
+  organizationId String
+  ownerType      ResourceOwnerType
+  ownerId        String
+  policyVersion  String
+  rootHash       Bytes             @db.ByteA
+  leafCount      Int
+  createdAt      DateTime          @default(now())
+  items          EvidenceBatchItem[]
+
+  @@unique([id, organizationId, ownerType, ownerId])
+  @@unique([organizationId, ownerType, ownerId, policyVersion, rootHash])
+  @@index([organizationId, ownerType, ownerId, createdAt, id])
+}
+
+model EvidenceBatchItem {
+  batchId          String
+  evidenceRecordId String
+  organizationId   String
+  ownerType        ResourceOwnerType
+  ownerId          String
+  leafIndex        Int
+  batch            EvidenceBatch  @relation(fields: [batchId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
+  evidenceRecord   EvidenceRecord @relation(fields: [evidenceRecordId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
+
+  @@id([batchId, leafIndex])
+  @@unique([batchId, evidenceRecordId])
+  @@index([evidenceRecordId, organizationId, ownerType, ownerId])
 }
 
 model PlatformAdministrator {

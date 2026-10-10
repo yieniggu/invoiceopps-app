@@ -9,6 +9,20 @@ import {
 import { AuthError, type AuthUser } from "./auth.js";
 import type { ResourceContext } from "./resources.js";
 import type { ModelApiClient, ModelPrediction } from "./model-api-client.js";
+import {
+  buildEvidenceV2Payload,
+  canonicalizeEvidenceV2,
+  hashEvidenceV2Bytes,
+} from "./evidence.js";
+
+export class EvidencePersistenceError extends Error {
+  constructor(
+    readonly category: "CONSTRUCTION" | "INSERTION",
+    readonly correlationId: string,
+  ) {
+    super("Evidence persistence failed");
+  }
+}
 
 export const RULE_VERSION = "invoice-rules-v1";
 export const AUTO_PROCESS_LIMIT_CENTS = 500_000;
@@ -87,12 +101,12 @@ function inaccessibleContext() {
   return new AuthError(404, "Invoice not found");
 }
 
-function ownerType(owner: ResourceContext["ownerType"]) {
+export function ownerType(owner: ResourceContext["ownerType"]) {
   return owner === "user" ? ResourceOwnerType.USER : ResourceOwnerType.GROUP;
 }
 
-async function authorizeContext(
-  prisma: PrismaClient,
+export async function authorizeContext(
+  prisma: Pick<PrismaClient, "organizationMembership" | "groupMembership">,
   userId: string,
   context: ResourceContext,
 ) {
@@ -326,6 +340,7 @@ export function createInvoiceService(
         }
       }
       return prisma.$transaction(async (transaction) => {
+        await authorizeContext(transaction, actor.id, context);
         const invoice = await transaction.invoice.findFirst({
           where: {
             organizationId: context.organizationId,
@@ -367,7 +382,13 @@ export function createInvoiceService(
             ? InvoiceStatus.AUTO_PROCESSED
             : InvoiceStatus.MANUAL_REVIEW;
         const updated = await transaction.invoice.updateMany({
-          where: { id: invoice.id, status: InvoiceStatus.PENDING },
+          where: {
+            id: invoice.id,
+            status: InvoiceStatus.PENDING,
+            organizationId: invoice.organizationId,
+            ownerType: invoice.ownerType,
+            ownerId: invoice.ownerId,
+          },
           data: { status },
         });
         if (updated.count !== 1)
@@ -399,6 +420,50 @@ export function createInvoiceService(
             correlationId: randomUUID(),
           },
         });
+        let canonicalPayload: Uint8Array<ArrayBuffer>;
+        let leafHash: Uint8Array<ArrayBuffer>;
+        try {
+          const payload = buildEvidenceV2Payload({
+            event: {
+              ...event,
+              manualReviewThreshold:
+                event.manualReviewThreshold?.toString() ?? null,
+              policyProbability: event.policyProbability?.toString() ?? null,
+            },
+            context: {
+              organizationId: invoice.organizationId,
+              ownerType: invoice.ownerType,
+              ownerId: invoice.ownerId,
+            },
+          });
+          canonicalPayload = Uint8Array.from(canonicalizeEvidenceV2(payload));
+          leafHash = Uint8Array.from(
+            Buffer.from(hashEvidenceV2Bytes(canonicalPayload).slice(2), "hex"),
+          );
+        } catch {
+          throw new EvidencePersistenceError(
+            "CONSTRUCTION",
+            event.correlationId,
+          );
+        }
+        try {
+          await transaction.evidenceRecord.create({
+            data: {
+              decisionEventId: event.id,
+              evidenceVersion: "invoice-evidence-v2",
+              canonicalVersion: "invoice-evidence-canonical-v2",
+              invoiceRecordId: invoice.id,
+              organizationId: invoice.organizationId,
+              ownerType: invoice.ownerType,
+              ownerId: invoice.ownerId,
+              canonicalPayload,
+              leafHash,
+            },
+          });
+        } catch {
+          // Discard potentially sensitive ORM diagnostics while the transaction rolls back.
+          throw new EvidencePersistenceError("INSERTION", event.correlationId);
+        }
         const decidedInvoice = await transaction.invoice.findUniqueOrThrow({
           where: { id: invoice.id },
         });

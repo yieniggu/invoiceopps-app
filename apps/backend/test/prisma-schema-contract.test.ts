@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
@@ -269,5 +269,75 @@ describe("APP-01 Prisma schema contract", () => {
     expect(migration).toContain(
       'BEFORE UPDATE OR DELETE ON "PlatformAdministrativeAuditEvent"',
     );
+  });
+});
+
+describe("APP-10 Evidence persistence schema proposal", () => {
+  it("declares a versioned byte-exact record owned by one decision event", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const record = modelBlock(schema, "EvidenceRecord");
+
+    expect(record).toMatch(/^\s*decisionEventId\s+String\b/m);
+    expect(record).toMatch(/^\s*canonicalPayload\s+Bytes\s+@db\.ByteA\b/m);
+    expect(record).toMatch(/^\s*leafHash\s+Bytes\s+@db\.ByteA\b/m);
+    expect(record).toMatch(/^\s*ownerType\s+ResourceOwnerType\b/m);
+    expect(record).toMatch(
+      /@@unique\(\[decisionEventId,\s*evidenceVersion\]\)/,
+    );
+    expect(record).toMatch(/onDelete:\s*Restrict/);
+  });
+
+  it("declares batch and membership uniqueness with composite owner relations", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const batch = modelBlock(schema, "EvidenceBatch");
+    const member = modelBlock(schema, "EvidenceBatchItem");
+
+    expect(batch).toMatch(/^\s*rootHash\s+Bytes\s+@db\.ByteA\b/m);
+    expect(batch).toMatch(/^\s*leafCount\s+Int\b/m);
+    expect(batch).toMatch(
+      /@@unique\(\[organizationId,\s*ownerType,\s*ownerId,\s*policyVersion,\s*rootHash\]\)/,
+    );
+    expect(member).toMatch(/@@id\(\[batchId,\s*leafIndex\]\)/);
+    expect(member).toMatch(/@@unique\(\[batchId,\s*evidenceRecordId\]\)/);
+    expect(member).toMatch(
+      /fields:\s*\[batchId,\s*organizationId,\s*ownerType,\s*ownerId\]/,
+    );
+    expect(member).toMatch(
+      /fields:\s*\[evidenceRecordId,\s*organizationId,\s*ownerType,\s*ownerId\]/,
+    );
+  });
+
+  it("adds bounded byte checks and append-only triggers without rewriting past decisions", async () => {
+    const migrations = new URL("../prisma/migrations/", import.meta.url);
+    const entries = await readdir(migrations, { withFileTypes: true });
+    const statements = (
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) =>
+            readFile(
+              new URL(`${entry.name}/migration.sql`, migrations),
+              "utf8",
+            ),
+          ),
+      )
+    ).join("\n");
+
+    expect(statements.includes('CREATE TABLE "EvidenceRecord"')).toBe(true);
+    expect(statements.includes('CREATE TABLE "EvidenceBatch"')).toBe(true);
+    expect(statements.includes('CREATE TABLE "EvidenceBatchItem"')).toBe(true);
+    expect(statements).toMatch(/octet_length\("canonicalPayload"\).*16384/);
+    expect(statements).toMatch(/octet_length\("leafHash"\).*32/);
+    for (const table of [
+      "EvidenceRecord",
+      "EvidenceBatch",
+      "EvidenceBatchItem",
+    ]) {
+      expect(statements).toContain(`BEFORE UPDATE OR DELETE ON "${table}"`);
+    }
+    expect(statements).toContain('BEFORE UPDATE OR DELETE ON "DecisionEvent"');
+    expect(statements).toContain('BEFORE INSERT ON "EvidenceRecord"');
+    expect(statements).toContain("FOR NO KEY UPDATE");
+    expect(statements).toContain('SET "ruleVersion" = "ruleVersion"');
   });
 });

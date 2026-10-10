@@ -14,18 +14,18 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
 1. Crea un archivo `.env` local con las variables requeridas. No incluyas este
    archivo en el control de versiones.
 
-   | Variable             | Propósito                                              | Ejemplo local                                                                                        | Requerida                                                                 |
-   | -------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-   | `POSTGRES_USER`      | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
-   | `POSTGRES_PASSWORD`  | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                      | Sí, usa una contraseña propia y no la publiques                           |
-   | `POSTGRES_DB`        | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                         | No, Compose usa `invoiceops` por defecto                                  |
-   | `POSTGRES_TEST_PORT` | Puerto del host para PostgreSQL de integración         | `5436`                                                                                               | No, Compose usa `5436` por defecto                                        |
-   | `BACKEND_PORT`       | Puerto del host para el backend de Compose             | `3000`                                                                                               | No, Compose usa `3000` por defecto                                        |
-   | `FRONTEND_PORT`      | Puerto del host para el frontend de Compose            | `5173`                                                                                               | No, Compose usa `5173` por defecto                                        |
-   | `DATABASE_URL`       | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public`      | Sí para ejecutar el backend localmente; Compose la construye internamente |
-   | `TEST_DATABASE_URL`  | Cadena exclusiva de las pruebas de integración         | `postgresql://invoiceops:replace-with-a-local-password@localhost:5436/invoiceops_test?schema=public` | Sí para integración; debe terminar exactamente en `invoiceops_test`       |
-   | `MODEL_API_URL`      | URL base del proveedor de inferencia                   | Sin valor por defecto                                                                                | Sólo para inferencia live; debe configurarse junto a `MODEL_API_MODEL_ID` |
-   | `MODEL_API_MODEL_ID` | Identificador del modelo a invocar                     | Sin valor por defecto                                                                                | Sólo para inferencia live; debe configurarse junto a `MODEL_API_URL`      |
+   | Variable             | Propósito                                              | Ejemplo local                                                                                   | Requerida                                                                  |
+   | -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+   | `POSTGRES_USER`      | Usuario que PostgreSQL crea para el entorno local      | `invoiceops`                                                                                    | No, Compose usa `invoiceops` por defecto                                   |
+   | `POSTGRES_PASSWORD`  | Contraseña local del usuario de PostgreSQL             | `replace-with-a-local-password`                                                                 | Sí, usa una contraseña propia y no la publiques                            |
+   | `POSTGRES_DB`        | Base de datos inicial de PostgreSQL                    | `invoiceops`                                                                                    | No, Compose usa `invoiceops` por defecto                                   |
+   | `POSTGRES_TEST_PORT` | Puerto del host para PostgreSQL de integración         | `5436`                                                                                          | No, Compose usa `5436` por defecto                                         |
+   | `BACKEND_PORT`       | Puerto del host para el backend de Compose             | `3000`                                                                                          | No, Compose usa `3000` por defecto                                         |
+   | `FRONTEND_PORT`      | Puerto del host para el frontend de Compose            | `5173`                                                                                          | No, Compose usa `5173` por defecto                                         |
+   | `DATABASE_URL`       | Cadena de conexión que usa el backend fuera de Compose | `postgresql://invoiceops:replace-with-a-local-password@localhost:5432/invoiceops?schema=public` | Sí para ejecutar el backend localmente; Compose la construye internamente  |
+   | `TEST_DATABASE_URL`  | Uso manual ajeno al gate automatizado de integración   | No configurar para `pnpm test:integration`                                                      | No; el gate genera credenciales efímeras y rechaza valores preconfigurados |
+   | `MODEL_API_URL`      | URL base del proveedor de inferencia                   | Sin valor por defecto                                                                           | Sólo para inferencia live; debe configurarse junto a `MODEL_API_MODEL_ID`  |
+   | `MODEL_API_MODEL_ID` | Identificador del modelo a invocar                     | Sin valor por defecto                                                                           | Sólo para inferencia live; debe configurarse junto a `MODEL_API_URL`       |
 
    Usa valores de ejemplo solo en tu equipo. La contraseña de ejemplo no es un
    secreto válido ni debe reutilizarse fuera del desarrollo local.
@@ -97,29 +97,30 @@ comprueba restricciones ni persistencia de PostgreSQL.
 
 ## Pruebas de integración PostgreSQL
 
-Las pruebas de integración usan exclusivamente la base `invoiceops_test` del
-servicio Compose `db-test`. Ese servicio está bajo el perfil `test`, usa el
-puerto local `5436` y un volumen propio; no se inicia con `docker compose up` ni
-comparte la base ni el volumen de la aplicación. Configura `TEST_DATABASE_URL`
-en `.env` con el valor de `.env.example`, inicia el servicio aislado, aplica las
-migraciones y ejecuta el gate explícito:
+Desde la raíz de `invoiceops-app`, con Docker local disponible y la imagen
+`postgres:17-alpine` ya descargada, ejecuta el gate sin configurar
+`DATABASE_URL`, `TEST_DATABASE_URL` ni `APP10_TEST_NAMESPACE`:
 
 ```bash
-docker compose --profile test up -d db-test
-export TEST_DATABASE_URL="$(grep '^TEST_DATABASE_URL=' .env | cut -d '=' -f2-)"
-DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @invoiceops/backend exec prisma migrate deploy
 pnpm test:integration
 ```
 
-`pnpm test:integration` falla controladamente si `TEST_DATABASE_URL` no está
-definida o no apunta a `invoiceops_test`, antes de ejecutar cualquier
-`deleteMany`. Estas pruebas limpian tablas: nunca uses `DATABASE_URL`, la base
-`invoiceops` del servicio `db`, una base compartida ni una base con datos que
-deban conservarse.
+El runner crea un contenedor nuevo con contraseña y rol exclusivos, puerto
+efímero limitado a `127.0.0.1`, memoria y almacenamiento temporal acotados;
+no usa `.env`, volumen persistente ni el servicio Compose `db-test`. Aplica las
+ocho migraciones anteriores, siembra en una transacción un evento previo a
+Evidence, aplica la novena migración y ejecuta secuencialmente los diez casos
+SQL históricos, los 31 de organización y los siete de batches. Comprueba que
+el evento anterior no recibió Evidence automáticamente. Al terminar, incluso
+tras un fallo, verifica la propiedad y elimina únicamente su contenedor por ID;
+confirma su ausencia. Si falta la imagen o el socket local, falla sin descarga
+ni inicio del daemon. No pases URLs preexistentes: el gate las rechaza antes de
+crear recursos. Las suites directas también rechazan roles ordinarios y
+destinos que no sean una base de prueba local con nonce concordante. El perfil
+Compose `db-test` conserva su uso manual independiente, pero su volumen y rol
+ordinario **no** son un destino seguro ni admitido por este gate destructivo.
 
-Cuando finalice, detén y elimina solo el contenedor de prueba con `docker
-compose --profile test rm --stop --force db-test`. Este comando no elimina
-volúmenes. Después ejecuta los gates restantes:
+Después ejecuta los gates restantes:
 
 ```bash
 pnpm lint

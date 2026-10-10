@@ -8,7 +8,11 @@ import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
 import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
 import type { BusinessPolicyService } from "./business-policies.js";
-import type { InvoiceDecisionInput, InvoiceService } from "./invoices.js";
+import {
+  EvidencePersistenceError,
+  type InvoiceDecisionInput,
+  type InvoiceService,
+} from "./invoices.js";
 import type { ResourceContext, ResourceService } from "./resources.js";
 import { OrganizationRole } from "./generated/prisma/client.js";
 import type { PlatformAdministratorService } from "./platform-administrator.js";
@@ -742,6 +746,18 @@ export function createApp(
     response,
     _next,
   ) => {
+    if (error instanceof EvidencePersistenceError) {
+      console.error(
+        JSON.stringify({
+          feature: "invoice-evidence",
+          outcome: "failure",
+          category: error.category,
+          correlationId: error.correlationId,
+        }),
+      );
+      response.status(500).json({ status: "error" });
+      return;
+    }
     if (error instanceof AuthError) {
       response
         .status(error.status)
