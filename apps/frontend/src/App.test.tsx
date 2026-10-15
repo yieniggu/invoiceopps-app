@@ -82,7 +82,7 @@ describe("APP-03 profile", () => {
     expect(
       await screen.findByRole("heading", { name: "Mi perfil" }),
     ).toBeTruthy();
-    expect(screen.getByText("123456785")).toBeTruthy();
+    expect(await screen.findByText("123456785")).toBeTruthy();
     expect(
       (screen.getByRole("textbox", { name: "Email" }) as HTMLInputElement)
         .value,
@@ -95,7 +95,7 @@ describe("APP-03 profile", () => {
       ).value,
     ).toBe("ada");
     expect(screen.getByText("AI Academy")).toBeTruthy();
-    expect(screen.getByText("(STUDENT)")).toBeTruthy();
+    expect(screen.getByText("(Estudiante)")).toBeTruthy();
 
     fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
       target: { value: "ada.updated@example.test" },

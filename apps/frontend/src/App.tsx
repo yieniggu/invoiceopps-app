@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { AuthScreen } from "./features/auth/AuthScreen";
 import { ResourceContext } from "./features/resources/ResourceContext";
 import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
 
@@ -101,31 +102,65 @@ export function App() {
   const [groupError, setGroupError] = useState<string>();
   const [isMutatingGroup, setIsMutatingGroup] = useState(false);
   const [showInvoices, setShowInvoices] = useState(false);
+  // Every App-owned operation belongs to one session epoch, including logout.
+  // Invalidating UI work does not roll back requests already received by the server.
+  const session = useRef({ epoch: 0, active: false });
+
+  const beginSessionEpoch = (active: boolean) => {
+    session.current = { epoch: session.current.epoch + 1, active };
+    setIsSaving(false);
+    setIsLoggingOut(false);
+    setIsMutatingGroup(false);
+    setMessage(undefined);
+    setLogoutError(undefined);
+    setGroupError(undefined);
+    return session.current.epoch;
+  };
+
+  const endSession = () => {
+    beginSessionEpoch(false);
+    setState({ kind: "anonymous" });
+    setGroupsState({ kind: "idle" });
+    setPlatformOrganizationsState({ kind: "idle" });
+    setEmail("");
+    setUsername("");
+    setShowInvoices(false);
+  };
 
   const loadProfile = async () => {
+    const epoch = beginSessionEpoch(true);
+    const isCurrent = () => session.current.epoch === epoch;
     setState({ kind: "loading" });
-    setMessage(undefined);
+    setGroupsState({ kind: "idle" });
+    setPlatformOrganizationsState({ kind: "idle" });
+    setShowInvoices(false);
 
     try {
       const result = await requestProfile();
-      setState(result);
+      if (!isCurrent()) return;
       if (result.kind === "authenticated") {
+        setState(result);
         setEmail(result.profile.email ?? "");
         setUsername(result.profile.username ?? "");
         if (result.profile.isPlatformAdministrator) {
           setPlatformOrganizationsState({ kind: "loading" });
           try {
             const discovery = await requestPlatformOrganizations();
+            if (!isCurrent()) return;
             setPlatformOrganizationsState({ kind: "loaded", ...discovery });
           } catch {
+            if (!isCurrent()) return;
             setPlatformOrganizationsState({ kind: "error" });
           }
 
           if (result.profile.memberships.length > 0) {
             setGroupsState({ kind: "loading" });
             try {
-              setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+              const groups = await requestGroups();
+              if (!isCurrent()) return;
+              setGroupsState({ kind: "loaded", ...groups });
             } catch {
+              if (!isCurrent()) return;
               setGroupsState({ kind: "error" });
             }
           } else {
@@ -134,24 +169,32 @@ export function App() {
         } else if (result.profile.memberships.length > 0) {
           setGroupsState({ kind: "loading" });
           try {
-            setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+            const groups = await requestGroups();
+            if (!isCurrent()) return;
+            setGroupsState({ kind: "loaded", ...groups });
           } catch {
+            if (!isCurrent()) return;
             setGroupsState({ kind: "error" });
           }
         } else {
           setGroupsState({ kind: "loaded", groups: [] });
         }
       } else {
-        setGroupsState({ kind: "idle" });
-        setPlatformOrganizationsState({ kind: "idle" });
+        endSession();
       }
     } catch {
+      if (!isCurrent()) return;
       setState({ kind: "error" });
     }
   };
 
-  const reloadGroups = async () => {
-    if (state.kind !== "authenticated") {
+  const reloadGroups = async (epoch = session.current.epoch) => {
+    const isCurrent = () => session.current.epoch === epoch;
+    if (
+      !isCurrent() ||
+      !session.current.active ||
+      state.kind !== "authenticated"
+    ) {
       return;
     }
 
@@ -162,19 +205,28 @@ export function App() {
         setPlatformOrganizationsState({ kind: "loading" });
         try {
           const discovery = await requestPlatformOrganizations();
+          if (!isCurrent()) return;
           setPlatformOrganizationsState({ kind: "loaded", ...discovery });
         } catch {
+          if (!isCurrent()) return;
           setPlatformOrganizationsState({ kind: "error" });
         }
         if (state.profile.memberships.length > 0) {
-          setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+          const result = await requestGroups();
+          if (!isCurrent()) return;
+          setGroupsState({ kind: "loaded", ...result });
         } else {
           setGroupsState({ kind: "loaded", groups: [] });
         }
+      } else if (state.profile.memberships.length > 0) {
+        const result = await requestGroups();
+        if (!isCurrent()) return;
+        setGroupsState({ kind: "loaded", ...result });
       } else {
-        setGroupsState({ kind: "loaded", ...(await requestGroups()) });
+        setGroupsState({ kind: "loaded", groups: [] });
       }
     } catch {
+      if (!isCurrent()) return;
       setGroupsState({ kind: "error" });
     }
   };
@@ -184,6 +236,9 @@ export function App() {
     method: "POST" | "PATCH" | "DELETE",
     body?: unknown,
   ) => {
+    if (!session.current.active || state.kind !== "authenticated") return;
+    const epoch = session.current.epoch;
+    const isCurrent = () => session.current.epoch === epoch;
     setIsMutatingGroup(true);
     setGroupError(undefined);
     try {
@@ -198,9 +253,9 @@ export function App() {
             }),
       });
 
+      if (!isCurrent()) return;
       if (response.status === 401) {
-        setState({ kind: "anonymous" });
-        setGroupsState({ kind: "idle" });
+        endSession();
         return;
       }
 
@@ -208,22 +263,29 @@ export function App() {
         throw new Error("Group mutation failed");
       }
 
-      await reloadGroups();
+      await reloadGroups(epoch);
     } catch {
+      if (!isCurrent()) return;
       setGroupError(
         "No fue posible actualizar los grupos. Intenta nuevamente.",
       );
     } finally {
-      setIsMutatingGroup(false);
+      if (isCurrent()) setIsMutatingGroup(false);
     }
   };
 
   useEffect(() => {
     void loadProfile();
+    return () => {
+      session.current = { epoch: session.current.epoch + 1, active: false };
+    };
   }, []);
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!session.current.active || state.kind !== "authenticated") return;
+    const epoch = session.current.epoch;
+    const isCurrent = () => session.current.epoch === epoch;
     setIsSaving(true);
     setMessage(undefined);
 
@@ -235,8 +297,9 @@ export function App() {
         body: JSON.stringify({ email, username }),
       });
 
+      if (!isCurrent()) return;
       if (response.status === 401) {
-        setState({ kind: "anonymous" });
+        endSession();
         return;
       }
 
@@ -245,18 +308,23 @@ export function App() {
       }
 
       const { profile } = (await response.json()) as { profile: Profile };
+      if (!isCurrent()) return;
       setState({ kind: "authenticated", profile });
       setEmail(profile.email ?? "");
       setUsername(profile.username ?? "");
       setMessage("Perfil actualizado.");
     } catch {
+      if (!isCurrent()) return;
       setMessage("No fue posible actualizar el perfil. Intenta nuevamente.");
     } finally {
-      setIsSaving(false);
+      if (isCurrent()) setIsSaving(false);
     }
   };
 
   const logout = async () => {
+    if (!session.current.active || state.kind !== "authenticated") return;
+    const epoch = beginSessionEpoch(false);
+    const isCurrent = () => session.current.epoch === epoch;
     setIsLoggingOut(true);
     setLogoutError(undefined);
 
@@ -266,8 +334,9 @@ export function App() {
         credentials: "same-origin",
       });
 
+      if (!isCurrent()) return;
       if (response.status === 401) {
-        setState({ kind: "anonymous" });
+        endSession();
         return;
       }
 
@@ -275,11 +344,20 @@ export function App() {
         throw new Error("Logout request failed");
       }
 
-      setState({ kind: "anonymous" });
+      endSession();
     } catch {
+      if (!isCurrent()) return;
+      session.current.active = true;
       setLogoutError("No fue posible cerrar la sesión. Intenta nuevamente.");
+      // A failed logout keeps the current identity, but invalidated reads need a fresh attempt.
+      if (
+        groupsState.kind === "loading" ||
+        platformOrganizationsState.kind === "loading"
+      ) {
+        void reloadGroups(epoch);
+      }
     } finally {
-      setIsLoggingOut(false);
+      if (isCurrent()) setIsLoggingOut(false);
     }
   };
 
@@ -294,13 +372,7 @@ export function App() {
   }
 
   if (state.kind === "anonymous") {
-    return (
-      <main className="shell" aria-labelledby="page-title">
-        <p className="eyebrow">InvoiceOps</p>
-        <h1 id="page-title">Mi perfil</h1>
-        <p role="status">Tu sesión no está disponible o expiró.</p>
-      </main>
-    );
+    return <AuthScreen onLogin={() => void loadProfile()} />;
   }
 
   if (state.kind === "error") {
@@ -421,7 +493,16 @@ export function App() {
           <ul>
             {profile.memberships.map(({ organization, role }) => (
               <li key={organization.id}>
-                {organization.name} <span>({role})</span>
+                {organization.name}{" "}
+                <span>
+                  (
+                  {role === "STUDENT"
+                    ? "Estudiante"
+                    : role === "ADMIN"
+                      ? "Administrador"
+                      : "Rol no disponible"}
+                  )
+                </span>
               </li>
             ))}
           </ul>
