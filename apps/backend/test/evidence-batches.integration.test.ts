@@ -23,7 +23,7 @@ const prisma = new PrismaClient({
 
 async function reset() {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
+    'TRUNCATE TABLE "EvidenceAnchorObservation", "EvidencePreparedAnchorTransaction", "EvidenceSignerPreparationSlot", "EvidenceAnchorReservation", "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
   );
   await prisma.decisionEvent.deleteMany();
   await prisma.invoice.deleteMany();

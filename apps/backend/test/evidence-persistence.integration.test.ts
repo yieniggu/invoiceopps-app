@@ -155,7 +155,7 @@ afterAll(async () => {
       // This test runs only on its guarded, new invoiceops_test database. Clear
       // rows created by concurrency tests before deleting their parent events.
       await prisma.$executeRawUnsafe(
-        'TRUNCATE TABLE "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
+        'TRUNCATE TABLE "EvidenceAnchorObservation", "EvidencePreparedAnchorTransaction", "EvidenceSignerPreparationSlot", "EvidenceAnchorReservation", "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
       );
       await prisma.decisionEvent.deleteMany({ where: { invoiceId } });
       await prisma.invoice.delete({ where: { id: invoiceId } });

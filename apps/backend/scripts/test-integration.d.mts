@@ -16,6 +16,7 @@ export function assertMigrationLedger(
 ): void;
 
 export interface GateDependencies {
+  ownedAnvil?: { pid: number; port: number } | null;
   argv?: string[];
   env?: NodeJS.ProcessEnv;
   spawn?: (

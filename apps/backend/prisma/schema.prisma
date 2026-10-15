@@ -33,46 +33,48 @@ enum PlatformAdministrativeAuditEventType {
 }
 
 model User {
-  id           String                   @id @default(uuid())
-  name         String
-  rut          String                   @unique
-  email        String?
-  username     String?
-  passwordHash String?
-  memberships  OrganizationMembership[]
-  groupMemberships GroupMembership[]
-  sessions     Session[]
-  createdResources ResourceReference[] @relation("ResourceCreatedBy")
-  createdInvoices Invoice[] @relation("InvoiceCreatedBy")
-  decisionEvents DecisionEvent[]
-  platformAdministrator PlatformAdministrator?
-  platformAdministrativeAuditEvents PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditActor")
+  id                                 String                             @id @default(uuid())
+  name                               String
+  rut                                String                             @unique
+  email                              String?
+  username                           String?
+  passwordHash                       String?
+  memberships                        OrganizationMembership[]
+  groupMemberships                   GroupMembership[]
+  sessions                           Session[]
+  createdResources                   ResourceReference[]                @relation("ResourceCreatedBy")
+  createdInvoices                    Invoice[]                          @relation("InvoiceCreatedBy")
+  decisionEvents                     DecisionEvent[]
+  platformAdministrator              PlatformAdministrator?
+  platformAdministrativeAuditEvents  PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditActor")
   platformAdministrativeAuditTargets PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditTarget")
+  anchorReservations                 EvidenceAnchorReservation[]
+  anchorObservations                 EvidenceAnchorObservation[]
 }
 
 model Organization {
-  id              String                       @id @default(uuid())
-  name            String
-  slug            String                       @unique
-  description     String?
-  enabled         Boolean                      @default(true)
-  createdAt       DateTime                     @default(now())
-  updatedAt       DateTime                     @updatedAt
-  memberships     OrganizationMembership[]
-  authorizedUsers AuthorizedUserOrganization[]
-  groups          Group[]
-  resources       ResourceReference[]
-  invoices        Invoice[]
+  id               String                       @id @default(uuid())
+  name             String
+  slug             String                       @unique
+  description      String?
+  enabled          Boolean                      @default(true)
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+  memberships      OrganizationMembership[]
+  authorizedUsers  AuthorizedUserOrganization[]
+  groups           Group[]
+  resources        ResourceReference[]
+  invoices         Invoice[]
   businessPolicies BusinessPolicy[]
 }
 
 model OrganizationMembership {
-  id             String           @id @default(uuid())
-  userId         String
-  organizationId String
-  role           OrganizationRole
-  user           User             @relation(fields: [userId], references: [id])
-  organization   Organization     @relation(fields: [organizationId], references: [id])
+  id               String            @id @default(uuid())
+  userId           String
+  organizationId   String
+  role             OrganizationRole
+  user             User              @relation(fields: [userId], references: [id])
+  organization     Organization      @relation(fields: [organizationId], references: [id])
   groupMemberships GroupMembership[]
 
   @@unique([userId, organizationId])
@@ -91,12 +93,12 @@ model Group {
 }
 
 model GroupMembership {
-  id             String                 @id @default(uuid())
-  groupId        String
-  userId         String
-  organizationId String
-  group          Group                  @relation(fields: [groupId, organizationId], references: [id, organizationId])
-  user           User                   @relation(fields: [userId], references: [id])
+  id                     String                 @id @default(uuid())
+  groupId                String
+  userId                 String
+  organizationId         String
+  group                  Group                  @relation(fields: [groupId, organizationId], references: [id, organizationId])
+  user                   User                   @relation(fields: [userId], references: [id])
   organizationMembership OrganizationMembership @relation(fields: [userId, organizationId], references: [userId, organizationId])
 
   @@unique([groupId, userId])
@@ -138,29 +140,29 @@ model ResourceReference {
 }
 
 model Invoice {
-  id                          String            @id @default(uuid())
-  invoiceId                   String
-  organizationId              String
-  ownerType                   ResourceOwnerType
-  ownerId                     String
-  createdByUserId             String
-  vendorName                  String
-  invoiceAmountCents          Int
-  hasPurchaseOrder            Boolean
-  threeWayMatch               Boolean
-  status                      InvoiceStatus     @default(PENDING)
-  vendorTenureDays            Int
-  previousIncidents12m        Int
-  bankAccountRecentlyChanged  Boolean
-  amountVsVendorMedian        Float
-  countryRisk                 String
-  policyProbability           Decimal?
-  policyProbabilitySource     String?
-  createdAt                   DateTime          @default(now())
-  updatedAt                   DateTime          @updatedAt
-  organization                Organization      @relation(fields: [organizationId], references: [id])
-  createdByUser               User              @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
-  decisionEvents              DecisionEvent[]
+  id                         String            @id @default(uuid())
+  invoiceId                  String
+  organizationId             String
+  ownerType                  ResourceOwnerType
+  ownerId                    String
+  createdByUserId            String
+  vendorName                 String
+  invoiceAmountCents         Int
+  hasPurchaseOrder           Boolean
+  threeWayMatch              Boolean
+  status                     InvoiceStatus     @default(PENDING)
+  vendorTenureDays           Int
+  previousIncidents12m       Int
+  bankAccountRecentlyChanged Boolean
+  amountVsVendorMedian       Float
+  countryRisk                String
+  policyProbability          Decimal?
+  policyProbabilitySource    String?
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+  organization               Organization      @relation(fields: [organizationId], references: [id])
+  createdByUser              User              @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  decisionEvents             DecisionEvent[]
 
   @@unique([organizationId, invoiceId])
   @@index([organizationId, ownerType, ownerId, createdAt, id])
@@ -182,33 +184,33 @@ model BusinessPolicy {
 }
 
 model DecisionEvent {
-  id               String   @id @default(uuid())
-  invoiceId        String
-  decision         String
-  ruleVersion      String
-  mode             String
-  policyVersion    String?
-  manualReviewThreshold Decimal?
-  policyProbability Decimal?
+  id                      String           @id @default(uuid())
+  invoiceId               String
+  decision                String
+  ruleVersion             String
+  mode                    String
+  policyVersion           String?
+  manualReviewThreshold   Decimal?
+  policyProbability       Decimal?
   policyProbabilitySource String?
-  modelId          String?
-  modelVersion     String?
-  modelRunId       String?
-  recommendation   String?
-  actorUserId      String
-  actorName        String
-  actorRut         String
-  correlationId    String   @unique
-  createdAt        DateTime @default(now())
-  invoice          Invoice  @relation(fields: [invoiceId], references: [id])
-  actor            User     @relation(fields: [actorUserId], references: [id])
-  evidenceRecords  EvidenceRecord[]
+  modelId                 String?
+  modelVersion            String?
+  modelRunId              String?
+  recommendation          String?
+  actorUserId             String
+  actorName               String
+  actorRut                String
+  correlationId           String           @unique
+  createdAt               DateTime         @default(now())
+  invoice                 Invoice          @relation(fields: [invoiceId], references: [id])
+  actor                   User             @relation(fields: [actorUserId], references: [id])
+  evidenceRecords         EvidenceRecord[]
 
   @@index([invoiceId, createdAt, id])
 }
 
 model EvidenceRecord {
-  id               String            @id @default(uuid())
+  id               String              @id @default(uuid())
   decisionEventId  String
   evidenceVersion  String
   canonicalVersion String
@@ -216,10 +218,10 @@ model EvidenceRecord {
   organizationId   String
   ownerType        ResourceOwnerType
   ownerId          String
-  canonicalPayload Bytes             @db.ByteA
-  leafHash         Bytes             @db.ByteA
-  createdAt        DateTime          @default(now())
-  decisionEvent    DecisionEvent     @relation(fields: [decisionEventId], references: [id], onDelete: Restrict)
+  canonicalPayload Bytes               @db.ByteA
+  leafHash         Bytes               @db.ByteA
+  createdAt        DateTime            @default(now())
+  decisionEvent    DecisionEvent       @relation(fields: [decisionEventId], references: [id], onDelete: Restrict)
   batchItems       EvidenceBatchItem[]
 
   @@unique([decisionEventId, evidenceVersion])
@@ -228,15 +230,16 @@ model EvidenceRecord {
 }
 
 model EvidenceBatch {
-  id             String            @id @default(uuid())
-  organizationId String
-  ownerType      ResourceOwnerType
-  ownerId        String
-  policyVersion  String
-  rootHash       Bytes             @db.ByteA
-  leafCount      Int
-  createdAt      DateTime          @default(now())
-  items          EvidenceBatchItem[]
+  id                 String                      @id @default(uuid())
+  organizationId     String
+  ownerType          ResourceOwnerType
+  ownerId            String
+  policyVersion      String
+  rootHash           Bytes                       @db.ByteA
+  leafCount          Int
+  createdAt          DateTime                    @default(now())
+  items              EvidenceBatchItem[]
+  anchorReservations EvidenceAnchorReservation[]
 
   @@unique([id, organizationId, ownerType, ownerId])
   @@unique([organizationId, ownerType, ownerId, policyVersion, rootHash])
@@ -250,12 +253,101 @@ model EvidenceBatchItem {
   ownerType        ResourceOwnerType
   ownerId          String
   leafIndex        Int
-  batch            EvidenceBatch  @relation(fields: [batchId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
-  evidenceRecord   EvidenceRecord @relation(fields: [evidenceRecordId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
+  batch            EvidenceBatch     @relation(fields: [batchId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
+  evidenceRecord   EvidenceRecord    @relation(fields: [evidenceRecordId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
 
   @@id([batchId, leafIndex])
   @@unique([batchId, evidenceRecordId])
   @@index([evidenceRecordId, organizationId, ownerType, ownerId])
+}
+
+model EvidenceAnchorReservation {
+  id                  String                             @id
+  claimToken          String                             @unique
+  chainId             BigInt
+  contractAddress     Bytes                              @db.ByteA
+  rootHash            Bytes                              @db.ByteA
+  batchId             String
+  organizationId      String
+  ownerType           ResourceOwnerType
+  ownerId             String
+  actorUserId         String
+  state               String                             @default("RESERVED")
+  createdAt           DateTime                           @default(now())
+  batch               EvidenceBatch                      @relation(fields: [batchId, organizationId, ownerType, ownerId], references: [id, organizationId, ownerType, ownerId], onDelete: Restrict)
+  actor               User                               @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  signerSlot          EvidenceSignerPreparationSlot?
+  preparedTransaction EvidencePreparedAnchorTransaction?
+
+  @@unique([id, chainId, contractAddress, rootHash, batchId, organizationId, ownerType, ownerId, actorUserId], map: "EvidenceAnchorReservation_identity_key")
+  @@unique([chainId, contractAddress, rootHash], map: "EvidenceAnchorReservation_target_key")
+  @@index([batchId, organizationId, ownerType, ownerId])
+  @@index([actorUserId])
+}
+
+model EvidenceSignerPreparationSlot {
+  chainId             BigInt
+  signerAddress       Bytes                              @db.ByteA
+  reservationId       String                             @unique
+  contractAddress     Bytes                              @db.ByteA
+  rootHash            Bytes                              @db.ByteA
+  batchId             String
+  organizationId      String
+  ownerType           ResourceOwnerType
+  ownerId             String
+  actorUserId         String
+  createdAt           DateTime                           @default(now())
+  reservation         EvidenceAnchorReservation          @relation(fields: [reservationId, chainId, contractAddress, rootHash, batchId, organizationId, ownerType, ownerId, actorUserId], references: [id, chainId, contractAddress, rootHash, batchId, organizationId, ownerType, ownerId, actorUserId], onDelete: Restrict)
+  preparedTransaction EvidencePreparedAnchorTransaction?
+
+  @@id([chainId, signerAddress])
+  @@unique([reservationId, chainId, contractAddress, rootHash, batchId, organizationId, ownerType, ownerId, actorUserId], map: "EvidenceSignerPreparationSlot_reservation_full_key")
+  @@unique([reservationId, chainId, signerAddress], map: "EvidenceSignerPreparationSlot_reservation_identity_key")
+  @@unique([reservationId, chainId, signerAddress, contractAddress, rootHash], map: "EvidenceSignerPreparationSlot_prepared_identity_key")
+}
+
+model EvidencePreparedAnchorTransaction {
+  reservationId        String                        @id
+  chainId              BigInt
+  signerAddress        Bytes                         @db.ByteA
+  contractAddress      Bytes                         @db.ByteA
+  rootHash             Bytes                         @db.ByteA
+  nonce                BigInt
+  gas                  BigInt
+  maxFeePerGas         BigInt
+  maxPriorityFeePerGas BigInt
+  transactionHash      Bytes                         @db.ByteA
+  createdAt            DateTime                      @default(now())
+  reservation          EvidenceAnchorReservation     @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  slot                 EvidenceSignerPreparationSlot @relation(fields: [reservationId, chainId, signerAddress, contractAddress, rootHash], references: [reservationId, chainId, signerAddress, contractAddress, rootHash], onDelete: Restrict)
+  observations         EvidenceAnchorObservation[]
+
+  @@unique([chainId, signerAddress, nonce])
+  @@unique([reservationId, chainId, signerAddress], map: "EvidencePreparedAnchorTransaction_slot_key")
+  @@unique([reservationId, chainId, signerAddress, contractAddress, rootHash], map: "EvidencePreparedAnchorTransaction_full_key")
+  @@unique([chainId, transactionHash])
+  @@unique([reservationId, chainId, signerAddress, contractAddress, rootHash, transactionHash], map: "EvidencePreparedAnchorTransaction_observation_key")
+}
+
+model EvidenceAnchorObservation {
+  id                String                            @id @default(uuid())
+  reservationId     String
+  actorUserId       String
+  chainId           BigInt
+  signerAddress     Bytes                             @db.ByteA
+  contractAddress   Bytes                             @db.ByteA
+  rootHash          Bytes                             @db.ByteA
+  transactionHash   Bytes                             @db.ByteA
+  kind              String
+  reason            String
+  blockNumber       BigInt?
+  blockHash         Bytes?                            @db.ByteA
+  receiptStatus     String?
+  checkedAt         DateTime                          @default(now())
+  prepared          EvidencePreparedAnchorTransaction @relation(fields: [reservationId, chainId, signerAddress, contractAddress, rootHash, transactionHash], references: [reservationId, chainId, signerAddress, contractAddress, rootHash, transactionHash], onDelete: Restrict)
+  actor             User                              @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([reservationId, checkedAt, id])
 }
 
 model PlatformAdministrator {

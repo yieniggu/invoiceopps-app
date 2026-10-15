@@ -43,7 +43,7 @@ afterAll(async () => {
 async function resetOwnedTestDatabase() {
   // TRUNCATE bypasses the append-only DELETE trigger only while resetting isolated test data.
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
+    'TRUNCATE TABLE "EvidenceAnchorObservation", "EvidencePreparedAnchorTransaction", "EvidenceSignerPreparationSlot", "EvidenceAnchorReservation", "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
   );
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "PlatformAdministrativeAuditEvent", "PlatformAdministrator"',

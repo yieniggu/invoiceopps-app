@@ -11,6 +11,56 @@ TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
 
 ## Configuración local
 
+### Managed local database (this workstation)
+
+The managed local PostgreSQL database is the verified development target for this
+workstation. From the `invoiceops-app` root, check its state with:
+
+```bash
+pnpm db:local:status
+```
+
+| Item                            | Verified local value                                        |
+| ------------------------------- | ----------------------------------------------------------- |
+| PostgreSQL target               | Managed local database; inspect `pnpm db:local:status`      |
+| Network scope                   | Loopback only; inspect local status for the current binding |
+| PostgreSQL version              | `17.11`                                                     |
+| Database / role                 | `invoiceops` / `invoiceops`                                 |
+| Applied canonical migrations    | 13 of 13                                                    |
+| Existing local data and session | Retained; inspect local status for operator-only details    |
+
+The initial transfer and all 13 canonical migrations were verified. The former
+source database container and the two specifically identified obsolete named
+PostgreSQL volumes are absent; the current database was rechecked afterward.
+The retained full backup was restored and checked in an owned scratch database.
+The installed private manifest lets this existing local database run
+independently of that source. This workstation-specific state does not describe
+first-time setup on another machine.
+
+**Cleanup evidence boundary:** the post-cleanup local state of the named source
+container and obsolete volumes was verified. The cleanup commands did not retain
+an explicit Docker endpoint/context record, so their execution scope and any
+effects outside those verified local objects are **NOT_VERIFIED**. This does not
+change the verified state of the current database; it limits claims about the
+cleanup operation beyond the observed objects.
+
+To re-run the idempotent local readiness check and native profile proof:
+
+```bash
+pnpm db:local:migrate
+```
+
+This command does not re-import rows or issue a replacement session while the
+recorded session remains valid. The database is bound to loopback; managed
+container and volume identity are checked before use. Private credentials,
+session token contents, and row fingerprints are not documented or committed.
+For current operator guidance, start with `pnpm db:local:status`; it reports
+locally needed session metadata without requiring token contents in shared docs.
+
+The local helper does not configure `DATABASE_URL` in the shell or replace the
+separate Compose workflow below. Full APP-11 closure and live testnet/EVM
+execution are not claimed by this local database readiness result.
+
 1. Crea un archivo `.env` local con las variables requeridas. No incluyas este
    archivo en el control de versiones.
 
@@ -105,20 +155,102 @@ Desde la raíz de `invoiceops-app`, con Docker local disponible y la imagen
 pnpm test:integration
 ```
 
-El runner crea un contenedor nuevo con contraseña y rol exclusivos, puerto
-efímero limitado a `127.0.0.1`, memoria y almacenamiento temporal acotados;
-no usa `.env`, volumen persistente ni el servicio Compose `db-test`. Aplica las
-ocho migraciones anteriores, siembra en una transacción un evento previo a
-Evidence, aplica la novena migración y ejecuta secuencialmente los diez casos
-SQL históricos, los 31 de organización y los siete de batches. Comprueba que
-el evento anterior no recibió Evidence automáticamente. Al terminar, incluso
-tras un fallo, verifica la propiedad y elimina únicamente su contenedor por ID;
-confirma su ausencia. Si falta la imagen o el socket local, falla sin descarga
-ni inicio del daemon. No pases URLs preexistentes: el gate las rechaza antes de
-crear recursos. Las suites directas también rechazan roles ordinarios y
-destinos que no sean una base de prueba local con nonce concordante. El perfil
-Compose `db-test` conserva su uso manual independiente, pero su volumen y rol
-ordinario **no** son un destino seguro ni admitido por este gate destructivo.
+The runner creates a new isolated container with a unique role and password, a
+loopback-only ephemeral port, and bounded memory and temporary storage. It does
+not use `.env`, persistent volumes, or the Compose `db-test` service. It applies
+eight baseline migrations, seeds a legacy event, then applies migrations nine
+through thirteen. It verifies that the legacy event was not backfilled and runs
+10 SQL, 31 organization, seven batch, six reservation, four transaction, two
+reconciliation, and four CLI authorization cases sequentially (64 PostgreSQL
+cases across the seven suites). The reservation,
+exclusive signer slot, and prepared metadata are
+append-only without expiry or release. The slot is global to a chain and signer,
+including across contracts: after a crash or ambiguous send, later batches using
+that account remain blocked until a separately approved reconciliation procedure
+exists. The signer must be application-exclusive; external wallets cannot be
+detected or fenced by this database. Signed payloads and private keys must stay
+in memory and never enter database rows or logs. A broadcast result is NOT a
+receipt or confirmation. The operator CLI is an explicit manual caller, but this
+slice does not exercise a live RPC, wire an HTTP caller, replace or retry a
+transaction, or schedule automatic reconciliation.
+
+TX06 provides an internal, read-only, point-in-time observation routine. An
+authorized batch/context and reservation ID select the persisted prepared hash;
+the caller does not supply an RPC hash. The routine checks chain and contract
+signer, exact EIP-1559 transaction identity, own receipt, canonical block by
+number, and the contract's indexed `RootRegistered(rootHash, signer)` event.
+`observedSuccess` and `observedRevert` are provisional observations, NOT
+finality or permission to release the global signer slot. Pending, provider
+uncertainty, mismatches, and reorgs produce separately appended observations;
+earlier observations are never rewritten. The CLI below is an explicit local
+operator caller; this routine is not wired to HTTP or a scheduler. Do not retry
+a send or infer a released nonce from these rows. The SQL migration is additive;
+retain the observation table alongside claims, slots, and prepared hashes on
+application rollback.
+
+### Conservative operator CLI (APP-11)
+
+The explicit `evidence-anchor` command requires a valid `APP_SESSION_TOKEN` and
+the current database authorization for the supplied organization and owner
+context. The configured local operator wallet authorizes the signing capability;
+platform-administrator status does not bypass resource ACL checks. Do not pass
+actor IDs, session tokens, private keys, or RPC URLs as arguments.
+
+For an anchor operation, configure `EVM_RPC_URL`, `EVM_CHAIN_ID`,
+`EVIDENCE_CONTRACT_ADDRESS`, and `EVM_SIGNER_PRIVATE_KEY` in the invocation
+environment. Remote RPC endpoints must use HTTPS; plain HTTP is accepted only
+for literal `127.0.0.1` or `[::1]`. For reconciliation, only the RPC URL, chain
+ID, and contract address are read; the signer key is neither required nor read.
+Use a batch and reservation already belonging to the authenticated actor and
+context:
+
+```bash
+pnpm --filter @invoiceops/backend evidence-anchor --help
+pnpm --filter @invoiceops/backend evidence-anchor anchor --batch-id BATCH_ID --organization-id ORG_ID --owner-type user --owner-id OWNER_ID
+pnpm --filter @invoiceops/backend evidence-anchor reconcile --batch-id BATCH_ID --organization-id ORG_ID --owner-type user --owner-id OWNER_ID --reservation-id RESERVATION_ID
+```
+
+The command returns only a bounded JSON result. A broadcast is reported as
+`broadcastedUnknown`, not confirmation. Reconciliation emits provisional
+observations; `observedSuccess` is not finality and does not release the signer
+slot. Exit status is 0 for a completed command, 1 for authentication/data/
+provider failure, and 2 for usage/configuration failure. Never include secrets
+in shell history, logs, or shared process listings. A database disconnect failure
+is reported only as a categorical stderr diagnostic: it does not replace the
+operation result or change its exit status, and it is not a reason to retry.
+
+### Opt-in own-local anchor smoke (APP-11)
+
+From the app root, with installed Anvil/Forge, an offline cached Solidity 0.8.24
+compiler, Docker on the local Unix socket, and the cached `postgres:17-alpine`
+image, run only when explicitly choosing to create disposable local resources:
+
+```bash
+env DOCKER_HOST=unix:///var/run/docker.sock pnpm --filter @invoiceops/backend exec node scripts/test-anchor-anvil.mjs
+```
+
+Do not supply database URLs or Anvil PID/port overrides. The opt-in script owns a
+new loopback Anvil process, checks its PID and listener before any RPC, then
+uses the existing runner's new isolated PostgreSQL container and all thirteen
+migrations. The seven standard DB suites still run first; the eighth suite
+compiles the adjacent `invoiceops-contracts/src/EvidenceRootAnchor.sol` offline,
+funds an in-memory ephemeral signer with synthetic ETH from the new node's
+unlocked developer account, deploys that contract, and exercises the internal
+batch submission and read-only observation boundaries. Neither default unit
+tests nor `test:integration` start Anvil. Cleanup targets only the captured
+Anvil PID and labeled container ID. A failed smoke is NOT proof of registration;
+do not retry an uncertain write on an existing node or release the signer slot.
+This is not an Express/cookie/UI/TLS or public-network test, and even a passing
+receipt and `observedSuccess` do not establish finality or authorize slot reuse.
+Together, the seven PostgreSQL suites and this one smoke case cover 65 cases.
+
+Run only against the local socket with a cached `postgres:17-alpine` image:
+`DOCKER_HOST=unix:///var/run/docker.sock pnpm test:integration`. The runner
+rejects preconfigured database URLs, does not pull images, and verifies the
+exact owned container is removed, including on failures. Do not drop or clear
+the reservation, slot, or prepared tables to roll back application code: preserve
+claims, hashes, and history; apply the additive migration before enabling a
+future caller. Rolling back code does not resolve retained signer slots.
 
 Después ejecuta los gates restantes:
 

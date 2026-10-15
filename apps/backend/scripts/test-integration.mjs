@@ -20,6 +20,10 @@ export const suites = [
   "test/evidence-persistence.integration.test.ts",
   "test/organization-persistence.integration.test.ts",
   "test/evidence-batches.integration.test.ts",
+  "test/evidence-anchor-reservations.integration.test.ts",
+  "test/evidence-anchor-transactions.integration.test.ts",
+  "test/evidence-anchor-reconciliation.integration.test.ts",
+  "test/evidence-anchor-cli.integration.test.ts",
 ];
 
 const migrations = resolve("prisma/migrations");
@@ -35,7 +39,28 @@ function command(binary, args, options = {}, spawn = spawnSync) {
     env: options.env,
   });
   if (result.error || result.status !== 0) {
-    throw new Error(`${options.stage ?? binary} failed or timed out`);
+    const phase = (options.stage ?? binary)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    const cause =
+      result.error?.code === "ETIMEDOUT"
+        ? "timeout"
+        : result.error
+          ? "spawn-failed"
+          : Number.isSafeInteger(result.status)
+            ? `exit-${result.status}`
+            : "process-failed";
+    const diagnostic = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const smoke =
+      options.stage === "owned Anvil smoke"
+        ? diagnostic.match(
+            /SMOKE_FAILURE step=[a-z0-9-]+ cause=(?:child-timeout|child-spawn-error|child-exit-nonzero|assertion-failed|child-process-failed) status=(?:-?\d+|none) signal=(?:SIG[A-Z]+|none) spawn_code=(?:E[A-Z]+|none) cli_phase=(?:input|database|execute|cleanup|none) cli_operation=(?:anchor|reconcile|command|none) cli_reason=(?:usage|authentication|configuration|database|data|operation|cleanup|none) phase=[a-z0-9-]+ method=(?:eth_[A-Za-z0-9]+|unknown)/,
+          )?.[0]
+        : undefined;
+    throw new Error(
+      `${options.stage ?? binary} failed or timed out; cause=${cause}; phase=${phase}${smoke ? `; ${smoke}` : ""}`,
+    );
   }
   return result.stdout.trim();
 }
@@ -207,6 +232,76 @@ async function seedLegacy(client) {
   return eventId;
 }
 
+async function verifyAuditConstraintForwardCorrection(client, eventId) {
+  await client.query(`ALTER TABLE "DecisionEvent"
+    DROP CONSTRAINT "DecisionEvent_model_inference_snapshot_check",
+    ADD CONSTRAINT "DecisionEvent_model_inference_snapshot_check" CHECK (
+      ("policyProbabilitySource" = 'MODEL_API' AND "modelId" IS NOT NULL AND "modelVersion" IS NOT NULL AND "modelRunId" IS NOT NULL AND "policyProbability" IS NOT NULL AND "recommendation" IS NOT NULL)
+      OR
+      ("policyProbabilitySource" = 'MODEL_API_FALLBACK' AND "modelId" IS NULL AND "modelVersion" IS NULL AND "modelRunId" IS NULL AND "policyProbability" IS NULL AND "recommendation" = 'MANUAL_REVIEW')
+      OR
+      ("policyProbabilitySource" IS NULL AND "modelId" IS NULL AND "modelVersion" IS NULL AND "modelRunId" IS NULL AND "policyProbability" IS NULL AND "recommendation" IS NULL)
+      OR
+      ("policyProbabilitySource" = 'LOCAL_DEMONSTRATION')
+    )`);
+
+  const verifyUpdate = async (values, shouldReject, description) => {
+    await client.query("BEGIN");
+    let failure;
+    try {
+      const result = await client.query(
+        `UPDATE "DecisionEvent"
+         SET "policyProbabilitySource" = $2, "modelId" = $3, "modelVersion" = $4,
+             "modelRunId" = $5, "policyProbability" = $6, "recommendation" = $7
+         WHERE "id" = $1`,
+        [eventId, ...values],
+      );
+      if (result.rowCount !== 1) {
+        throw new Error("Audit guard fixture row was not updated");
+      }
+    } catch (error) {
+      failure = error;
+    }
+    await client.query("ROLLBACK");
+
+    if (shouldReject) {
+      if (failure?.code !== "23514") {
+        throw new Error(
+          `Corrected audit constraint did not reject ${description}`,
+        );
+      }
+    } else if (failure) {
+      throw new Error(
+        `Observed legacy audit constraint did not permit ${description}`,
+      );
+    }
+  };
+
+  await verifyUpdate(
+    [null, "legacy-model", null, null, null, null],
+    false,
+    "a NULL-source partial snapshot before correction",
+  );
+  await verifyUpdate(
+    ["LOCAL_DEMONSTRATION", "legacy-model", null, null, null, null],
+    false,
+    "a LOCAL_DEMONSTRATION snapshot with model metadata before correction",
+  );
+
+  return async () => {
+    await verifyUpdate(
+      [null, "legacy-model", null, null, null, null],
+      true,
+      "a NULL-source partial snapshot after correction",
+    );
+    await verifyUpdate(
+      ["LOCAL_DEMONSTRATION", "legacy-model", null, null, null, null],
+      true,
+      "a LOCAL_DEMONSTRATION snapshot with model metadata after correction",
+    );
+  };
+}
+
 function cleanupOwnedContainer(name, nonce, id, dockerEnv, spawn, log) {
   const owned = ownedId(name, nonce, dockerEnv, spawn);
   if (!owned) {
@@ -228,6 +323,7 @@ export async function runIntegrationGate({
   spawn = spawnSync,
   Client = pg.Client,
   log = console.info,
+  ownedAnvil = null,
 } = {}) {
   if (
     argv.length !== 2 ||
@@ -242,6 +338,15 @@ export async function runIntegrationGate({
       "Integration gate rejects arguments and preconfigured database targets",
     );
   }
+  if (
+    ownedAnvil !== null &&
+    (!Number.isSafeInteger(ownedAnvil.pid) ||
+      ownedAnvil.pid <= 0 ||
+      !Number.isSafeInteger(ownedAnvil.port) ||
+      ownedAnvil.port <= 0 ||
+      ownedAnvil.port > 65535)
+  )
+    throw new Error("Invalid owned Anvil identity");
   const nonce = randomBytes(5).toString("hex");
   const name = `invoiceops-evi-${nonce}`;
   const password = randomBytes(32).toString("hex");
@@ -267,18 +372,21 @@ export async function runIntegrationGate({
   let id;
   try {
     mkdirSync(dockerEnv.DOCKER_CONFIG, { mode: 0o700 });
+    log("stage: prisma-client-generation");
     command(
       "pnpm",
       ["run", "generate"],
       { env: child, timeout: 120_000, stage: "Prisma client generation" },
       spawn,
     );
+    log("stage: local-image-preflight");
     docker(
       ["image", "inspect", image, "--format", "{{.Id}}"],
       dockerEnv,
       "local image preflight",
       spawn,
     );
+    log("stage: local-socket-preflight");
     docker(
       ["info", "--format", "{{.ServerVersion}}"],
       dockerEnv,
@@ -291,6 +399,7 @@ export async function runIntegrationGate({
       POSTGRES_USER: role,
       POSTGRES_DB: "invoiceops_test",
     };
+    log("stage: isolated-create");
     docker(
       [
         "create",
@@ -318,7 +427,9 @@ export async function runIntegrationGate({
     );
     id = ownedId(name, nonce, dockerEnv, spawn);
     if (!id) throw new Error("New container ownership unavailable");
+    log("stage: isolated-start");
     docker(["start", id], dockerEnv, "isolated start", spawn);
+    log("stage: loopback-port-verification");
     const port = JSON.parse(
       docker(
         ["inspect", id, "--format", "{{json .NetworkSettings.Ports}}"],
@@ -331,6 +442,7 @@ export async function runIntegrationGate({
       throw new Error("Loopback port verification failed");
     const url = `postgresql://${role}:${password}@127.0.0.1:${port.HostPort}/invoiceops_test`;
     let client;
+    log("stage: postgres-readiness");
     const readyBy = Date.now() + 120_000;
     while (true) {
       const candidate = new Client({
@@ -379,7 +491,7 @@ export async function runIntegrationGate({
         throw new Error("Baseline migration copy differs from source");
       const environment = { child, fullDirectory: join(temp, "full") };
       mkdirSync(environment.fullDirectory);
-      log("stage: baseline 8");
+      log("stage: baseline-migrations");
       await migrate(
         oldDirectory,
         url,
@@ -391,14 +503,16 @@ export async function runIntegrationGate({
         'SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY migration_name',
       );
       assertMigrationLedger(applied.rows, expectedBaseline);
-      log("stage: seed legacy transaction");
+      log("stage: seed-legacy-transaction");
       const legacyId = await seedLegacy(client);
-      log("stage: migration 9");
+      log("stage: migrations-9-13");
+      const verifyCorrectedAuditConstraint =
+        await verifyAuditConstraintForwardCorrection(client, legacyId);
       await migrate(
         environment.fullDirectory,
         url,
         environment,
-        "Evidence migration",
+        "Evidence and audit-guard migrations",
         spawn,
       );
       const after = await client.query(
@@ -407,8 +521,15 @@ export async function runIntegrationGate({
       const evidenceName = "20261008060000_add_evidence_persistence";
       assertMigrationLedger(after.rows, [
         ...expectedBaseline,
-        ...expectedMigrationChecksums(migrations, [evidenceName]),
+        ...expectedMigrationChecksums(migrations, [
+          evidenceName,
+          "20261011000000_add_evidence_anchor_reservations",
+          "20261011010000_add_evidence_prepared_transactions",
+          "20261011020000_add_evidence_anchor_observations",
+          "20261013000000_correct_model_inference_snapshot_guard",
+        ]),
       ]);
+      await verifyCorrectedAuditConstraint();
       const legacy = await client.query(
         'SELECT count(*)::int AS total FROM "EvidenceRecord" WHERE "decisionEventId" = $1',
         [legacyId],
@@ -425,6 +546,10 @@ export async function runIntegrationGate({
         ["SQL", suites[0], 10],
         ["organization", suites[1], 31],
         ["batch", suites[2], 7],
+        ["reservation", suites[3], 6],
+        ["transaction", suites[4], 4],
+        ["reconciliation", suites[5], 2],
+        ["CLI authorization", suites[6], 4],
       ]) {
         const output = command(
           "pnpm",
@@ -451,6 +576,36 @@ export async function runIntegrationGate({
             `${label} suite did not pass all ${expected} expected cases`,
           );
         log(`stage: ${label} ${expected} passed`);
+      }
+      if (ownedAnvil !== null) {
+        const output = command(
+          "pnpm",
+          [
+            "exec",
+            "vitest",
+            "run",
+            "test/evidence-anchor-anvil.integration.test.ts",
+            "--testTimeout",
+            "60000",
+            "--hookTimeout",
+            "120000",
+          ],
+          {
+            env: {
+              ...testEnv,
+              APP11_OWN_ANVIL_PID: String(ownedAnvil.pid),
+              APP11_OWN_ANVIL_PORT: String(ownedAnvil.port),
+            },
+            timeout: 180_000,
+            stage: "owned Anvil smoke",
+          },
+          spawn,
+        );
+        if (!/Tests\s+1 passed \(1\)/.test(output))
+          throw new Error(
+            "Owned Anvil smoke did not pass its one expected case",
+          );
+        log("stage: owned Anvil smoke 1 passed");
       }
     } finally {
       await client.end();

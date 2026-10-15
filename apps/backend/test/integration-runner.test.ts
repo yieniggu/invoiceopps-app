@@ -27,6 +27,9 @@ describe("integration gate entry point", () => {
       "evidence-persistence.integration.test.ts",
       "organization-persistence.integration.test.ts",
       "evidence-batches.integration.test.ts",
+      "evidence-anchor-reservations.integration.test.ts",
+      "evidence-anchor-transactions.integration.test.ts",
+      "evidence-anchor-cli.integration.test.ts",
     ]) {
       expect(source).toContain(suite);
     }
@@ -87,6 +90,10 @@ const names = [
   "20260923203000_add_business_policies",
   "20260927213500_add_model_inference_audit",
   "20261008060000_add_evidence_persistence",
+  "20261011000000_add_evidence_anchor_reservations",
+  "20261011010000_add_evidence_prepared_transactions",
+  "20261011020000_add_evidence_anchor_observations",
+  "20261013000000_correct_model_inference_snapshot_guard",
 ];
 const expected = expectedMigrationChecksums(migrationDirectory, names);
 const completed = (count: number): MigrationLedgerRow[] =>
@@ -108,7 +115,10 @@ describe("integration migration ledger", () => {
     expect(() =>
       assertMigrationLedger(completed(8), expected.slice(0, 8)),
     ).not.toThrow();
-    expect(() => assertMigrationLedger(completed(9), expected)).not.toThrow();
+    expect(() =>
+      assertMigrationLedger(completed(12), expected.slice(0, 12)),
+    ).not.toThrow();
+    expect(() => assertMigrationLedger(completed(13), expected)).not.toThrow();
     for (const altered of [
       completed(8).map((row, index) =>
         index === 3 ? { ...row, checksum: "0".repeat(64) } : row,
@@ -117,7 +127,7 @@ describe("integration migration ledger", () => {
         index === 3 ? { ...row, migration_name: "wrong" } : row,
       ),
       completed(8).slice(0, 7),
-      completed(9),
+      completed(10),
       completed(8).map((row, index) =>
         index === 3 ? { ...row, finished_at: null } : row,
       ),
@@ -155,13 +165,20 @@ function fixture({
     }) {}
     async connect() {}
     async end() {}
-    async query(sql: string): Promise<{ rows: object[] }> {
+    async query(sql: string): Promise<{ rows: object[]; rowCount?: number }> {
       queries.push(sql);
       if (sql.includes('FROM "_prisma_migrations"')) {
         const rows = completed(migrationCount);
         if (failure === "checksum") rows[0].checksum = "f".repeat(64);
         return { rows };
       }
+      if (sql.includes('UPDATE "DecisionEvent"') && migrationCount === 13) {
+        throw Object.assign(new Error("synthetic check violation"), {
+          code: "23514",
+        });
+      }
+      if (sql.includes('UPDATE "DecisionEvent"'))
+        return { rows: [], rowCount: 1 };
       if (sql.includes("information_schema.columns")) {
         return {
           rows: Object.entries({
@@ -255,7 +272,7 @@ function fixture({
     if (args.includes("migrate")) {
       migrationCount = args[args.indexOf("--config") + 1].includes("/baseline/")
         ? 8
-        : 9;
+        : 13;
       return success();
     }
     if (args.includes("vitest")) {
@@ -265,7 +282,15 @@ function fixture({
         ? 10
         : args.some((arg) => arg.includes("organization-persistence"))
           ? 31
-          : 7;
+          : args.some((arg) => arg.includes("evidence-anchor-transactions"))
+            ? 4
+            : args.some((arg) => arg.includes("evidence-anchor-reconciliation"))
+              ? 2
+              : args.some((arg) => arg.includes("evidence-anchor-reservations"))
+                ? 6
+                : args.some((arg) => arg.includes("evidence-anchor-cli"))
+                  ? 4
+                  : 7;
       return success(`Tests  ${count} passed (${count})`);
     }
     return success();
@@ -296,6 +321,17 @@ describe("integration runner orchestration without external processes", () => {
     expect(calls).toEqual([]);
   });
 
+  it("rejects an invalid optional Anvil identity before any Docker operation", async () => {
+    const { dependencies, calls } = fixture();
+    await expect(
+      runIntegrationGate({
+        ...dependencies,
+        ownedAnvil: { pid: 0, port: 8545 },
+      }),
+    ).rejects.toThrow("Invalid owned Anvil identity");
+    expect(calls).toEqual([]);
+  });
+
   it("verifies both ledgers, preserves order, passes explicit timeouts and removes only the owned ID", async () => {
     const { dependencies, calls, queries, logs } = fixture();
     await runIntegrationGate(dependencies);
@@ -310,6 +346,10 @@ describe("integration runner orchestration without external processes", () => {
       "test/evidence-persistence.integration.test.ts",
       "test/organization-persistence.integration.test.ts",
       "test/evidence-batches.integration.test.ts",
+      "test/evidence-anchor-reservations.integration.test.ts",
+      "test/evidence-anchor-transactions.integration.test.ts",
+      "test/evidence-anchor-reconciliation.integration.test.ts",
+      "test/evidence-anchor-cli.integration.test.ts",
     ]);
     for (const { args, options } of suites) {
       expect(args).toEqual(
@@ -333,6 +373,10 @@ describe("integration runner orchestration without external processes", () => {
         "stage: SQL 10 passed",
         "stage: organization 31 passed",
         "stage: batch 7 passed",
+        "stage: migrations-9-13",
+        "stage: reservation 6 passed",
+        "stage: transaction 4 passed",
+        "stage: CLI authorization 4 passed",
         "cleanup: exact owned container removed and absence verified",
       ]),
     );

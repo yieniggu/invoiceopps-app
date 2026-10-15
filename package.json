@@ -10,6 +10,8 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "db:local:migrate": "pnpm --filter @invoiceops/backend db:local:migrate",
+    "db:local:status": "pnpm --filter @invoiceops/backend db:local:status",
     "dev": "pnpm --parallel --stream --filter @invoiceops/backend --filter @invoiceops/frontend dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

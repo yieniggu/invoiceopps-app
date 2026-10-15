@@ -19,6 +19,12 @@ const modelInferenceMigrationPath = fileURLToPath(
     import.meta.url,
   ),
 );
+const correctedModelInferenceMigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20261013000000_correct_model_inference_snapshot_guard/migration.sql",
+    import.meta.url,
+  ),
+);
 
 function modelBlock(schema: string, modelName: string) {
   const match = schema.match(
@@ -33,7 +39,14 @@ function modelBlock(schema: string, modelName: string) {
 describe("APP-01 Prisma schema contract", () => {
   it("rejects incomplete inference snapshots without accepting SQL UNKNOWN", async () => {
     const migration = await readFile(modelInferenceMigrationPath, "utf8");
+    const correction = await readFile(
+      correctedModelInferenceMigrationPath,
+      "utf8",
+    );
     const snapshotCheck = migration.match(
+      /ADD CONSTRAINT "DecisionEvent_model_inference_snapshot_check" CHECK \(([\s\S]*?)\);/,
+    );
+    const correctedSnapshotCheck = correction.match(
       /ADD CONSTRAINT "DecisionEvent_model_inference_snapshot_check" CHECK \(([\s\S]*?)\);/,
     );
     const sourceCheck = migration.match(
@@ -52,6 +65,13 @@ describe("APP-01 Prisma schema contract", () => {
       /ADD CONSTRAINT "DecisionEvent_policyProbability_range_check" CHECK \((.*?)\);/,
     );
     expect(snapshotCheck).not.toBeNull();
+    expect(correctedSnapshotCheck).not.toBeNull();
+    expect(correctedSnapshotCheck![1].replace(/\s+/g, " ").trim()).toBe(
+      snapshotCheck![1].replace(/\s+/g, " ").trim(),
+    );
+    expect(correction).toContain(
+      'DROP CONSTRAINT "DecisionEvent_model_inference_snapshot_check"',
+    );
     expect(sourceCheck).not.toBeNull();
     expect(probabilityCheck).not.toBeNull();
 
@@ -69,13 +89,13 @@ describe("APP-01 Prisma schema contract", () => {
         "recommendation" TEXT,
         CHECK (${probabilityCheck![1]}),
         CHECK (${sourceCheck![1]}),
-        CHECK (${snapshotCheck![1]})
+        CHECK (${correctedSnapshotCheck![1]})
       )`);
       const insert = database.prepare(
         `INSERT INTO "DecisionEvent" VALUES (?, ?, ?, ?, ?, ?)`,
       );
       const evaluate =
-        database.prepare(`SELECT ${snapshotCheck![1]} AS allowed FROM (
+        database.prepare(`SELECT ${correctedSnapshotCheck![1]} AS allowed FROM (
         SELECT ? AS "policyProbabilitySource", ? AS "modelId", ? AS "modelVersion",
                ? AS "modelRunId", ? AS "policyProbability", ? AS "recommendation"
       )`);
@@ -94,6 +114,7 @@ describe("APP-01 Prisma schema contract", () => {
         ["MODEL_API_FALLBACK", null, null, null, null, "MANUAL_REVIEW"],
         ["LOCAL_DEMONSTRATION", null, null, null, 0.4, null],
         ["LOCAL_DEMONSTRATION", null, null, null, null, null],
+        ["MODEL_API", "model-2", "v2", "run-2", 0.9, "AUTO_PROCESS"],
       ];
       const invalid: AuditTuple[] = [
         [null, "model", null, null, null, null],
