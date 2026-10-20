@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   assertMigrationLedger,
   expectedMigrationChecksums,
@@ -16,6 +16,47 @@ const runner = resolve("scripts/test-integration.mjs");
 const manifest = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
+
+// Keep each owned child below Vitest's unchanged 5-second test budget. Await
+// both captured output and close, including after timeout or test cleanup.
+function startBoundedChild(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeout = 3000,
+) {
+  let complete!: (output: {
+    error: ExecFileException | null;
+    stdout: string;
+    stderr: string;
+  }) => void;
+  const output = new Promise<Parameters<typeof complete>[0]>((resolve) => {
+    complete = resolve;
+  });
+  const child = execFile(
+    process.execPath,
+    args,
+    { env, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 65536 },
+    (error, stdout, stderr) => complete({ error, stdout, stderr }),
+  );
+  const closed = new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) => {
+    child.once("close", (status, signal) => resolve({ status, signal }));
+  });
+  const result = Promise.all([output, closed]).then(([output, exit]) => ({
+    ...output,
+    ...exit,
+  }));
+  return {
+    result,
+    async stop() {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+      await result;
+    },
+  };
+}
 
 describe("integration gate entry point", () => {
   it("uses the repository-owned orchestrator and explicitly selects every PostgreSQL suite", () => {
@@ -35,47 +76,85 @@ describe("integration gate entry point", () => {
     }
   });
 
-  it("rejects preconfigured database URLs and arguments before any Docker operation", () => {
-    for (const [extra, args] of [
-      [
-        {
-          TEST_DATABASE_URL:
-            "postgresql://invoiceops:secret@localhost:5436/invoiceops_test",
-        },
-        [],
-      ],
-      [
-        {
-          DATABASE_URL:
-            "postgresql://invoiceops:secret@localhost:5432/invoiceops",
-        },
-        [],
-      ],
-      [
-        {},
-        [
-          "--database",
+  // Independent unsafe-input contracts each own exactly one subprocess and its
+  // cleanup; three synchronous launches no longer share one test's deadline.
+  it.each([
+    [
+      "TEST_DATABASE_URL",
+      {
+        TEST_DATABASE_URL:
           "postgresql://invoiceops:secret@localhost:5436/invoiceops_test",
-        ],
+      },
+      [],
+    ],
+    [
+      "DATABASE_URL",
+      {
+        DATABASE_URL:
+          "postgresql://invoiceops:secret@localhost:5432/invoiceops",
+      },
+      [],
+    ],
+    [
+      "--database arguments",
+      {},
+      [
+        "--database",
+        "postgresql://invoiceops:secret@localhost:5436/invoiceops_test",
       ],
-    ] as const) {
-      const env: NodeJS.ProcessEnv = { ...process.env, PATH: "" };
-      delete env.DATABASE_URL;
-      delete env.TEST_DATABASE_URL;
-      delete env.APP10_TEST_NAMESPACE;
-      Object.assign(env, extra);
-      const result = spawnSync(process.execPath, [runner, ...args], {
-        env,
-        encoding: "utf8",
-        timeout: 60_000,
+    ],
+  ] as const)(
+    "rejects %s before any Docker operation",
+    async (_name, extra, args) => {
+      const child = startBoundedChild([runner, ...args], {
+        PATH: "",
+        ...extra,
       });
+      onTestFinished(child.stop);
+      const result = await child.result;
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
+      expect(result.signal).toBeNull();
+      expect(result.error).toMatchObject({ code: 1, killed: false });
+      expect(result.stderr.trim()).toBe(
         "Integration gate rejects arguments and preconfigured database targets",
       );
       expect(result.stderr).not.toContain("secret");
+      expect(result.stdout).not.toContain("secret");
       expect(result.stdout).not.toContain("stage:");
-    }
+    },
+  );
+
+  it("kills and settles a timed-out owned child", async () => {
+    const child = startBoundedChild(
+      ["-e", "setInterval(() => {}, 1000)"],
+      { PATH: "" },
+      100,
+    );
+    onTestFinished(child.stop);
+    const result = await child.result;
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGKILL");
+    expect(result.error).toMatchObject({ killed: true });
+    await child.stop();
+  });
+
+  it("settles early cleanup without killing another case's child", async () => {
+    const first = startBoundedChild(["-e", "setInterval(() => {}, 1000)"], {
+      PATH: "",
+    });
+    const second = startBoundedChild(
+      ["-e", "process.stdout.write('independent-child')"],
+      { PATH: "" },
+    );
+    onTestFinished(first.stop);
+    onTestFinished(second.stop);
+    await first.stop();
+    expect((await first.result).signal).toBe("SIGKILL");
+    const result = await second.result;
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.error).toBeNull();
+    expect(result.stdout).toBe("independent-child");
   });
 });
 
