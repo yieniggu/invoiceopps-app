@@ -3,6 +3,172 @@
 Scaffold inicial de la aplicación InvoiceOps. Incluye un backend Express con
 TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
 
+## Aprovisionamiento académico de MLflow — MLFLOW-07
+
+**COMPLETED_LOCAL_VALIDATED (2026-10-20):** implementación local validada con
+PostgreSQL 16.9, MLflow 3.16.1, Prisma y HTTP real de `createApp`; los cinco
+criterios originales tienen respaldo independiente. MLflow: **7/9 (77.8%)**.
+La [evidencia y reproducción por etapas](apps/backend/test/runtime/MLFLOW07_PROOF.md)
+preserva los tres intentos fallidos y el PASS anterior, además del cierre fresco
+`147273ec3819672ab9fd67b6` y la preparación fallida `642a7929350b5bbeb94e3ce2`;
+no acredita el launcher
+`server.ts`, despliegue App ni preparación productiva.
+`POST /admin/mlflow/provision` requiere sesión válida, CSRF del backend y el
+administrador de **plataforma** vigente. Un `ADMIN` de organización no puede
+invocar esta operación. El JSON admite exclusivamente `organizationSlug` y el
+booleano obligatorio `dryRun`, sin normalizar el slug ni aceptar identidades,
+URLs o credenciales del solicitante. La autorización se vuelve a comprobar en
+PostgreSQL antes de consultar al proveedor.
+
+### Configuración explícita y credenciales nuevas
+
+La función está deshabilitada por defecto. La composición sólo admite
+`MLFLOW_PROVISION_MODE=local-development`, `NODE_ENV=development` y una URL HTTP
+en loopback literal (`127.0.0.1` o `[::1]`), sin path, usuario, query ni fragmento.
+No se permiten nombres DNS, redirects, HTTPS remoto ni habilitación implícita.
+Los nombres de configuración son:
+
+- `MLFLOW_PROVISION_URL`: origen local de MLflow.
+- `MLFLOW_PROVISION_USERNAME` y `MLFLOW_PROVISION_PASSWORD`: identidad
+  administrativa separada del lector `MLFLOW_READ_*`; no se amplían sus permisos.
+- `MLFLOW_PROVISION_SECRETS_FILE`: ruta absoluta y canónica a un archivo JSON
+  local **fuera del repositorio real**, preparado y entregado privadamente por
+  el operador. Sus claves son RUT normalizados y sus valores son contraseñas
+  aleatorias distintas de entre 12 y 256 caracteres, sin saltos de línea ni NUL.
+
+El archivo debe ser regular, del UID que ejecuta el backend, sin symlinks ni
+hardlinks, con permisos `0600` o más restrictivos (`0400` es válido), sin bits
+especiales ni acceso de grupo/otros. Máximo 64 KiB y 100 entradas. Se verifican
+identidad del descriptor y estabilidad del archivo; no se generan archivos ni
+credenciales y no existe fallback a `.env`. La aleatoriedad y entrega privada son
+responsabilidad del operador; la validación comprueba longitud y unicidad, no
+entropía. No incluir secretos en argv, logs, respuestas, notebooks ni Git.
+
+El backend sólo consulta este archivo si la ejecución real necesita crear
+cuentas. Deben estar disponibles **todas** sus credenciales antes de la primera
+mutación; de lo contrario se rechaza el plan completo. Las cuentas existentes
+se reutilizan sin leer su contraseña, resetearla ni cambiar `is_admin`. `dryRun`
+no lee el archivo ni realiza escrituras de proveedor o filesystem: informa de
+creaciones pendientes, pero no acredita disponibilidad de sus credenciales.
+
+### Namespace autoritativo, adopción y recursos
+
+El Workspace es exactamente `Organization.slug`. Dentro de ese Workspace,
+InvoiceOps administra todos los roles `group-<UUID>` y reserva exclusivamente
+`invoiceops-base`, `invoiceops-managers` e `invoiceops-owner-<User.id UUID>`.
+Los roles de MLflow se identifican por `(workspace, name)` y un ID propio: nunca
+se adopta ni modifica un rol de otro Workspace. El nombre define la adopción
+según política, **no prueba procedencia histórica**. Un rol manual coincidente
+será reconciliado, incluidos permisos incompatibles y asignaciones manuales.
+
+- Base: `(workspace, *, USE)` para miembros de la organización.
+- Gestores: `(workspace, *, MANAGE)` sólo para `ADMIN` de organización.
+- Propietario individual y grupo: `EDIT` únicamente sobre el ID exacto de su
+  Experiment y el nombre exacto de su Registered Model, nunca wildcard `EDIT`.
+- Experiments: `student/<RUT>/invoice-risk` y `group/<Group.id>/invoice-risk`.
+- Modelos: `student-<RUT>-invoice-review` y
+  `group-<Group.id>-invoice-review`, conforme a INT-02/ownership existente.
+
+Se crean o reutilizan esos recursos y roles; no se crean runs, versiones ni el
+modelo compartido `invoice-review-production`. No se inventa `created_by_rut`:
+los recursos nuevos sólo reciben organización, tipo e ID de propietario. Esto
+no simula actividad académica ni satisface por sí solo los filtros de lectura
+que requieran creador real. No se borran recursos ni roles cuando desaparece su
+propietario: se retiran permisos/asignaciones administradas obsoletas. Una baja
+o degradación de rol se refleja en la siguiente ejecución satisfactoria.
+
+Se preservan roles independientes, grants directos, administradores globales y
+otros Workspaces. Las asignaciones ya existentes de administradores globales
+quedan exceptuadas de la revocación. Los permisos efectivos se acumulan: esta
+reconciliación **no elimina accesos independientes** ni convierte el Workspace
+en una frontera exclusiva. `USE` conserva la capacidad nativa de crear recursos.
+
+### Límites, fallos y operación
+
+Una ejecución síncrona por proceso; una solicitud por organización/minuto,
+incluido dry-run. `409 BUSY` indica ejecución activa y `429 RATE` límite de tasa.
+No se admite operación con réplicas ni escritores de provisioning concurrentes.
+Si una operación local no cancelable sigue pendiente al vencer el plazo, el
+proceso conserva el bloqueo hasta que termine; si no termina, queda fail-closed.
+No se añaden infraestructura, dependencias, migraciones ni tablas de ownership.
+
+Límites: 60 s globales; 5 s por llamada; 100 usuarios, 50 grupos, 1000
+asignaciones y 2000 llamadas de proveedor. El inventario global de usuarios
+tiene también un máximo conservador de 100, incluidos usuarios ajenos y la
+cuenta técnica. Los roles existentes y deseados de propietarios/grupos,
+incluidos los obsoletos, cuentan para sus límites; máximo 152 roles listados en
+el Workspace, 1000 permisos administrados y 1 MiB por respuesta. El archivo de
+credenciales y las consultas académicas también están acotados. Inventarios
+incompletos, paginados inesperadamente, identidades duplicadas o fuera de scope
+se rechazan, sin tomar una primera página como inventario completo. Instalaciones
+mayores pueden ser rechazadas de forma conservadora, no reconciliadas a medias.
+
+El plan completo y su presupuesto de llamadas se validan antes de escribir.
+La fuente académica se comprueba antes de la primera mutación y de cada grant,
+asignación, revocación y retirada. Un cambio detectado detiene con `SOURCE_CHANGED`,
+conservando contadores confirmados y efectos desconocidos separados. Las lecturas
+se acotan a dos snapshots más uno por cambio de privilegio planificado, con consultas
+y deadline limitados. No se mantiene una transacción de DB durante llamadas al
+proveedor: persiste TOCTOU entre comprobación y escritura, sin transacción distribuida.
+
+La regex anclada compartida por ruta y error cubre forma canónica, slash final y
+mayúsculas/mixtas: JSON malformado/sobredimensionado devuelve 400 seguro y dependencia
+503 no filtra detalles; la autorización no cambia. El lector de secretos intenta
+borrar buffers en todas las salidas y cerrar el descriptor incluso si falla el
+borrado. No se garantiza borrar strings inmutables de memoria.
+
+`200` sólo significa dry-run completo o ejecución completa. Los errores usan
+categorías estables (`INPUT`, `LIMIT`, `DISABLED`, `CREDENTIALS`,
+`INVALID_PROVIDER`, `SOURCE_CHANGED`, `DEPENDENCY`, `DEADLINE`, entre otras),
+sin mensajes crudos del proveedor. Un fallo de dependencia devuelve `502/503`,
+incluye contadores agregados de efectos confirmados y `unknownEffects` separado;
+una mutación interrumpida o una respuesta inválida **no cuenta como confirmada**.
+No hay retry ciego, rollback automático ni atomicidad. No se exponen RUT,
+contraseñas, hashes, URLs de proveedor ni IDs de entidades en resúmenes/logs;
+la correlación es un UUID aleatorio independiente.
+
+Tras un resultado parcial, el operador debe auditar privadamente los efectos
+confirmados y desconocidos antes de decidir una nueva ejecución. Deshabilitar la
+configuración y reiniciar el backend detiene futuras solicitudes, pero no
+revierte efectos ya aplicados o pendientes en el proveedor. Restauración de
+metadata/autorización requiere su procedimiento y autorización separados.
+
+### Evidencia offline, runtime y límites de verificación
+
+Las suites `mlflow-provision*.test.ts` y `mlflow-admin-client.test.ts` ejercitan
+el endpoint real con sesiones sintéticas, el plan, reconciliación
+crear/repetir/revocar, aislamiento, fallos parciales, límites, timeouts y archivos
+temporales sintéticos con cleanup. No usan credenciales reales ni un proveedor
+o PostgreSQL real. Ese hito offline fue seguido por la prueba operacional local:
+creación/repetición/revocación, aislamiento, preservación de contraseñas y grants
+independientes, dry-run y controles HTTP, con **957 assertions** en cuatro fases
+(incluyen chunks de cuerpos, no 957 tests independientes). Guardas independientes
+frescas finales: **16 + 3 + 13 PASS**. Véase el informe enlazado para contadores y limpieza;
+la prueba usa conexiones frescas y no acredita resiliencia del pool productivo.
+
+Contratos inspeccionados: `mlflow/server/auth/{routes.py,client.py,entities.py,
+db/models.py,sqlalchemy_store.py}` y `mlflow/store/workspace/rest_store.py` en
+el SDK/servidor instalado 3.16.0. Roles RBAC y Workspaces usan API v3; usuarios,
+Experiments y Registered Models usan API v2. El requisito mínimo de contraseña
+se confirmó además contra el tag exacto
+[`v3.16.1`, `utils/validation.py`](https://github.com/mlflow/mlflow/blob/v3.16.1/mlflow/utils/validation.py).
+La inspección estática por sí sola no acredita compatibilidad live; la prueba
+posterior sólo valida las rutas y permisos ejercitados localmente en 3.16.1.
+Remoto, réplicas, launcher productivo y carrera adversarial real del filesystem
+siguen **NOT_VERIFIED**. No se repitieron servicios ni suites en este cierre
+documental; MLFLOW-06/08 y las dependencias App/Stack siguen pendientes.
+
+**Últimos gates recibidos:** backend 343/343, 34 archivos, 4.563 s en una corrida
+final fresca sin dotenv (`envDir: false` externo); focalizadas 66/66, 595 ms;
+tipos producción/pruebas, generación y build backend con emisión después de CR-019,
+lint raíz y formato dirigido PASS. Frontend conserva PASS anterior, no repetido.
+El [ledger final de ocho hallazgos](../dev/tickets/Implementado.md#cierre-final-de-remediación-local--cr-013-a-cr-019-y-cr-030-2026-10-20)
+registra revisiones independientes y límites: CR-017 mitigado sin causa histórica
+demostrada; CR-013 verificado con reloj virtual, no 1800 s de runtime real.
+La preparación de imágenes requiere `prepare-images --allow-downloads CHECKPOINT_ID`
+con autorización separada; `start` sólo admite cinco IDs locales verificados y
+`up --no-build --pull never`, sin preparación ni fallback de red automáticos.
+
 ## Requisitos
 
 - Node.js 24 o superior.

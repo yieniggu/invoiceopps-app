@@ -9,6 +9,13 @@ import { createResourceService } from "./resources.js";
 import { createPlatformAdministratorService } from "./platform-administrator.js";
 import { createMlflowReadClient } from "./mlflow-read-client.js";
 import { createMlflowResourceService } from "./mlflow-resources.js";
+import { fileURLToPath } from "node:url";
+import { createMlflowAdminClient } from "./mlflow-admin-client.js";
+import {
+  createAcademicSnapshotReader,
+  createMlflowProvisionService,
+} from "./mlflow-provision.js";
+import { loadProvisionSecrets } from "./mlflow-provision-secrets.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const modelApiUrl = process.env.MODEL_API_URL;
@@ -33,6 +40,19 @@ const mlflowClient = mlflowConfig.every(Boolean)
       password: mlflowConfig[3]!,
     })
   : undefined;
+// Privileged provisioning is explicit, local-only and independent of the reader.
+const provisionEnabled =
+  process.env.MLFLOW_PROVISION_MODE === "local-development";
+const provisionClient = provisionEnabled
+  ? createMlflowAdminClient({
+      mode: process.env.MLFLOW_PROVISION_MODE!,
+      nodeEnv: process.env.NODE_ENV ?? "",
+      baseUrl: process.env.MLFLOW_PROVISION_URL ?? "",
+      username: process.env.MLFLOW_PROVISION_USERNAME ?? "",
+      password: process.env.MLFLOW_PROVISION_PASSWORD ?? "",
+    })
+  : undefined;
+const provisionRepoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const app = createApp(database, createAuthService(database.prisma), {
   groups: createGroupService(database.prisma),
   invoices: createInvoiceService(
@@ -49,6 +69,16 @@ const app = createApp(database, createAuthService(database.prisma), {
     mlflowClient?.uiOrigin,
   ),
   platformAdministrators: createPlatformAdministratorService(database.prisma),
+  mlflowProvision: createMlflowProvisionService({
+    client: provisionClient,
+    snapshot: createAcademicSnapshotReader(database.prisma),
+    credentials: (usernames) =>
+      loadProvisionSecrets(
+        process.env.MLFLOW_PROVISION_SECRETS_FILE ?? "",
+        provisionRepoRoot,
+        usernames,
+      ),
+  }),
 });
 
 app.listen(port, () => {

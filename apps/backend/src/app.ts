@@ -18,10 +18,17 @@ import { OrganizationRole } from "./generated/prisma/client.js";
 import type { PlatformAdministratorService } from "./platform-administrator.js";
 import type { MlflowResourceService } from "./mlflow-resources.js";
 import { MlflowReadError, withMlflowDeadline } from "./mlflow-read-client.js";
+import {
+  parseProvisionInput,
+  type MlflowProvisionService,
+} from "./mlflow-provision.js";
+import { ProvisionError } from "./mlflow-provision-plan.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const UNKNOWN_CLIENT_IP = "unknown";
+// Share the route's accepted aliases with pre-handler parser error handling.
+const MLFLOW_PROVISION_PATH = /^\/admin\/mlflow\/provision\/?$/i;
 
 function sessionTokenFromCookie(header: string | undefined) {
   if (!header) {
@@ -282,6 +289,7 @@ export interface AppOptions {
   resources?: ResourceService;
   mlflowResources?: MlflowResourceService;
   platformAdministrators?: PlatformAdministratorService;
+  mlflowProvision?: MlflowProvisionService;
 }
 
 export function createApp(
@@ -295,6 +303,7 @@ export function createApp(
     resources,
     mlflowResources,
     platformAdministrators,
+    mlflowProvision,
   }: AppOptions = {},
 ) {
   const app = express();
@@ -321,6 +330,29 @@ export function createApp(
 
   app.get("/health/live", (_request, response) => {
     response.status(200).json({ status: "ok" });
+  });
+
+  app.post(MLFLOW_PROVISION_PATH, async (request, response) => {
+    const token = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !token) throw new AuthError(401, "Unauthorized");
+    const profile = await auth.getProfile(token);
+    if (!profile.isPlatformAdministrator) throw new AuthError(403, "Forbidden");
+    const input = parseProvisionInput(request.body);
+    if (!request.is("application/json")) throw new ProvisionError(400, "INPUT");
+    if (!mlflowProvision) throw new ProvisionError(503, "DISABLED");
+    const result = await mlflowProvision.provision(profile.id, input);
+    if (result.httpStatus >= 400)
+      console.warn(
+        JSON.stringify({
+          feature: "mlflow-provision",
+          outcome: result.body.status,
+          code: result.body.code,
+          correlationId: result.body.correlationId,
+          confirmed: result.body.confirmed,
+          unknownEffects: result.body.unknownEffects,
+        }),
+      );
+    response.status(result.httpStatus).json(result.body);
   });
 
   app.get("/health/ready", async (_request, response) => {
@@ -742,7 +774,7 @@ export function createApp(
 
   const errorHandler: ErrorRequestHandler = (
     error,
-    _request,
+    request,
     response,
     _next,
   ) => {
@@ -756,6 +788,10 @@ export function createApp(
         }),
       );
       response.status(500).json({ status: "error" });
+      return;
+    }
+    if (error instanceof ProvisionError) {
+      response.status(error.status).json({ status: "error", code: error.code });
       return;
     }
     if (error instanceof AuthError) {
@@ -785,6 +821,14 @@ export function createApp(
       return;
     }
 
+    if (MLFLOW_PROVISION_PATH.test(request.path)) {
+      const status: unknown = (error as { status?: unknown })?.status;
+      response.status(status === 400 || status === 413 ? 400 : 503).json({
+        status: "error",
+        code: status === 400 || status === 413 ? "INPUT" : "DEPENDENCY",
+      });
+      return;
+    }
     console.error("Unhandled request error", error);
     response.status(500).json({ status: "error" });
   };
