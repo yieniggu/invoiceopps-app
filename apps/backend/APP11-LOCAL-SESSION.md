@@ -1,5 +1,11 @@
 # APP-11 local session and database selection
 
+> **Snapshot notice (2026-10-21):** the 2026-10-13 state and pending-testnet
+> disposition below are historical, superseded for current APP-11 status by
+> [Current disposition](APP11-CR004-READINESS.md#current-disposition).
+> Current runtime, database, and session readiness still require local checks;
+> this snapshot does not establish that a session remains valid or authorize operations.
+
 This document tracks local database and session readiness only. It does **not** claim APP-11 backend anchoring, reconciliation, testnet execution, or overall completion.
 
 ## Current verified local state — 2026-10-13
