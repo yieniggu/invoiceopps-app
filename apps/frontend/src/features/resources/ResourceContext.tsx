@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "./Button";
-import { MlflowResources } from "./MlflowResources";
+import { MlflowResources, type MlflowContext } from "./MlflowResources";
+import { referenceType } from "./mlflowPresentation";
+import { contextValue, useWorkspace } from "../workspace/WorkspaceContext";
+import { useUnauthorized } from "../auth/ProtectedSession";
 import "./tailwind.css";
 
 type Profile = {
@@ -18,14 +21,6 @@ type Group = {
   organization: { id: string; name: string };
 };
 
-type OwnerContext = {
-  organizationId: string;
-  organizationName: string;
-  ownerType: "user" | "group";
-  ownerId: string;
-  ownerName: string;
-};
-
 type Resource = {
   id: string;
   type: string;
@@ -34,31 +29,8 @@ type Resource = {
 
 type ResourcesState =
   | { kind: "loading" }
-  | { kind: "error" }
+  | { kind: "error"; status?: number }
   | { kind: "loaded"; resources: Resource[] };
-
-function availableContexts(profile: Profile, groups: Group[]): OwnerContext[] {
-  const individualContexts = profile.memberships.map(({ organization }) => ({
-    organizationId: organization.id,
-    organizationName: organization.name,
-    ownerType: "user" as const,
-    ownerId: profile.id,
-    ownerName: "Trabajo individual",
-  }));
-  const groupContexts = groups.map((group) => ({
-    organizationId: group.organization.id,
-    organizationName: group.organization.name,
-    ownerType: "group" as const,
-    ownerId: group.id,
-    ownerName: group.name,
-  }));
-
-  return [...individualContexts, ...groupContexts];
-}
-
-function contextValue(context: OwnerContext) {
-  return `${context.ownerType}:${context.ownerId}:${context.organizationId}`;
-}
 
 export function ResourceContext({
   profile,
@@ -67,53 +39,21 @@ export function ResourceContext({
   profile: Profile;
   groups: Group[];
 }) {
-  const contexts = availableContexts(profile, groups);
-  const [selectedValue, setSelectedValue] = useState(() =>
-    contexts[0] ? contextValue(contexts[0]) : "",
-  );
-  const [reloadKey, setReloadKey] = useState(0);
-  const selectedContext = contexts.find(
-    (context) => contextValue(context) === selectedValue,
-  );
-  const [state, setState] = useState<ResourcesState>({ kind: "loading" });
-
-  useEffect(() => {
-    if (!selectedContext) {
-      setState({ kind: "loaded", resources: [] });
-      return;
-    }
-
-    let cancelled = false;
-    setState({ kind: "loading" });
-    const query = new URLSearchParams({
-      organizationId: selectedContext.organizationId,
-      ownerType: selectedContext.ownerType,
-      ownerId: selectedContext.ownerId,
-    });
-
-    void fetch(`/resources?${query}`, { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error("Resource request failed");
-        }
-
-        return (await response.json()) as { resources: Resource[] };
-      })
-      .then(({ resources }) => {
-        if (!cancelled) {
-          setState({ kind: "loaded", resources });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setState({ kind: "error" });
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey, selectedValue]);
+  const {
+    contexts,
+    selectedValue,
+    setSelectedValue,
+    selectedContext,
+    ownerSelectorRef,
+  } = useWorkspace(profile, groups);
+  const unauthorized = useUnauthorized();
+  const [expired, setExpired] = useState(false);
+  const expire = useCallback(() => {
+    setExpired(true);
+    unauthorized();
+  }, [unauthorized]);
+  if (expired)
+    return <p role="alert">La sesión expiró. Inicia sesión nuevamente.</p>;
 
   if (contexts.length === 0) {
     return (
@@ -127,7 +67,7 @@ export function ResourceContext({
   return (
     <section
       aria-labelledby="resources-title"
-      className="space-y-4 border-slate-200 bg-slate-50/70"
+      className="workspace-content space-y-4 border-slate-200 bg-slate-50/70"
     >
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 id="resources-title">Recursos</h2>
@@ -143,10 +83,14 @@ export function ResourceContext({
       <label>
         Propietario
         <select
+          ref={ownerSelectorRef}
           className="w-full border-slate-300 bg-white text-slate-900 sm:max-w-md"
           value={selectedValue}
           onChange={(event) => setSelectedValue(event.target.value)}
         >
+          <option value="" disabled>
+            Selecciona un propietario
+          </option>
           {contexts.map((context) => (
             <option key={contextValue(context)} value={contextValue(context)}>
               {context.organizationName} ·{" "}
@@ -157,12 +101,95 @@ export function ResourceContext({
           ))}
         </select>
       </label>
+      {selectedContext ? (
+        <ResourceReferences
+          key={`references:${selectedValue}`}
+          context={selectedContext}
+          onUnauthorized={expire}
+        />
+      ) : (
+        <p>Selecciona un propietario autorizado para consultar recursos.</p>
+      )}
+      {selectedContext ? (
+        <MlflowResources
+          onUnauthorized={expire}
+          key={selectedValue}
+          context={{
+            organizationId: selectedContext.organizationId,
+            ownerType: selectedContext.ownerType,
+            ownerId: selectedContext.ownerId,
+          }}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ResourceReferences({
+  context,
+  onUnauthorized,
+}: {
+  context: MlflowContext;
+  onUnauthorized: () => void;
+}) {
+  const [reloadKey, setReloadKey] = useState(0);
+  const [state, setState] = useState<ResourcesState>({ kind: "loading" });
+  const { organizationId, ownerType, ownerId } = context;
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setState({ kind: "loading" });
+    const query = new URLSearchParams({ organizationId, ownerType, ownerId });
+    void fetch(`/resources?${query}`, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!active) return;
+        if (response.status === 401) {
+          active = false;
+          onUnauthorized();
+          return;
+        }
+        if (!response.ok) {
+          setState({ kind: "error", status: response.status });
+          return;
+        }
+        const result = (await response.json()) as { resources: Resource[] };
+        if (active) setState({ kind: "loaded", resources: result.resources });
+      })
+      .catch(() => {
+        if (active) setState({ kind: "error" });
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [organizationId, ownerType, ownerId, reloadKey, onUnauthorized]);
+  return (
+    <section aria-labelledby="resource-references-title">
+      <h3 id="resource-references-title">Referencias de navegación</h3>
+      <p>
+        Fuente: referencias registradas en InvoiceOps. Son solo metadatos de
+        navegación, no artefactos copiados, entrenamientos ni confirmación de
+        disponibilidad en MLflow. La API no proporciona enlaces para estas
+        referencias.
+      </p>
       {state.kind === "loading" ? (
         <p role="status">Cargando recursos...</p>
       ) : null}
       {state.kind === "error" ? (
         <>
-          <p role="alert">No fue posible cargar los recursos.</p>
+          <p role="alert">
+            <span>No fue posible cargar los recursos.</span>{" "}
+            {state.status === 403 || state.status === 404 ? (
+              <span>
+                {state.status === 403
+                  ? "No tienes acceso a las referencias de este contexto."
+                  : "Las referencias no están disponibles para este contexto."}
+              </span>
+            ) : null}
+          </p>
           <Button
             type="button"
             onClick={() => setReloadKey((value) => value + 1)}
@@ -171,31 +198,19 @@ export function ResourceContext({
           </Button>
         </>
       ) : null}
-      {state.kind === "loaded" && state.resources.length === 0 ? (
-        <p>No hay recursos para este propietario.</p>
-      ) : null}
-      {state.kind === "loaded" && state.resources.length > 0 ? (
-        <ul className="grid gap-2 sm:grid-cols-2">
-          {state.resources.map((resource) => (
-            <li
-              key={resource.id}
-              className="rounded-md border border-slate-200 bg-white px-3 py-2"
-            >
-              <strong className="block text-slate-950">{resource.label}</strong>{" "}
-              <span className="text-sm text-slate-600">({resource.type})</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {selectedContext ? (
-        <MlflowResources
-          key={selectedValue}
-          context={{
-            organizationId: selectedContext.organizationId,
-            ownerType: selectedContext.ownerType,
-            ownerId: selectedContext.ownerId,
-          }}
-        />
+      {state.kind === "loaded" ? (
+        state.resources.length ? (
+          <ul className="card-list">
+            {state.resources.map((resource) => (
+              <li key={resource.id} className="context-card">
+                <strong>{resource.label}</strong>
+                <span>{referenceType(resource.type)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No hay recursos para este propietario.</p>
+        )
       ) : null}
     </section>
   );

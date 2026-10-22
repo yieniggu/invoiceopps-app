@@ -7,6 +7,11 @@ import { AuthError } from "./auth.js";
 
 export interface GroupService {
   listGroups(userId: string): Promise<GroupResponse[]>;
+  listOrganizationGroups(
+    userId: string,
+    organizationId: string,
+    page: GroupPage,
+  ): Promise<GroupCatalogPage>;
   createGroup(
     userId: string,
     organizationId: string,
@@ -35,6 +40,39 @@ export interface GroupService {
     groupId: string,
     memberId: string,
   ): Promise<void>;
+}
+
+export interface GroupPage {
+  limit: number;
+  cursor?: string;
+}
+export interface GroupCatalogPage {
+  groups: Array<Omit<GroupResponse, "members">>;
+  nextCursor: string | null;
+}
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function parseGroupPage(
+  organizationId: string,
+  query: Record<string, unknown>,
+): GroupPage {
+  if (
+    !uuid.test(organizationId) ||
+    Object.keys(query).some((key) => key !== "limit" && key !== "cursor") ||
+    (query.limit !== undefined &&
+      (typeof query.limit !== "string" ||
+        !/^[1-9]\d{0,2}$/.test(query.limit) ||
+        Number(query.limit) > 100)) ||
+    (query.cursor !== undefined &&
+      (typeof query.cursor !== "string" || !uuid.test(query.cursor)))
+  ) {
+    throw new AuthError(400, "Invalid group catalog page");
+  }
+  return {
+    limit: query.limit === undefined ? 50 : Number(query.limit),
+    ...(typeof query.cursor === "string"
+      ? { cursor: query.cursor.toLowerCase() }
+      : {}),
+  };
 }
 
 export interface GroupInput {
@@ -129,6 +167,49 @@ export function createGroupService(prisma: PrismaClient): GroupService {
   }
 
   return {
+    async listOrganizationGroups(userId, organizationId, page) {
+      await requireAdmin(userId, organizationId);
+      const organization = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true },
+      });
+      if (!organization) throw groupNotFound();
+      if (!Number.isInteger(page.limit) || page.limit < 1 || page.limit > 100)
+        throw new AuthError(400, "Invalid group catalog page");
+      const cursor = page.cursor
+        ? await prisma.group.findFirst({
+            where: { id: page.cursor, organizationId },
+            select: { name: true, id: true },
+          })
+        : null;
+      if (page.cursor && !cursor) throw groupNotFound();
+      const rows = await prisma.group.findMany({
+        where: {
+          organizationId,
+          ...(cursor
+            ? {
+                OR: [
+                  { name: { gt: cursor.name } },
+                  { name: cursor.name, id: { gt: cursor.id } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        take: page.limit + 1,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          organization: { select: { id: true, name: true } },
+        },
+      });
+      const groups = rows.slice(0, page.limit);
+      return {
+        groups,
+        nextCursor: rows.length > page.limit ? groups.at(-1)!.id : null,
+      };
+    },
     async listGroups(userId) {
       const groups = await prisma.group.findMany({
         where: { memberships: { some: { userId } } },

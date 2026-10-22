@@ -1,7 +1,218 @@
 # InvoiceOps App
 
-Scaffold inicial de la aplicación InvoiceOps. Incluye un backend Express con
-TypeScript, un frontend React con Vite y PostgreSQL para desarrollo local.
+## Remediación FULLAPP12 — CR009, CR010 y CR011
+
+**CR009, CR010 y CR011: RESOLVED_LOCAL_VERIFIED (2026-10-22).** Cierre acotado de
+los tres hallazgos con inspección interna independiente, pruebas y QA nativa
+recibida sobre la fuente congelada actual de **61 archivos**, fingerprint `d45...`.
+No es una revisión formal nueva, aprobación humana ni certificación productiva.
+Frontend final **335/335**; 330/330 queda histórico. Backend **94/94** y SQL **74/74**
+se reutilizan porque backend/API/schema no cambiaron tras el último delta frontend;
+no son ejecuciones nuevas de este cierre documental. El cierre S8 y sus 65 layouts
+son históricos, no prueba de estos bytes. App sigue **14/15**, sin crédito adicional
+por APP-12; **APP-13 no iniciado**. CR001–CR008 y CR005 humano solo para S1 intactos.
+
+- **CR009:** PATCH solo fusiona `email`/`username` confirmados del mismo actor,
+  nunca roles ni membresías. Las lecturas de capacidades usan una revisión
+  monotónica separada del epoch. Un refresco administrativo conserva el borrador
+  de contacto y los ledgers Policy/Invoice/Admin.
+- **CR010:** un ADMIN organizacional elige una organización en **Mis grupos →
+  Catálogo administrativo de grupos** y gestiona grupos sin ser integrante. Carga
+  diferida/paginada, cinco mutadores existentes, integrantes no consultados
+  indicados expresamente y control por UUID existente, sin directorio personal.
+  El catálogo nunca aporta propietarios a Workspace; los solapamientos se deduplican.
+- **CR011:** lock sincrónico por destino; creación incierta bloquea nuevas creaciones
+  en esa organización. Red/5xx requieren verificación operativa, no reenvío. Una
+  lista o nombre coincidente no confirma la creación. 4xx permite corregir; 2xx
+  conserva confirmación aunque falle el refresco y habilita solo reintentar lecturas.
+  DELETE204 no se interpreta como JSON. El ledger conserva intención/cuerpo y
+  bloqueos al navegar/logout fallido; nueva sesión lo limpia y aísla callbacks viejos.
+  Un único helper recorta espacios del UUID de integrante antes de construir
+  cuerpo, ruta y clave ADD/REMOVE, conservando el borrador escrito y las
+  mayúsculas/minúsculas. La solicitud usa la intención canónica del ledger.
+  Dos integrantes distintos conservan alertas independientes con clave React
+  única y UUID visible; las lecturas de catálogo/MyGroups no liberan unknown.
+
+### Evidencia de cierre y alcance
+
+El coordinador aportó Chrome **155** → Nginx **1.27.5** → Node **24.21.0** →
+PostgreSQL propio **17.11**, con 13 migraciones, auth/dominio/SQL nativos. Solo las
+fronteras Model API/MLflow se sustituyeron y no se usaron en estos flujos:
+
+- **CR009:** PATCH real confirmado en SQL, cuerpo ADMIN antiguo retenido antes
+  de consumirlo en JS, autorretirada organizacional y liberación del cuerpo sin
+  restaurar membresías/roles. Recursos/Evidencia no enviaron consultas privadas.
+- **CR010:** ADMIN organizacional no integrante y no plataforma ejercitó los cinco
+  mutadores nativos y sus resultados SQL; autorretirarse del grupo conservó su
+  administración en catálogo, no un owner de Workspace. Consulta privada forzada
+  denegada 404; privacidad/paginación y casos de rol cubiertos también por SQL74.
+- **CR011:** commit real seguido de pérdida de headers sin POST duplicado tras
+  navegar/consultar y logout503 interceptado antes de revocar la sesión. Dos
+  integrantes distintos se confirmaron una vez cada uno; alias con espacios y
+  DELETE del roster quedaron bloqueados, con dos alertas UUID independientes.
+
+Se conservan dos fallos del arnés: esperar ADD habilitado tras remount con campo
+vacío y exigir DPR absoluto 2 cuando el zoom nativo produjo DPR4. La continuación
+cierra los flujos funcionales; un suplemento **solo geométrico**, HTTP sintético
+DIRECT loopback, acredita zoom relativo 200% en dos anchos lógicos (1280→640 y
+768→384 CSS, DPR2→4, CSS zoom1), no nueva prueba de auth/SQL. Layout recibido:
+6 perfil/confirmación al 100% + 3 grupos al 100% + 2 grupos al 200%; no una matriz
+global única ni los 65 casos S8 repetidos. Teclado Enter/Tab con foco inicial DOM;
+sin certificación de lector de pantalla, popup nativo ni nueva comparación V1.
+
+Gates conservados: focal **112/112**, tipos/lint/build Vite sin envDir/formato/diff
+PASS; spot independiente **14/14 en 2.34 s**, subconjunto de 335, y cuatro configs
+tsc de paquete PASS. SQL74 son ocho suites reales (71 previas + tres de catálogo),
+mediante adaptador de `spawn` hacia herramientas instaladas, no pnpm ni SQL simulado.
+Cada fase nativa verificó cleanup **5/5** (tres contenedores/dos redes) y Chrome0;
+el suplemento geométrico creó cero recursos Docker y cerró Chrome/servidor.
+Este escritor solo concilia documentos y comprueba hashes/formato/diff, sin replay.
+
+El ledger solo vive en memoria: recargar pierde la protección, **no** cancela
+efectos ni proporciona idempotencia del servidor. Logout legítimo sigue disponible.
+
+### Catálogo: contrato mínimo
+
+`GET /organizations/:organizationId/groups?limit=50&cursor=<group-uuid>` requiere
+sesión y ADMIN vigente de esa organización o singleton plataforma. `limit` escalar
+entero **1–100**, default **50**; IDs/cursor UUID, sin duplicados/objetos/campos
+desconocidos. Orden `name,id`, cursor ligado a organización. DTO
+`{groups:[{id,name,description,organization:{id,name}}],nextCursor:string|null}`,
+`Cache-Control: no-store`, sin integrantes/RUT/email. Sesión ausente 401, estudiante
+403, organización inaccesible/inexistente/cursor ajeno 404, entrada inválida 400.
+`GET /groups` sigue **solo mis membresías**, única fuente de grupos de Workspace.
+Sin schema, índices, migraciones, dependencias ni ampliación de proxy.
+
+El [registro de remediación](../dev/tickets/Implementado.md#fullapp12--remediación-cr009-cr010-y-cr011)
+conserva RED/GREEN, fallos de arnés, procedencia SQL/nativa, fingerprint y hashes
+intactos. No acredita launcher/build de imagen oficial, CI, TLS, despliegue,
+proveedores vivos ni cadena. Sin commit, push ni nuevo trabajo funcional.
+
+Aplicación académica InvoiceOps: backend Express con TypeScript, frontend React
+con Vite y PostgreSQL. APP-12 está **CLOSED / COMPLETED_LOCAL_VALIDATED** en su
+contrato de interfaz aprobado; esto no implica despliegue ni cierre de APP-13.
+
+## Interfaz en español — APP-12 / S8
+
+**Estado: CLOSED / COMPLETED_LOCAL_VALIDATED (2026-10-22). S1–S8 completos en
+alcance local.** Las doce superficies y los cinco criterios originales tienen
+evidencia de fuente, automatización, recorrido nativo y comparación visual V1/V2.
+El [cierre global y sus límites](../dev/tickets/Implementado.md#app12s8--cierre-global-local-validado-2026-10-22)
+es la referencia autoritativa; los hitos anteriores conservan su procedencia.
+
+La prueba local ejercitó Chrome 155 → Nginx **1.27.5** → Node **24.21.0** →
+PostgreSQL **17.11** con Prisma y las 13 migraciones existentes, en recursos propios
+aislados. Auth, autorización y servicios de dominio fueron nativos; solo Model API
+y el lector MLflow externos se sustituyeron. Nginx usó la configuración exacta del
+repositorio y los assets congelados. Hubo **65/65 observaciones de layout en dos
+tramos**, cubriendo doce grupos de superficies más signup, y un suplemento dirigido
+**4/4 PASS**; no fue una única ejecución global sin fallos. Los tres fallos de
+assertions del arnés anterior se conservan junto con su explicación y prueba posterior.
+
+El tag `node:24-alpine` no estaba disponible: se utilizó Node 24.21.0 de una imagen
+backend del mismo proyecto ya cacheada, con módulos/dependencias actuales montados
+en solo lectura, sin ejecutar el launcher antiguo. Esto acredita composición nativa
+local, **no** build de la imagen oficial, bootstrap productivo, CI, TLS, despliegue
+ni proveedores ML reales. Esos alcances no se certifican con APP-12.
+
+La comparación con plantillas/CSS reales de V1 respalda mejoras de orientación,
+español, contexto y explicación de estados. V1 ya tenía responsive, foco y tablas
+con scroll. Como mejora opcional no bloqueante queda reducir la densidad de la
+navegación móvil y la repetición de contexto, preservando teclado y estado activo;
+no se implementa aquí. No se afirma aprobación estética humana, certificación WCAG,
+lector de pantalla real ni compatibilidad funcional completa del backend V1.
+
+### Recorrido de trabajo
+
+1. Usa **Crear cuenta** con nombre, RUT y contraseña de al menos 12 caracteres;
+   después **Iniciar sesión**. Registrar una cuenta no inicia sesión ni concede
+   una organización. La sesión usa una cookie; no copies tokens al navegador.
+2. En **Mi perfil**, consulta identidad y membresías y guarda correo electrónico
+   o nombre de usuario. Nombre, RUT y roles no se editan allí.
+3. En **Organizaciones**, elige una membresía vigente; en **Mis grupos**, usa
+   **Trabajar con…** para seleccionar un grupo al que perteneces. El resumen de
+   organización/propietario permanece visible al navegar. Si el acceso se revoca,
+   no se elige otro propietario automáticamente.
+4. Desde **Panel principal**, abre el trabajo deseado. El panel muestra contexto
+   y accesos, no totales financieros o métricas que la API no ofrece.
+5. En **Facturas**, busca por ID/proveedor y carga más resultados explícitamente.
+   **Ver…** abre el **detalle de factura**, sus hechos, riesgo y auditoría.
+   **Evaluación ML** permite aplicar Regla v1 o una versión existente de política:
+   la acción decide y persiste en el servidor, no es una simulación.
+6. En **Políticas**, consulta versiones/umbrales del mismo propietario. El dueño
+   individual puede crear/editar; las políticas grupales requieren ADMIN de esa
+   organización. Una probabilidad mayor o igual al umbral deriva a revisión manual.
+   Escribe la versión elegida en Evaluación ML; no se aplica automáticamente.
+7. En **Recursos**, distingue referencias de InvoiceOps de metadatos de MLflow.
+   Los enlaces abren otra aplicación con autenticación independiente. Nombres,
+   IDs y versiones reales se conservan; aliases, estados, métricas, parámetros y
+   etiquetas no están expuestos por el DTO actual y no se inventan.
+8. En **Evidencia y lotes**, filtra registros por UUID, abre un detalle o lote y
+   solicita la prueba de un miembro. Es solo lectura: no crea lotes, firma,
+   transmite ni consulta blockchain. La integridad se verifica en el servidor;
+   no es criptografía independiente del navegador ni acredita finalidad.
+9. **Administración** aparece solo para administradores de organización o
+   plataforma. El primero gestiona grupos desde Mis grupos; solo plataforma
+   gestiona membresías organizacionales con UUID de usuario existente y
+   confirmación explícita. No hay directorio, búsqueda de usuarios, CRUD de
+   organizaciones/usuarios, bootstrap ni transferencia de administrador global.
+   Descubrir una organización administrable no concede acceso a su trabajo.
+
+Son las doce superficies del ticket: acceso (login y signup como variantes),
+perfil, organizaciones, grupos, panel, facturas, detalle, políticas, evaluación,
+recursos, evidencia/lotes y administración. No son doce destinos universales:
+detalle/evaluación se abren dentro de Facturas y Administración depende del rol.
+
+### Estados, incertidumbre y límites
+
+- Carga, vacío, validación y errores tienen mensajes en español y reintentos
+  deliberados. Un 401 vigente retira la sesión; datos tardíos de otro contexto o
+  sesión no deben publicarse. Los errores no muestran cuerpos crudos del proveedor.
+- Navegar no cancela una escritura recibida por el servidor. Ante resultado
+  desconocido no reenvíes a ciegas: en facturas consulta el estado; en políticas
+  consulta una versión/umbral coincidentes mediante una lectura posterior al
+  error. Que una factura siga pendiente no prueba cancelación de la solicitud.
+  En administración no existe lookup del destinatario: el resultado desconocido
+  permanece bloqueado y requiere verificación autoritativa fuera de esa vista.
+- Los registros de operaciones viven solo en memoria de sesión/navegación.
+  Recargar pierde esos bloqueos; una nueva sesión no reconcilia efectos anteriores
+  ni aporta idempotencia. Un cierre de sesión fallido conserva la incertidumbre.
+- Recursos MLflow consulta cada 15 s únicamente montado y visible, con una
+  solicitud activa hasta completar JSON. Ocultar pausa/aborta; volver reanuda;
+  salir detiene el polling. Un 500 puede conservar datos anteriores del mismo
+  contexto con aviso; 403/404 los retiran y 401 vigente detiene la consulta.
+- Facturas y evidencia usan páginas de 50 por defecto, máximo API 100; la UI de
+  evidencia pide 50, sin lectura automática de todas las páginas. Un lote admite
+  hasta 256 hojas. MLflow devuelve hasta 25 ejecuciones y 25 versiones y señala
+  truncamiento. Los detalles y pruebas se consultan bajo acción explícita.
+- Regla v1 conserva monto hasta 500000 centavos, orden de compra y cotejo de tres
+  vías. La política, auditoría y evidencia se resuelven en backend; si la
+  inferencia falla, el respaldo es revisión manual sin probabilidad inventada.
+
+### Configuración, activación y reversión del lote
+
+Prepara configuración solo en el entorno privado del backend, sin imprimirla ni
+copiarla a `VITE_*`. El frontend usa rutas del mismo origen; el backend conserva
+cookie httpOnly, control Origin/CSRF y autorización actual en cada operación.
+Los ejemplos de instalación e infraestructura posteriores son guía general,
+no instrucciones ejecutadas ni autorizadas por la validación S8.
+
+Orden de activación documentado, **no ejecutado**: verificar compatibilidad del
+esquema existente APP-03–11 sin migraciones S8; desplegar primero el backend con
+las cinco lecturas aditivas S6 (`GET /evidence-records`, `/:id`,
+`GET /evidence-batches`, `/:id`, `/:batchId/proofs/:recordId` bajo su namespace);
+después publicar frontend y proxy Vite/Nginx coherentes para políticas, evidencia
+y membresías. Comprobar cookie/Origin, propietario individual/grupal, perfiles
+STUDENT/ADMIN/plataforma, errores y una versión de política codificada en la URL.
+APP-13 (CI e imagen Docker) no se implementa en este lote. La publicación y el
+despliegue requieren su autorización separada y mantienen el diferimiento vigente.
+
+Para rollback, recuperar un artefacto anterior conocido del **lote coherente** de
+aplicación y proxy, conservando cambios ajenos y datos; no usar reset del árbol de
+trabajo ni borrar archivos del usuario. Revertir código no deshace decisiones,
+políticas, membresías, auditoría o evidencia persistidas. No ejecutar downgrade,
+reset de DB, borrado de volúmenes ni reenvío de transacciones/wallets como rollback.
+La retirada del frontend no cancela operaciones ya recibidas por el servidor.
 
 ## Aprovisionamiento académico de MLflow — MLFLOW-07
 
@@ -273,10 +484,11 @@ execution are not claimed by this local database readiness result.
    Las migraciones son explícitas: el backend, Docker Compose y el arranque no
    ejecutan cambios de esquema automáticamente.
 
-6. En terminales separadas, inicia backend y frontend:
+6. Con `DATABASE_URL` ya disponible en el entorno privado del backend, inicia
+   backend y frontend en terminales separadas, sin imprimir ni extraer secretos:
 
    ```bash
-   DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d '=' -f2-)" pnpm --filter @invoiceops/backend dev
+    pnpm --filter @invoiceops/backend dev
    pnpm --filter @invoiceops/frontend dev
    ```
 
@@ -326,9 +538,9 @@ loopback-only ephemeral port, and bounded memory and temporary storage. It does
 not use `.env`, persistent volumes, or the Compose `db-test` service. It applies
 eight baseline migrations, seeds a legacy event, then applies migrations nine
 through thirteen. It verifies that the legacy event was not backfilled and runs
-10 SQL, 31 organization, seven batch, six reservation, four transaction, two
-reconciliation, and four CLI authorization cases sequentially (64 PostgreSQL
-cases across the seven suites). The reservation,
+10 SQL, 34 organization, seven batch, six reservation, four transaction, two
+reconciliation, four CLI authorization, and seven contextual evidence-read cases
+sequentially (74 PostgreSQL cases across eight suites). The reservation,
 exclusive signer slot, and prepared metadata are
 append-only without expiry or release. The slot is global to a chain and signer,
 including across contracts: after a crash or ambiguous send, later batches using
@@ -398,7 +610,7 @@ env DOCKER_HOST=unix:///var/run/docker.sock pnpm --filter @invoiceops/backend ex
 Do not supply database URLs or Anvil PID/port overrides. The opt-in script owns a
 new loopback Anvil process, checks its PID and listener before any RPC, then
 uses the existing runner's new isolated PostgreSQL container and all thirteen
-migrations. The seven standard DB suites still run first; the eighth suite
+migrations. The eight standard DB suites still run first; the additional smoke suite
 compiles the adjacent `invoiceops-contracts/src/EvidenceRootAnchor.sol` offline,
 funds an in-memory ephemeral signer with synthetic ETH from the new node's
 unlocked developer account, deploys that contract, and exercises the internal
@@ -408,7 +620,7 @@ Anvil PID and labeled container ID. A failed smoke is NOT proof of registration;
 do not retry an uncertain write on an existing node or release the signer slot.
 This is not an Express/cookie/UI/TLS or public-network test, and even a passing
 receipt and `observedSuccess` do not establish finality or authorize slot reuse.
-Together, the seven PostgreSQL suites and this one smoke case cover 65 cases.
+Together, the eight PostgreSQL suites and this one smoke case cover 75 cases.
 
 Run only against the local socket with a cached `postgres:17-alpine` image:
 `DOCKER_HOST=unix:///var/run/docker.sock pnpm test:integration`. The runner
@@ -496,9 +708,10 @@ La migración APP-02 agrega `passwordHash` nullable para conservar los usuarios
 de APP-01. Esas cuentas no pueden iniciar sesión hasta que exista un flujo
 seguro de establecimiento de contraseña.
 
-Este scaffold incluye facturas, integración opcional con Model API y lectura
-acotada de recursos MLflow. La integración blockchain pertenece a tickets
-posteriores.
+La aplicación incluye facturas, integración opcional con Model API y lectura
+acotada de recursos MLflow. APP-10/11 conservan sus servicios internos de evidencia
+y anclaje explícito; la UI APP-12 de evidencia es exclusivamente de lectura y no
+añade una operación de firma o transmisión.
 
 ### Perfil
 

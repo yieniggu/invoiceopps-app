@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
+import { useUnauthorized } from "../auth/ProtectedSession";
+import { ResourceLink, snapshotDate } from "./mlflowPresentation";
 
 export type MlflowContext = {
   organizationId: string;
@@ -7,7 +9,7 @@ export type MlflowContext = {
   ownerId: string;
 };
 
-type Item = { url?: string };
+type Item = { url?: string | null };
 type Snapshot = {
   experiment: (Item & { id: string; name: string }) | null;
   runs: Array<Item & { runId: string }>;
@@ -17,25 +19,42 @@ type Snapshot = {
   fetchedAt: string;
 };
 
-function ResourceLink({ url, children }: { url?: string; children: string }) {
-  return url ? (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="underline"
-    >
-      {children}
-    </a>
-  ) : (
-    <span>{children}</span>
+export function MlflowResources({
+  context,
+  onUnauthorized,
+}: {
+  context: MlflowContext;
+  onUnauthorized?: () => void;
+}) {
+  return (
+    <MlflowSnapshot
+      key={JSON.stringify([
+        context.organizationId,
+        context.ownerType,
+        context.ownerId,
+      ])}
+      context={context}
+      onUnauthorized={onUnauthorized}
+    />
   );
 }
 
-export function MlflowResources({ context }: { context: MlflowContext }) {
+function MlflowSnapshot({
+  context,
+  onUnauthorized,
+}: {
+  context: MlflowContext;
+  onUnauthorized?: () => void;
+}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<
+    "unavailable" | "forbidden" | "missing" | null
+  >(null);
   const [loading, setLoading] = useState(true);
+  const [expired, setExpired] = useState(false);
+  const [hidden, setHidden] = useState(() => document.hidden);
+  const sessionUnauthorized = useUnauthorized();
+  const unauthorized = onUnauthorized ?? sessionUnauthorized;
   const refresh = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -44,9 +63,19 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
+    const stop = () => {
+      active = false;
+      generation += 1;
+      clearTimeout(timer);
+      controller?.abort();
+      refresh.current = () => {};
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
     const load = () => {
       if (!active || document.hidden || inFlight) return;
+      clearTimeout(timer);
       inFlight = true;
+      setLoading(true);
       const requestGeneration = ++generation;
       controller = new AbortController();
       const query = new URLSearchParams(context);
@@ -55,35 +84,51 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
         signal: controller.signal,
       })
         .then(async (response) => {
+          if (!active || requestGeneration !== generation) return null;
+          if (response.status === 401) {
+            stop();
+            setSnapshot(null);
+            setLoading(false);
+            setExpired(true);
+            unauthorized();
+            return null;
+          }
+          if (response.status === 403 || response.status === 404) {
+            setSnapshot(null);
+            setError(response.status === 403 ? "forbidden" : "missing");
+            return null;
+          }
           if (!response.ok) throw new Error("MLflow read failed");
           return (await response.json()) as Snapshot;
         })
         .then((result) => {
-          if (active && requestGeneration === generation) {
+          if (result && active && requestGeneration === generation) {
             setSnapshot(result);
-            setError(false);
-            setLoading(false);
+            setError(null);
           }
         })
         .catch(() => {
           if (active && requestGeneration === generation) {
-            setError(true);
-            setLoading(false);
+            setError("unavailable");
           }
         })
         .finally(() => {
-          if (requestGeneration === generation) {
+          if (active && requestGeneration === generation) {
             inFlight = false;
-            if (active && !document.hidden) timer = setTimeout(load, 15_000);
+            setLoading(false);
+            if (!document.hidden) timer = setTimeout(load, 15_000);
           }
         });
     };
     const onVisibility = () => {
+      if (!active) return;
+      setHidden(document.hidden);
       if (document.hidden) {
         clearTimeout(timer);
         controller?.abort();
         generation += 1;
         inFlight = false;
+        setLoading(false);
       } else if (!inFlight) {
         clearTimeout(timer);
         load();
@@ -95,14 +140,16 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
     };
     document.addEventListener("visibilitychange", onVisibility);
     load();
-    return () => {
-      active = false;
-      generation += 1;
-      clearTimeout(timer);
-      controller?.abort();
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [context.organizationId, context.ownerType, context.ownerId]);
+    return stop;
+  }, [
+    context.organizationId,
+    context.ownerType,
+    context.ownerId,
+    unauthorized,
+  ]);
+
+  if (expired)
+    return <p role="alert">La sesión expiró. Inicia sesión nuevamente.</p>;
 
   return (
     <section
@@ -110,50 +157,93 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
       className="space-y-3 rounded-md border border-slate-200 bg-white p-4"
     >
       <h3 id="mlflow-resources-title">Recursos de MLflow</h3>
-      {loading && !snapshot ? <p>Cargando recursos de MLflow...</p> : null}
+      <p>
+        Fuente: MLflow · Solo lectura. Consulta de metadatos; no copia
+        artefactos ni entrena modelos.
+      </p>
+      <p>
+        Actualización automática cada 15 segundos mientras esta vista está
+        visible. Actualizar solo vuelve a consultar estos metadatos; no recarga
+        el modelo servido ni modifica aliases.
+      </p>
+      <div className="action-row">
+        <Button
+          type="button"
+          disabled={loading || hidden}
+          onClick={() => refresh.current()}
+        >
+          {error ? "Reintentar MLflow" : "Actualizar MLflow"}
+        </Button>
+        <p role="status">
+          {hidden
+            ? "Actualización pausada: vista oculta."
+            : loading
+              ? snapshot
+                ? "Actualizando metadatos de MLflow..."
+                : "Cargando recursos de MLflow..."
+              : error
+                ? "Consulta de MLflow no disponible."
+                : "Metadatos de MLflow consultados."}
+        </p>
+      </div>
       {error ? (
         <p role="alert">
-          {snapshot
-            ? `No se pudo actualizar MLflow. Se muestran datos anteriores, consultados el ${new Date(snapshot.fetchedAt).toLocaleString("es-CL")}.`
-            : "No fue posible consultar MLflow. Puedes reintentar."}
+          {error === "forbidden"
+            ? "No tienes acceso a los recursos de MLflow de este contexto."
+            : error === "missing"
+              ? "Los recursos de MLflow no están disponibles para este contexto."
+              : snapshot
+                ? `No se pudo actualizar MLflow. Se muestran datos anteriores, consultados el ${snapshotDate(snapshot.fetchedAt)}.`
+                : "No fue posible consultar MLflow. Puedes reintentar."}
         </p>
-      ) : null}
-      {error ? (
-        <Button type="button" onClick={() => refresh.current()}>
-          Reintentar MLflow
-        </Button>
       ) : null}
       {snapshot ? (
         <>
           <p className="text-sm text-slate-600">
             Última consulta exitosa:{" "}
-            {new Date(snapshot.fetchedAt).toLocaleString("es-CL")}
+            <span>{snapshotDate(snapshot.fetchedAt)}</span>
           </p>
           {snapshot.truncated ? (
-            <p>Vista parcial: existen más resultados en MLflow.</p>
+            <p>
+              Vista parcial: existen más resultados en MLflow. La consulta está
+              limitada a 25 ejecuciones y 25 versiones; no se expone el total ni
+              navegación a otras páginas.
+            </p>
           ) : null}
           <div>
             <h4>Experimento</h4>
             {snapshot.experiment ? (
-              <ResourceLink url={snapshot.experiment.url}>
-                {snapshot.experiment.name}
-              </ResourceLink>
+              <dl className="context-details">
+                <div>
+                  <dt>Nombre</dt>
+                  <dd>
+                    <ResourceLink url={snapshot.experiment.url}>
+                      {snapshot.experiment.name}
+                    </ResourceLink>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Identificador del experimento</dt>
+                  <dd>{snapshot.experiment.id}</dd>
+                </div>
+              </dl>
             ) : (
               <p>No hay experimento para este propietario.</p>
             )}
           </div>
           <div>
-            <h4>Runs</h4>
+            <h4>Ejecuciones</h4>
             {snapshot.runs.length ? (
-              <ul>
+              <ul className="card-list" aria-label="Ejecuciones de MLflow">
                 {snapshot.runs.map((run) => (
-                  <li key={run.runId}>
+                  <li key={run.runId} className="context-card">
+                    <p>Identificador de ejecución</p>
                     <ResourceLink url={run.url}>{run.runId}</ResourceLink>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p>No hay runs para este propietario.</p>
+              <p>No hay ejecuciones para este propietario.</p>
             )}
           </div>
           <div>
@@ -169,13 +259,17 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
           <div>
             <h4>Versiones</h4>
             {snapshot.versions.length ? (
-              <ul>
+              <ul className="card-list" aria-label="Versiones del modelo">
                 {snapshot.versions.map((version) => (
-                  <li key={version.version}>
+                  <li key={version.version} className="context-card">
                     <ResourceLink
                       url={version.url}
                     >{`Versión ${version.version}`}</ResourceLink>
-                    {version.runId ? ` · Run ${version.runId}` : null}
+                    <p>
+                      {version.runId
+                        ? `Ejecución de origen verificada: ${version.runId}`
+                        : "Ejecución de origen no disponible en esta consulta."}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -183,6 +277,11 @@ export function MlflowResources({ context }: { context: MlflowContext }) {
               <p>No hay versiones para este propietario.</p>
             )}
           </div>
+          <p>
+            La API actual no expone aliases, estados de ejecución, métricas,
+            parámetros ni etiquetas. Su ausencia en esta vista no indica que no
+            existan en MLflow.
+          </p>
         </>
       ) : null}
     </section>

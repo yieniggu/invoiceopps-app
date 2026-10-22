@@ -113,8 +113,10 @@ describe("APP-06 invoice workspace", () => {
       (await screen.findAllByText("Ada Lovelace (123456785)")).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText("user-1")).toBeNull();
-    expect(screen.getByText("invoice-review v12 (run-123)")).toBeTruthy();
-    expect(screen.getByText("Fallback: revisión manual")).toBeTruthy();
+    expect(screen.getByText("Modelo: invoice-review")).toBeTruthy();
+    expect(screen.getByText("Versión: 12")).toBeTruthy();
+    expect(screen.getByText("Ejecución: run-123")).toBeTruthy();
+    expect(screen.getByText("Respaldo: revisión manual")).toBeTruthy();
   });
 
   it("shows a recoverable list error", async () => {
@@ -200,9 +202,9 @@ describe("APP-06 invoice workspace", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
     expect(
-      await screen.findByRole("button", { name: "Load more" }),
+      await screen.findByRole("button", { name: "Cargar más" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
 
     expect(await screen.findByText("Acme Next Ltd.")).toBeTruthy();
     expect(screen.getAllByText("Acme Ltd.")).toHaveLength(1);
@@ -217,7 +219,7 @@ describe("APP-06 invoice workspace", () => {
     expect(nextPageUrl.searchParams.get("ownerId")).toBe("user-1");
     expect(nextPageUrl.searchParams.get("q")).toBe("Acme");
     expect(nextPageUrl.searchParams.get("cursor")).toBe("cursor-1");
-    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
   });
 
   it("keeps the current search list when a stale load-more request fails", async () => {
@@ -266,9 +268,9 @@ describe("APP-06 invoice workspace", () => {
 
     render(<InvoiceWorkspace profile={profile} groups={[]} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
     expect(
-      screen.getByRole("button", { name: "Loading more..." }),
+      screen.getByRole("button", { name: "Cargando más..." }),
     ).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Buscar por ID o proveedor"), {
       target: { value: "Current" },
@@ -353,11 +355,11 @@ describe("APP-06 invoice workspace", () => {
     render(<InvoiceWorkspace profile={profile} groups={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Aplicar Rule v1" }),
+      await screen.findByRole("button", { name: "Aplicar Regla v1" }),
     );
 
     expect(await screen.findByText("Ada Lovelace (123456785)")).toBeTruthy();
-    expect(screen.getByText("AUTO_PROCESSED")).toBeTruthy();
+    expect(screen.getByText("Procesada automáticamente")).toBeTruthy();
   });
 
   it("offers distinct Rule v1 and policy controls for a pending invoice", async () => {
@@ -412,11 +414,13 @@ describe("APP-06 invoice workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
 
     expect(
-      await screen.findByRole("button", { name: "Aplicar Rule v1" }),
+      await screen.findByRole("button", { name: "Aplicar Regla v1" }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Aplicar policy" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Aplicar política" }),
+    ).toBeTruthy();
     expect(screen.getByText(/Fuente:/).textContent).toContain(
-      "LOCAL_DEMONSTRATION",
+      "Demostración local",
     );
   });
 });

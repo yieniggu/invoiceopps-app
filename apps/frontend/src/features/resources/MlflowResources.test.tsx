@@ -32,11 +32,14 @@ const payload = {
   fetchedAt: "2026-10-05T00:00:00.000Z",
 };
 const success = () => new Response(JSON.stringify(payload), { status: 200 });
+const originalHidden = Object.getOwnPropertyDescriptor(document, "hidden");
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  if (originalHidden) Object.defineProperty(document, "hidden", originalHidden);
+  else Reflect.deleteProperty(document, "hidden");
 });
 
 describe("APP-09 MLflow resource panel", () => {
@@ -116,13 +119,12 @@ describe("APP-09 MLflow resource panel", () => {
       resolveOld?.(success());
     });
     expect(
-      await screen.findByText("No hay runs para este propietario."),
+      await screen.findByText("No hay ejecuciones para este propietario."),
     ).toBeTruthy();
     expect(screen.queryByText("run-1")).toBeNull();
   });
 
   it("pauses when hidden, aborts its pending request and resumes when visible", async () => {
-    const originalHidden = Object.getOwnPropertyDescriptor(document, "hidden");
     let resolvePending: ((value: Response) => void) | undefined;
     const pending = new Promise<Response>((resolve) => {
       resolvePending = resolve;
@@ -154,9 +156,6 @@ describe("APP-09 MLflow resource panel", () => {
     });
     expect(await screen.findByText("run-1")).toBeTruthy();
     view.unmount();
-    if (originalHidden)
-      Object.defineProperty(document, "hidden", originalHidden);
-    else Reflect.deleteProperty(document, "hidden");
   });
 
   it("polls once every 15 seconds while visible without a loading flicker", async () => {

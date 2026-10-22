@@ -24,6 +24,7 @@ export const suites = [
   "test/evidence-anchor-transactions.integration.test.ts",
   "test/evidence-anchor-reconciliation.integration.test.ts",
   "test/evidence-anchor-cli.integration.test.ts",
+  "test/evidence-read.integration.test.ts",
 ];
 
 const migrations = resolve("prisma/migrations");
@@ -544,12 +545,13 @@ export async function runIntegrationGate({
       };
       for (const [label, suite, expected] of [
         ["SQL", suites[0], 10],
-        ["organization", suites[1], 31],
+        ["organization", suites[1], 34],
         ["batch", suites[2], 7],
         ["reservation", suites[3], 6],
         ["transaction", suites[4], 4],
         ["reconciliation", suites[5], 2],
         ["CLI authorization", suites[6], 4],
+        ["evidence read", suites[7], 7],
       ]) {
         const output = command(
           "pnpm",

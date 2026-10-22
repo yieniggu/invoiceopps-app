@@ -16,6 +16,7 @@ import {
   createMlflowProvisionService,
 } from "./mlflow-provision.js";
 import { loadProvisionSecrets } from "./mlflow-provision-secrets.js";
+import { createEvidenceReadService } from "./evidence-read.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const modelApiUrl = process.env.MODEL_API_URL;
@@ -63,6 +64,7 @@ const app = createApp(database, createAuthService(database.prisma), {
   ),
   businessPolicies: createBusinessPolicyService(database.prisma),
   resources: createResourceService(database.prisma),
+  evidenceRead: createEvidenceReadService(database.prisma),
   mlflowResources: createMlflowResourceService(
     database.prisma,
     mlflowClient,

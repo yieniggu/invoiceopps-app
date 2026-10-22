@@ -808,6 +808,152 @@ describe("APP-04 PostgreSQL organization groups", () => {
   });
 });
 
+describe("Organization group catalog PostgreSQL integration", () => {
+  async function catalogFixture() {
+    const organization = await persistence.createOrganization({
+      name: "Catalog Academy",
+      slug: "catalog-academy",
+    });
+    const foreign = await persistence.createOrganization({
+      name: "Foreign Academy",
+      slug: "foreign-academy",
+    });
+    const admin = await persistence.createUser({
+      name: "Ada Lovelace",
+      rut: "12.345.678-5",
+    });
+    const student = await persistence.createUser({
+      name: "Grace Hopper",
+      rut: "12.345.679-3",
+    });
+    await prisma.organizationMembership.createMany({
+      data: [
+        {
+          userId: admin.id,
+          organizationId: organization.id,
+          role: OrganizationRole.ADMIN,
+        },
+        {
+          userId: student.id,
+          organizationId: organization.id,
+          role: OrganizationRole.STUDENT,
+        },
+      ],
+    });
+    const groups = createGroupService(prisma);
+    const first = await groups.createGroup(admin.id, organization.id, {
+      name: "Same name",
+    });
+    const second = await groups.createGroup(admin.id, organization.id, {
+      name: "Same name",
+    });
+    await groups.removeMember(admin.id, organization.id, first.id, admin.id);
+    return { organization, foreign, admin, student, groups, first, second };
+  }
+  it("catalogs groups after self removal without granting membership or exposing a roster", async () => {
+    const { organization, admin, student, groups, first, second } =
+      await catalogFixture();
+    const page = await groups.listOrganizationGroups(
+      admin.id,
+      organization.id,
+      { limit: 50 },
+    );
+    expect(page.groups.map((group) => group.id).sort()).toEqual(
+      [first.id, second.id].sort(),
+    );
+    expect(page.nextCursor).toBeNull();
+    expect(Object.keys(page.groups[0]).sort()).toEqual([
+      "description",
+      "id",
+      "name",
+      "organization",
+    ]);
+    expect(
+      (await groups.listGroups(admin.id)).map((group) => group.id),
+    ).toEqual([second.id]);
+    await groups.updateGroup(admin.id, organization.id, first.id, {
+      description: "Still administrable",
+    });
+    await groups.addMember(admin.id, organization.id, first.id, student.id);
+    await groups.removeMember(admin.id, organization.id, first.id, student.id);
+    await groups.deleteGroup(admin.id, organization.id, first.id);
+    expect(
+      (
+        await groups.listOrganizationGroups(admin.id, organization.id, {
+          limit: 50,
+        })
+      ).groups,
+    ).toHaveLength(1);
+  });
+  it("enforces live ADMIN/platform singleton capability, organization existence and cross-organization cursor isolation", async () => {
+    const { organization, foreign, admin, student, groups, first } =
+      await catalogFixture();
+    await expect(
+      groups.listOrganizationGroups(student.id, organization.id, { limit: 50 }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      groups.listOrganizationGroups(admin.id, foreign.id, { limit: 50 }),
+    ).rejects.toMatchObject({ status: 404 });
+    await createPlatformAdministratorService(prisma).bootstrap(student.id);
+    expect(
+      (
+        await groups.listOrganizationGroups(student.id, organization.id, {
+          limit: 50,
+        })
+      ).groups,
+    ).toHaveLength(2);
+    await expect(
+      groups.listOrganizationGroups(student.id, admin.id, { limit: 50 }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      groups.listOrganizationGroups(student.id, foreign.id, {
+        limit: 50,
+        cursor: first.id,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await prisma.organizationMembership.update({
+      where: {
+        userId_organizationId: {
+          userId: admin.id,
+          organizationId: organization.id,
+        },
+      },
+      data: { role: OrganizationRole.STUDENT },
+    });
+    await expect(
+      groups.listOrganizationGroups(admin.id, organization.id, { limit: 50 }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      groups.updateGroup(admin.id, organization.id, first.id, {
+        name: "Denied",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+  it("paginates deterministically across duplicate names using organization-bound cursors and bounded limits", async () => {
+    const { organization, admin, groups, first, second } =
+      await catalogFixture();
+    const page = await groups.listOrganizationGroups(
+      admin.id,
+      organization.id,
+      { limit: 1 },
+    );
+    const next = await groups.listOrganizationGroups(
+      admin.id,
+      organization.id,
+      { limit: 1, cursor: page.nextCursor! },
+    );
+    expect(page.groups).toHaveLength(1);
+    expect(next.groups).toHaveLength(1);
+    expect([...page.groups, ...next.groups].map((group) => group.id)).toEqual(
+      [first.id, second.id].sort(),
+    );
+    expect(next.nextCursor).toBeNull();
+    await expect(
+      groups.listOrganizationGroups(admin.id, organization.id, { limit: 101 }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 describe("PlatformAdministrator PostgreSQL integration", () => {
   it("discovers every organization and group without local membership only for the platform administrator", async () => {
     const platformUser = await persistence.createUser({

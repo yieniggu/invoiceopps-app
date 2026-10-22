@@ -901,6 +901,9 @@ describe("APP-04 groups HTTP contract", () => {
       },
       {
         groups: {
+          async listOrganizationGroups() {
+            return { groups: [], nextCursor: null };
+          },
           async listGroups() {
             return [
               {
@@ -964,6 +967,46 @@ describe("APP-04 groups HTTP contract", () => {
         },
       ],
     });
+  });
+
+  it("serves only a bounded authenticated organization catalog with no-store", async () => {
+    const organizationId = "00000000-0000-4000-8000-000000000001";
+    const listOrganizationGroups = vi
+      .fn<GroupService["listOrganizationGroups"]>()
+      .mockResolvedValue({ groups: [], nextCursor: null });
+    const app = createGroupApp({ listOrganizationGroups });
+    expect(
+      (await request(app).get(`/organizations/${organizationId}/groups`))
+        .status,
+    ).toBe(401);
+    const response = await request(app)
+      .get(`/organizations/${organizationId}/groups`)
+      .set("Cookie", "invoiceops_session=admin-session");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toEqual({ groups: [], nextCursor: null });
+    expect(listOrganizationGroups).toHaveBeenCalledWith(
+      "admin-1",
+      organizationId,
+      { limit: 50 },
+    );
+    for (const suffix of [
+      "?limit=0",
+      "?limit=101",
+      "?limit=1&limit=2",
+      "?limit[x]=2",
+      "?cursor=bad",
+      "?cursor=x&cursor=y",
+    ]) {
+      expect(
+        (
+          await request(app)
+            .get(`/organizations/${organizationId}/groups${suffix}`)
+            .set("Cookie", "invoiceops_session=admin-session")
+        ).status,
+      ).toBe(400);
+    }
+    expect(listOrganizationGroups).toHaveBeenCalledOnce();
   });
 
   it("allows only an organization ADMIN to create a group", async () => {

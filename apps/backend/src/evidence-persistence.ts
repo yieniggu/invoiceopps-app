@@ -273,6 +273,33 @@ export function createEvidencePersistence(prisma: PrismaClient) {
         throw new EvidenceIntegrityError();
       }
     },
+    async getRecord(
+      actor: AuthUser,
+      context: ResourceContext,
+      recordId: string,
+    ) {
+      await authorizeContext(prisma, actor.id, context);
+      const record = await prisma.evidenceRecord.findFirst({
+        where: {
+          id: recordId,
+          organizationId: context.organizationId,
+          ownerType: ownerType(context.ownerType),
+          ownerId: context.ownerId,
+        },
+        include: source,
+      });
+      if (!record) throw inaccessible();
+      const verified = verifyRecord(record, context);
+      return {
+        id: record.id,
+        decisionEventId: verified.decisionEventId,
+        invoiceRecordId: record.invoiceRecordId,
+        createdAt: record.createdAt.toISOString(),
+        evidenceVersion: record.evidenceVersion,
+        canonicalVersion: record.canonicalVersion,
+        leafHash: verified.leafHash,
+      };
+    },
     async getBatch(actor: AuthUser, context: ResourceContext, batchId: string) {
       await authorizeContext(prisma, actor.id, context);
       return (await readBatch(prisma, context, batchId)).batch;

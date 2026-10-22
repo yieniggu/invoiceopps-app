@@ -1,53 +1,50 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { AuthScreen } from "./features/auth/AuthScreen";
+import { ProtectedSessionProvider } from "./features/auth/ProtectedSession";
+import { InvoiceDecisionsProvider } from "./features/invoices/InvoiceDecisions";
 import { ResourceContext } from "./features/resources/ResourceContext";
 import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
-
-type Profile = {
-  id: string;
-  name: string;
-  rut: string;
-  email: string | null;
-  username: string | null;
-  isPlatformAdministrator: boolean;
-  memberships: Array<{
-    organization: { id: string; name: string; slug: string };
-    role: string;
-  }>;
-};
+import { AppShell, type Destination } from "./features/navigation/AppShell";
+import { ProfileScreen, type Profile } from "./features/profile/ProfileScreen";
+import {
+  OrganizationsScreen,
+  type PlatformOrganizationsState,
+} from "./features/organizations/OrganizationsScreen";
+import {
+  GroupsScreen,
+  type Group,
+  type GroupsState,
+} from "./features/groups/GroupsScreen";
+import { DashboardScreen } from "./features/dashboard/DashboardScreen";
+import { PoliciesScreen } from "./features/policies/PoliciesScreen";
+import { PolicyMutationsProvider } from "./features/policies/PolicyMutationsContext";
+import { EvidenceScreen } from "./features/evidence/EvidenceScreen";
+import { AdministrationScreen } from "./features/admin/AdministrationScreen";
+import { useGroupOperations } from "./features/groups/groupOperations";
+import {
+  AdministrationReadError,
+  canAdministrate,
+  useAdministrationOperations,
+} from "./features/admin/administrationOperations";
+import {
+  WorkspaceBoundary,
+  WorkspaceProvider,
+  WorkspaceSummary,
+} from "./features/workspace/WorkspaceContext";
 
 type ProfileState =
   | { kind: "loading" }
   | { kind: "anonymous" }
   | { kind: "error" }
   | { kind: "authenticated"; profile: Profile };
-
-type Group = {
-  id: string;
-  name: string;
-  description: string | null;
-  organization: { id: string; name: string };
-  members: Array<{ id: string; name: string; rut: string }>;
-};
-
-type GroupsState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "error" }
-  | { kind: "loaded"; groups: Group[] };
-
-type PlatformOrganizationsState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "error" }
-  | { kind: "loaded"; organizations: PlatformOrganization[] };
-
-type PlatformOrganization = {
-  id: string;
-  name: string;
-  groups: Group[];
-};
 
 async function requestProfile() {
   const response = await fetch("/profile", { credentials: "same-origin" });
@@ -64,11 +61,20 @@ async function requestProfile() {
   return { kind: "authenticated", profile } as const;
 }
 
+class ProtectedReadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function requestGroups() {
   const response = await fetch("/groups", { credentials: "same-origin" });
 
   if (!response.ok) {
-    throw new Error("Groups request failed");
+    throw new ProtectedReadError("Groups request failed", response.status);
   }
 
   return (await response.json()) as { groups: Group[] };
@@ -80,15 +86,24 @@ async function requestPlatformOrganizations() {
   });
 
   if (!response.ok) {
-    throw new Error("Platform organization request failed");
+    throw new ProtectedReadError(
+      "Platform organization request failed",
+      response.status,
+    );
   }
 
   return (await response.json()) as {
-    organizations: PlatformOrganization[];
+    organizations: Extract<
+      PlatformOrganizationsState,
+      { kind: "loaded" }
+    >["organizations"];
   };
 }
 
 export function App() {
+  const administration = useAdministrationOperations();
+  const groupOperations = useGroupOperations();
+  const [groupReadRevision, setGroupReadRevision] = useState(0);
   const [state, setState] = useState<ProfileState>({ kind: "loading" });
   const [groupsState, setGroupsState] = useState<GroupsState>({ kind: "idle" });
   const [platformOrganizationsState, setPlatformOrganizationsState] =
@@ -101,12 +116,31 @@ export function App() {
   const [logoutError, setLogoutError] = useState<string>();
   const [groupError, setGroupError] = useState<string>();
   const [isMutatingGroup, setIsMutatingGroup] = useState(false);
-  const [showInvoices, setShowInvoices] = useState(false);
+  const [groupOperation, setGroupOperation] = useState<string>();
+  const [groupMessage, setGroupMessage] = useState<string>();
+  const [destination, setDestination] =
+    useState<Destination>("Panel principal");
   // Every App-owned operation belongs to one session epoch, including logout.
   // Invalidating UI work does not roll back requests already received by the server.
   const session = useRef({ epoch: 0, active: false });
+  // Authority ordering is separate from session ownership: refreshing roles
+  // must not reset policy, invoice or administration mutation ledgers.
+  const authorityRevision = useRef(0);
 
-  const beginSessionEpoch = (active: boolean) => {
+  useLayoutEffect(() => {
+    const title =
+      state.kind === "authenticated"
+        ? destination
+        : state.kind === "anonymous"
+          ? "Iniciar sesión"
+          : state.kind === "loading"
+            ? "Cargando sesión"
+            : "Sesión no disponible";
+    document.title = `${title} · InvoiceOps`;
+  }, [state.kind, destination]);
+
+  const beginSessionEpoch = useCallback((active: boolean) => {
+    authorityRevision.current += 1;
     session.current = { epoch: session.current.epoch + 1, active };
     setIsSaving(false);
     setIsLoggingOut(false);
@@ -114,26 +148,39 @@ export function App() {
     setMessage(undefined);
     setLogoutError(undefined);
     setGroupError(undefined);
+    setGroupOperation(undefined);
+    setGroupMessage(undefined);
     return session.current.epoch;
-  };
+  }, []);
 
-  const endSession = () => {
+  const endSession = useCallback(() => {
+    groupOperations.reset();
+    administration.reset();
     beginSessionEpoch(false);
     setState({ kind: "anonymous" });
     setGroupsState({ kind: "idle" });
     setPlatformOrganizationsState({ kind: "idle" });
     setEmail("");
     setUsername("");
-    setShowInvoices(false);
-  };
+    setDestination("Panel principal");
+  }, [beginSessionEpoch]);
+
+  const epoch = session.current.epoch;
+  const onUnauthorized = useCallback(() => {
+    if (session.current.active && session.current.epoch === epoch) endSession();
+  }, [epoch, endSession]);
 
   const loadProfile = async () => {
+    groupOperations.reset();
+    administration.reset();
     const epoch = beginSessionEpoch(true);
-    const isCurrent = () => session.current.epoch === epoch;
+    const revision = ++authorityRevision.current;
+    const isCurrent = () =>
+      session.current.epoch === epoch && authorityRevision.current === revision;
     setState({ kind: "loading" });
     setGroupsState({ kind: "idle" });
     setPlatformOrganizationsState({ kind: "idle" });
-    setShowInvoices(false);
+    setDestination("Panel principal");
 
     try {
       const result = await requestProfile();
@@ -148,8 +195,12 @@ export function App() {
             const discovery = await requestPlatformOrganizations();
             if (!isCurrent()) return;
             setPlatformOrganizationsState({ kind: "loaded", ...discovery });
-          } catch {
+          } catch (error) {
             if (!isCurrent()) return;
+            if (error instanceof ProtectedReadError && error.status === 401) {
+              endSession();
+              return;
+            }
             setPlatformOrganizationsState({ kind: "error" });
           }
 
@@ -159,8 +210,12 @@ export function App() {
               const groups = await requestGroups();
               if (!isCurrent()) return;
               setGroupsState({ kind: "loaded", ...groups });
-            } catch {
+            } catch (error) {
               if (!isCurrent()) return;
+              if (error instanceof ProtectedReadError && error.status === 401) {
+                endSession();
+                return;
+              }
               setGroupsState({ kind: "error" });
             }
           } else {
@@ -172,8 +227,12 @@ export function App() {
             const groups = await requestGroups();
             if (!isCurrent()) return;
             setGroupsState({ kind: "loaded", ...groups });
-          } catch {
+          } catch (error) {
             if (!isCurrent()) return;
+            if (error instanceof ProtectedReadError && error.status === 401) {
+              endSession();
+              return;
+            }
             setGroupsState({ kind: "error" });
           }
         } else {
@@ -189,17 +248,21 @@ export function App() {
   };
 
   const reloadGroups = async (epoch = session.current.epoch) => {
-    const isCurrent = () => session.current.epoch === epoch;
+    const completeConfirmedReads = groupOperations.beginRead();
+    const revision = ++authorityRevision.current;
+    const isCurrent = () =>
+      session.current.epoch === epoch && authorityRevision.current === revision;
     if (
       !isCurrent() ||
       !session.current.active ||
       state.kind !== "authenticated"
     ) {
-      return;
+      return false;
     }
 
     setGroupError(undefined);
     setGroupsState({ kind: "loading" });
+    let discoveryLoaded = true;
     try {
       if (state.profile.isPlatformAdministrator) {
         setPlatformOrganizationsState({ kind: "loading" });
@@ -207,9 +270,14 @@ export function App() {
           const discovery = await requestPlatformOrganizations();
           if (!isCurrent()) return;
           setPlatformOrganizationsState({ kind: "loaded", ...discovery });
-        } catch {
+        } catch (error) {
           if (!isCurrent()) return;
+          if (error instanceof ProtectedReadError && error.status === 401) {
+            endSession();
+            return;
+          }
           setPlatformOrganizationsState({ kind: "error" });
+          discoveryLoaded = false;
         }
         if (state.profile.memberships.length > 0) {
           const result = await requestGroups();
@@ -225,9 +293,17 @@ export function App() {
       } else {
         setGroupsState({ kind: "loaded", groups: [] });
       }
-    } catch {
+      setGroupReadRevision((value) => value + 1);
+      if (discoveryLoaded) completeConfirmedReads();
+      return discoveryLoaded;
+    } catch (error) {
       if (!isCurrent()) return;
+      if (error instanceof ProtectedReadError && error.status === 401) {
+        endSession();
+        return;
+      }
       setGroupsState({ kind: "error" });
+      return false;
     }
   };
 
@@ -235,21 +311,39 @@ export function App() {
     path: string,
     method: "POST" | "PATCH" | "DELETE",
     body?: unknown,
+    label?: string,
   ) => {
-    if (!session.current.active || state.kind !== "authenticated") return;
+    if (
+      !session.current.active ||
+      state.kind !== "authenticated" ||
+      groupOperations.blocked(path, method, body)
+    )
+      return;
     const epoch = session.current.epoch;
-    const isCurrent = () => session.current.epoch === epoch;
+    const operation = groupOperations.begin({
+      path,
+      method,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      label,
+    });
+    if (!operation) return;
+    const isCurrent = () =>
+      session.current.active &&
+      session.current.epoch === epoch &&
+      operation.current();
     setIsMutatingGroup(true);
     setGroupError(undefined);
+    setGroupMessage(undefined);
+    setGroupOperation(label);
     try {
-      const response = await fetch(path, {
-        method,
+      const response = await fetch(operation.intent.path, {
+        method: operation.intent.method,
         credentials: "same-origin",
-        ...(body === undefined
+        ...(operation.intent.body === undefined
           ? {}
           : {
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
+              body: operation.intent.body,
             }),
       });
 
@@ -260,17 +354,34 @@ export function App() {
       }
 
       if (!response.ok) {
-        throw new Error("Group mutation failed");
+        operation.finish(
+          response.status >= 400 && response.status < 500
+            ? "rejected"
+            : "unknown",
+        );
+        setGroupError(
+          response.status >= 400 && response.status < 500
+            ? "No fue posible actualizar los grupos. Revisa los datos y permisos antes de intentar nuevamente."
+            : undefined,
+        );
+        return;
       }
 
-      await reloadGroups(epoch);
+      // Headers are the acknowledgement. A body/refresh failure cannot turn a
+      // confirmed write into a resend. DELETE 204 has no JSON body.
+      operation.finish("confirmed", true);
+      const refreshed = await reloadGroups(epoch);
+      if (session.current.epoch === epoch && session.current.active)
+        setGroupMessage(
+          refreshed
+            ? "Cambio guardado. Los grupos se han actualizado."
+            : "Cambio guardado. Reintenta la consulta para actualizar la lista; no repitas la operación.",
+        );
     } catch {
       if (!isCurrent()) return;
-      setGroupError(
-        "No fue posible actualizar los grupos. Intenta nuevamente.",
-      );
+      operation.finish("unknown");
     } finally {
-      if (isCurrent()) setIsMutatingGroup(false);
+      if (session.current.epoch === epoch) setIsMutatingGroup(false);
     }
   };
 
@@ -283,7 +394,8 @@ export function App() {
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!session.current.active || state.kind !== "authenticated") return;
+    if (!session.current.active || state.kind !== "authenticated" || isSaving)
+      return;
     const epoch = session.current.epoch;
     const isCurrent = () => session.current.epoch === epoch;
     setIsSaving(true);
@@ -309,7 +421,20 @@ export function App() {
 
       const { profile } = (await response.json()) as { profile: Profile };
       if (!isCurrent()) return;
-      setState({ kind: "authenticated", profile });
+      if (profile.id !== state.profile.id)
+        throw new Error("Profile actor mismatch");
+      setState((current) =>
+        current.kind === "authenticated" && current.profile.id === profile.id
+          ? {
+              ...current,
+              profile: {
+                ...current.profile,
+                email: profile.email,
+                username: profile.username,
+              },
+            }
+          : current,
+      );
       setEmail(profile.email ?? "");
       setUsername(profile.username ?? "");
       setMessage("Perfil actualizado.");
@@ -323,6 +448,8 @@ export function App() {
 
   const logout = async () => {
     if (!session.current.active || state.kind !== "authenticated") return;
+    administration.suspend();
+    groupOperations.suspend();
     const epoch = beginSessionEpoch(false);
     const isCurrent = () => session.current.epoch === epoch;
     setIsLoggingOut(true);
@@ -389,302 +516,230 @@ export function App() {
   }
 
   const { profile } = state;
-  const displayedGroups =
-    profile.isPlatformAdministrator &&
-    platformOrganizationsState.kind === "loaded"
-      ? (platformOrganizationsState.organizations ?? []).flatMap(
-          (organization) => organization.groups,
-        )
-      : groupsState.kind === "loaded"
-        ? groupsState.groups
-        : [];
+
+  const administrationEpoch = session.current.epoch;
+  const administrationSessionCurrent = () =>
+    session.current.active && session.current.epoch === administrationEpoch;
+  const refreshAdministration = async (operationCurrent: () => boolean) => {
+    if (!administrationSessionCurrent() || !operationCurrent()) return null;
+    const revision = ++authorityRevision.current;
+    const isCurrent = () =>
+      administrationSessionCurrent() &&
+      operationCurrent() &&
+      authorityRevision.current === revision;
+    const superseded = () => {
+      if (administrationSessionCurrent() && operationCurrent())
+        throw new AdministrationReadError(0);
+      return null;
+    };
+    if (!isCurrent()) return null;
+    setGroupsState({ kind: "loading" });
+    let organizations: Extract<
+      PlatformOrganizationsState,
+      { kind: "loaded" }
+    >["organizations"] = [];
+    try {
+      const result = await requestProfile();
+      if (!isCurrent()) return superseded();
+      if (result.kind !== "authenticated" || result.profile.id !== profile.id) {
+        endSession();
+        return null;
+      }
+      // Same-actor capability refresh must not remount unrelated mutation ledgers.
+      const fresh = result.profile;
+      setState((current) =>
+        current.kind === "authenticated" && current.profile.id === fresh.id
+          ? {
+              kind: "authenticated",
+              profile: {
+                ...fresh,
+                email: current.profile.email,
+                username: current.profile.username,
+              },
+            }
+          : current,
+      );
+      setPlatformOrganizationsState({ kind: "idle" });
+      if (fresh.isPlatformAdministrator) {
+        const discovery = await requestPlatformOrganizations();
+        if (!isCurrent()) return superseded();
+        organizations = discovery.organizations;
+        setPlatformOrganizationsState({ kind: "loaded", organizations });
+      }
+      const groups = fresh.memberships.length
+        ? await requestGroups()
+        : { groups: [] };
+      if (!isCurrent()) return superseded();
+      setGroupsState({ kind: "loaded", ...groups });
+      setGroupReadRevision((value) => value + 1);
+      return { profile: fresh, organizations };
+    } catch (error) {
+      if (!isCurrent()) return superseded();
+      if (error instanceof ProtectedReadError && error.status === 401) {
+        endSession();
+        return null;
+      }
+      setGroupsState({ kind: "error" });
+      setPlatformOrganizationsState({ kind: "error" });
+      throw new AdministrationReadError(
+        error instanceof ProtectedReadError ? error.status : 0,
+      );
+    }
+  };
+  const retryAdministrationDiscovery = async () => {
+    try {
+      await refreshAdministration(administrationSessionCurrent);
+    } catch {
+      if (administrationSessionCurrent())
+        setPlatformOrganizationsState({ kind: "error" });
+    }
+  };
 
   return (
-    <main className="shell" aria-labelledby="page-title">
-      <p className="eyebrow">InvoiceOps</p>
-      <h1 id="page-title">Mi perfil</h1>
-
-      <section aria-labelledby="identity-title">
-        <h2 id="identity-title">Identidad</h2>
-        <dl>
-          <div>
-            <dt>Nombre</dt>
-            <dd>{profile.name}</dd>
-          </div>
-          <div>
-            <dt>RUT</dt>
-            <dd>{profile.rut}</dd>
-          </div>
-        </dl>
-        {profile.isPlatformAdministrator ? (
-          <p role="status">Administrador de plataforma</p>
-        ) : null}
-      </section>
-
-      <form onSubmit={saveProfile} aria-labelledby="contact-title">
-        <h2 id="contact-title">Datos de contacto</h2>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          Username
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={isSaving}>
-          {isSaving ? "Guardando cambios..." : "Guardar cambios"}
-        </button>
-        {message ? (
-          <p role={message.startsWith("No fue") ? "alert" : "status"}>
-            {message}
-          </p>
-        ) : null}
-      </form>
-
-      <section aria-label="Sesión">
-        <button
-          type="button"
-          onClick={() => void logout()}
-          disabled={isLoggingOut}
-        >
-          {isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
-        </button>
-        {logoutError ? <p role="alert">{logoutError}</p> : null}
-      </section>
-
-      <section aria-labelledby="memberships-title">
-        <h2 id="memberships-title">Organizaciones</h2>
-        {profile.isPlatformAdministrator &&
-        platformOrganizationsState.kind === "loading" ? (
-          <p role="status">Cargando organizaciones administrables...</p>
-        ) : null}
-        {profile.isPlatformAdministrator &&
-        platformOrganizationsState.kind === "error" ? (
-          <>
-            <p role="alert">No fue posible cargar las organizaciones.</p>
-            <button type="button" onClick={() => void reloadGroups()}>
-              Reintentar organizaciones
-            </button>
-          </>
-        ) : null}
-        {profile.isPlatformAdministrator &&
-        platformOrganizationsState.kind === "loaded" ? (
-          (platformOrganizationsState.organizations ?? []).length === 0 ? (
-            <p>No hay organizaciones disponibles.</p>
-          ) : (
-            <ul>
-              {(platformOrganizationsState.organizations ?? []).map(
-                (organization) => (
-                  <li key={organization.id}>{organization.name}</li>
-                ),
-              )}
-            </ul>
-          )
-        ) : profile.memberships.length === 0 ? (
-          <p>No tienes organizaciones asignadas.</p>
-        ) : (
-          <ul>
-            {profile.memberships.map(({ organization, role }) => (
-              <li key={organization.id}>
-                {organization.name}{" "}
-                <span>
-                  (
-                  {role === "STUDENT"
-                    ? "Estudiante"
-                    : role === "ADMIN"
-                      ? "Administrador"
-                      : "Rol no disponible"}
-                  )
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section aria-labelledby="groups-title">
-        <h2 id="groups-title">Mis grupos</h2>
-        {groupsState.kind === "loading" ? (
-          <p role="status">Cargando grupos...</p>
-        ) : null}
-        {groupsState.kind === "error" ? (
-          <>
-            <p role="alert">No fue posible cargar los grupos.</p>
-            <button type="button" onClick={() => void reloadGroups()}>
-              Reintentar grupos
-            </button>
-          </>
-        ) : null}
-        {groupsState.kind === "loaded" && displayedGroups.length === 0 ? (
-          <p>
-            {profile.isPlatformAdministrator
-              ? "No hay grupos en las organizaciones administrables."
-              : "No perteneces a grupos todavía."}
-          </p>
-        ) : null}
-        {groupsState.kind === "loaded" ? (
-          <ul>
-            {displayedGroups.map((group) => {
-              const role = profile.memberships.find(
-                ({ organization }) => organization.id === group.organization.id,
-              )?.role;
-              const isAdmin =
-                role === "ADMIN" || profile.isPlatformAdministrator;
-              const path = `/organizations/${group.organization.id}/groups/${group.id}`;
-
-              return (
-                <li key={group.id}>
-                  <h3>{group.name}</h3>
-                  <p>{group.organization.name}</p>
-                  {group.description ? <p>{group.description}</p> : null}
-                  <h4>Integrantes</h4>
-                  {group.members.length === 0 ? (
-                    <p>Este grupo no tiene integrantes.</p>
-                  ) : (
-                    <ul>
-                      {group.members.map((member) => (
-                        <li key={member.id}>
-                          {member.name} ({member.rut})
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              disabled={isMutatingGroup}
-                              onClick={() =>
-                                void mutateGroup(
-                                  `${path}/members/${member.id}`,
-                                  "DELETE",
-                                )
-                              }
-                            >
-                              Quitar a {member.name}
-                            </button>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {isAdmin ? (
-                    <>
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          const form = new FormData(event.currentTarget);
-                          void mutateGroup(path, "PATCH", {
-                            name: form.get("name"),
-                            description: form.get("description"),
-                          });
-                        }}
-                      >
-                        <label>
-                          Editar nombre de {group.name}
-                          <input
-                            name="name"
-                            defaultValue={group.name}
-                            required
-                          />
-                        </label>
-                        <label>
-                          Editar descripción de {group.name}
-                          <input
-                            name="description"
-                            defaultValue={group.description ?? ""}
-                          />
-                        </label>
-                        <button type="submit" disabled={isMutatingGroup}>
-                          Guardar grupo
-                        </button>
-                      </form>
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          const form = new FormData(event.currentTarget);
-                          void mutateGroup(`${path}/members`, "POST", {
-                            userId: form.get("userId"),
-                          });
-                        }}
-                      >
-                        <label>
-                          ID de integrante para {group.name}
-                          <input name="userId" required />
-                        </label>
-                        <button type="submit" disabled={isMutatingGroup}>
-                          Agregar integrante
-                        </button>
-                      </form>
-                      <button
-                        type="button"
-                        disabled={isMutatingGroup}
-                        onClick={() => void mutateGroup(path, "DELETE")}
-                      >
-                        Eliminar grupo {group.name}
-                      </button>
-                    </>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
-        {(profile.isPlatformAdministrator &&
-        platformOrganizationsState.kind === "loaded"
-          ? (platformOrganizationsState.organizations ?? [])
-          : profile.memberships
-              .filter(({ role }) => role === "ADMIN")
-              .map(({ organization }) => organization)
-        ).map((organization) => (
-          <form
-            key={organization.id}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              void mutateGroup(
-                `/organizations/${organization.id}/groups`,
-                "POST",
-                {
-                  name: form.get("name"),
-                },
-              );
-            }}
-          >
-            <label>
-              Nuevo grupo
-              <input name="name" required />
-            </label>
-            <button type="submit" disabled={isMutatingGroup}>
-              Crear grupo en {organization.name}
-            </button>
-          </form>
-        ))}
-        {groupError ? <p role="alert">{groupError}</p> : null}
-      </section>
-
-      {groupsState.kind === "loaded" ? (
-        <>
-          <ResourceContext profile={profile} groups={groupsState.groups} />
-          <section aria-labelledby="invoices-navigation-title">
-            <h2 id="invoices-navigation-title">Facturas</h2>
-            <p>
-              Consulta y decide las facturas del contexto de trabajo elegido.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowInvoices((value) => !value)}
+    <AppShell
+      destination={destination}
+      onNavigate={setDestination}
+      canAdministrate={canAdministrate(profile)}
+    >
+      <ProtectedSessionProvider onUnauthorized={onUnauthorized}>
+        <InvoiceDecisionsProvider key={profile.id}>
+          <PolicyMutationsProvider key={profile.id}>
+            <WorkspaceProvider
+              key={`${session.current.epoch}:${profile.id}`}
+              profile={profile}
+              groups={
+                groupsState.kind === "loaded" ? groupsState.groups : undefined
+              }
             >
-              {showInvoices ? "Ocultar facturas" : "Ver facturas"}
-            </button>
-          </section>
-          {showInvoices ? (
-            <InvoiceWorkspace profile={profile} groups={groupsState.groups} />
-          ) : null}
-        </>
-      ) : null}
-    </main>
+              <section aria-label="Sesión" className="session-toolbar">
+                {!isLoggingOut ? <WorkspaceSummary /> : null}
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  disabled={isLoggingOut}
+                >
+                  {isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
+                </button>
+                {logoutError ? <p role="alert">{logoutError}</p> : null}
+              </section>
+              {!isLoggingOut ? (
+                <>
+                  {destination === "Administración" ? (
+                    <AdministrationScreen
+                      profile={profile}
+                      discovery={platformOrganizationsState}
+                      controller={administration}
+                      onGroups={() => setDestination("Mis grupos")}
+                      onRetry={() => void retryAdministrationDiscovery()}
+                      onExecute={(intent) =>
+                        void administration.execute(
+                          intent,
+                          refreshAdministration,
+                          administrationSessionCurrent,
+                          onUnauthorized,
+                        )
+                      }
+                      onRetryRead={(key) =>
+                        void administration.retryRead(
+                          key,
+                          refreshAdministration,
+                          administrationSessionCurrent,
+                        )
+                      }
+                    />
+                  ) : null}
+                  {destination === "Panel principal" ? (
+                    <DashboardScreen
+                      profile={profile}
+                      contextState={groupsState.kind}
+                      onNavigate={setDestination}
+                      onRetry={() => void reloadGroups()}
+                    />
+                  ) : null}
+                  {destination === "Mi perfil" ? (
+                    <ProfileScreen
+                      profile={profile}
+                      email={email}
+                      username={username}
+                      isSaving={isSaving}
+                      message={message}
+                      onEmailChange={setEmail}
+                      onUsernameChange={setUsername}
+                      onSubmit={saveProfile}
+                    />
+                  ) : null}
+                  {destination === "Organizaciones" ? (
+                    <OrganizationsScreen
+                      profile={profile}
+                      discovery={platformOrganizationsState}
+                      contextState={groupsState.kind}
+                      onRetry={() => void reloadGroups()}
+                    />
+                  ) : null}
+                  {destination === "Mis grupos" ? (
+                    <GroupsScreen
+                      profile={profile}
+                      state={groupsState}
+                      discovery={platformOrganizationsState}
+                      pending={isMutatingGroup}
+                      blocked={groupOperations.blocked}
+                      operations={groupOperations.operations}
+                      readRevision={groupReadRevision}
+                      sessionEpoch={session.current.epoch}
+                      onUnauthorized={onUnauthorized}
+                      operation={groupOperation}
+                      error={groupError}
+                      message={groupMessage}
+                      onRetry={() => void reloadGroups()}
+                      onMutate={(...args) => void mutateGroup(...args)}
+                    />
+                  ) : null}
+                  {destination === "Recursos" ||
+                  destination === "Facturas" ||
+                  destination === "Evidencia y lotes" ||
+                  destination === "Políticas" ? (
+                    groupsState.kind === "loaded" ? (
+                      <WorkspaceBoundary>
+                        {destination === "Evidencia y lotes" ? (
+                          <EvidenceScreen />
+                        ) : destination === "Políticas" ? (
+                          <PoliciesScreen profile={profile} />
+                        ) : destination === "Recursos" ? (
+                          <ResourceContext
+                            profile={profile}
+                            groups={groupsState.groups}
+                          />
+                        ) : (
+                          <InvoiceWorkspace
+                            profile={profile}
+                            groups={groupsState.groups}
+                          />
+                        )}
+                      </WorkspaceBoundary>
+                    ) : groupsState.kind === "error" ? (
+                      <>
+                        <p role="alert">
+                          No fue posible cargar el contexto de trabajo.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void reloadGroups()}
+                        >
+                          Reintentar contexto
+                        </button>
+                      </>
+                    ) : (
+                      <p role="status">Cargando contexto de trabajo...</p>
+                    )
+                  ) : null}
+                </>
+              ) : (
+                <p role="status">Cerrando sesión...</p>
+              )}
+            </WorkspaceProvider>
+          </PolicyMutationsProvider>
+        </InvoiceDecisionsProvider>
+      </ProtectedSessionProvider>
+    </AppShell>
   );
 }

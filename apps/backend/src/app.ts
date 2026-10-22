@@ -6,7 +6,12 @@ import {
 } from "./auth-rate-limit.js";
 import { AuthError, type AuthService } from "./auth.js";
 import type { DatabaseReadiness } from "./database.js";
-import type { GroupInput, GroupService, GroupUpdate } from "./groups.js";
+import {
+  parseGroupPage,
+  type GroupInput,
+  type GroupService,
+  type GroupUpdate,
+} from "./groups.js";
 import type { BusinessPolicyService } from "./business-policies.js";
 import {
   EvidencePersistenceError,
@@ -23,6 +28,12 @@ import {
   type MlflowProvisionService,
 } from "./mlflow-provision.js";
 import { ProvisionError } from "./mlflow-provision-plan.js";
+import {
+  evidenceId,
+  parseEvidenceQuery,
+  type EvidenceReadService,
+} from "./evidence-read.js";
+import { EvidenceIntegrityError } from "./evidence-persistence.js";
 
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -290,6 +301,7 @@ export interface AppOptions {
   mlflowResources?: MlflowResourceService;
   platformAdministrators?: PlatformAdministratorService;
   mlflowProvision?: MlflowProvisionService;
+  evidenceRead?: EvidenceReadService;
 }
 
 export function createApp(
@@ -304,6 +316,7 @@ export function createApp(
     mlflowResources,
     platformAdministrators,
     mlflowProvision,
+    evidenceRead,
   }: AppOptions = {},
 ) {
   const app = express();
@@ -591,6 +604,60 @@ export function createApp(
       );
   });
 
+  for (const kind of ["records", "batches"] as const) {
+    app.get(`/evidence-${kind}`, async (request, response) => {
+      const token = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !token) throw new AuthError(401, "Unauthorized");
+      const actor = await auth.getProfile(token);
+      const { context, ...query } = parseEvidenceQuery(request.query, true);
+      if (!evidenceRead) {
+        response.status(503).json({ status: "unavailable" });
+        return;
+      }
+      response
+        .set("Cache-Control", "no-store")
+        .json(await evidenceRead.list(actor, context, kind, query));
+    });
+    app.get(`/evidence-${kind}/:id`, async (request, response) => {
+      const token = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !token) throw new AuthError(401, "Unauthorized");
+      const actor = await auth.getProfile(token);
+      const { context } = parseEvidenceQuery(request.query, false);
+      const id = evidenceId(request.params.id);
+      if (!evidenceRead) {
+        response.status(503).json({ status: "unavailable" });
+        return;
+      }
+      response
+        .set("Cache-Control", "no-store")
+        .json(
+          await evidenceRead[kind === "records" ? "record" : "batch"](
+            actor,
+            context,
+            id,
+          ),
+        );
+    });
+  }
+  app.get(
+    "/evidence-batches/:batchId/proofs/:recordId",
+    async (request, response) => {
+      const token = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !token) throw new AuthError(401, "Unauthorized");
+      const actor = await auth.getProfile(token);
+      const { context } = parseEvidenceQuery(request.query, false);
+      const batchId = evidenceId(request.params.batchId),
+        recordId = evidenceId(request.params.recordId);
+      if (!evidenceRead) {
+        response.status(503).json({ status: "unavailable" });
+        return;
+      }
+      response
+        .set("Cache-Control", "no-store")
+        .json(await evidenceRead.proof(actor, context, batchId, recordId));
+    },
+  );
+
   app.get("/business-policies", async (request, response) => {
     const context = parseResourceContext(request.query);
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
@@ -678,6 +745,27 @@ export function createApp(
         ),
       );
   });
+
+  app.get(
+    "/organizations/:organizationId/groups",
+    async (request, response) => {
+      const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+      if (!auth || !groups || !sessionToken)
+        throw new AuthError(401, "Unauthorized");
+      const profile = await auth.getProfile(sessionToken);
+      const page = parseGroupPage(request.params.organizationId, request.query);
+      response.setHeader("Cache-Control", "no-store");
+      response
+        .status(200)
+        .json(
+          await groups.listOrganizationGroups(
+            profile.id,
+            request.params.organizationId,
+            page,
+          ),
+        );
+    },
+  );
 
   app.post(
     "/organizations/:organizationId/groups",
@@ -778,6 +866,44 @@ export function createApp(
     response,
     _next,
   ) => {
+    if (/^\/evidence-(?:records|batches)(?:\/|$)/.test(request.path)) {
+      if (
+        error instanceof URIError ||
+        (error as { status?: unknown })?.status === 400
+      ) {
+        response
+          .status(400)
+          .json({ status: "error", message: "Invalid evidence request" });
+        return;
+      }
+      if (error instanceof AuthError) {
+        response.status(error.status).json({
+          status: "error",
+          message:
+            error.status === 400
+              ? "Invalid evidence request"
+              : error.status === 401
+                ? "Unauthorized"
+                : error.status === 403
+                  ? "Forbidden"
+                  : "Evidence not found",
+        });
+      } else {
+        const integrity = error instanceof EvidenceIntegrityError;
+        console.error(
+          JSON.stringify({
+            feature: "evidence-read",
+            outcome: "failure",
+            code: integrity ? "INTEGRITY_INVALID" : "UNAVAILABLE",
+          }),
+        );
+        response.status(integrity ? 409 : 503).json({
+          status: "error",
+          code: integrity ? "INTEGRITY_INVALID" : "UNAVAILABLE",
+        });
+      }
+      return;
+    }
     if (error instanceof EvidencePersistenceError) {
       console.error(
         JSON.stringify({

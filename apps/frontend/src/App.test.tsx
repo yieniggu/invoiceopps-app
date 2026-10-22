@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-// Profile and group tests retain their HTTP fixture sequence.
+// Profile and group tests exercise destinations through the real shell.
 // MLflow is tested in its own feature suite.
 vi.mock("./features/resources/MlflowResources", () => ({
   MlflowResources: () => null,
@@ -19,6 +19,10 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+async function navigate(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name }));
+}
 
 describe("APP-03 profile", () => {
   it("resolves the authenticated profile, submits permitted fields, and announces success", async () => {
@@ -55,12 +59,6 @@ describe("APP-03 profile", () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ resources: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             profile: {
@@ -79,30 +77,42 @@ describe("APP-03 profile", () => {
     render(<App />);
 
     expect(screen.getByRole("status").textContent).toContain("Cargando perfil");
+    await navigate("Mi perfil");
     expect(
       await screen.findByRole("heading", { name: "Mi perfil" }),
     ).toBeTruthy();
     expect(await screen.findByText("123456785")).toBeTruthy();
     expect(
-      (screen.getByRole("textbox", { name: "Email" }) as HTMLInputElement)
-        .value,
+      (
+        screen.getByRole("textbox", {
+          name: "Correo electrónico",
+        }) as HTMLInputElement
+      ).value,
     ).toBe("ada@example.test");
     expect(
       (
         screen.getByRole("textbox", {
-          name: "Username",
+          name: "Nombre de usuario",
         }) as HTMLInputElement
       ).value,
     ).toBe("ada");
+    await navigate("Organizaciones");
     expect(screen.getByText("AI Academy")).toBeTruthy();
     expect(screen.getByText("(Estudiante)")).toBeTruthy();
+    await navigate("Mi perfil");
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
-      target: { value: "ada.updated@example.test" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "Username" }), {
-      target: { value: "ada-updated" },
-    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Correo electrónico" }),
+      {
+        target: { value: "ada.updated@example.test" },
+      },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Nombre de usuario" }),
+      {
+        target: { value: "ada-updated" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     const savingButton = screen.getByRole("button", {
       name: "Guardando cambios...",
@@ -155,7 +165,7 @@ describe("APP-03 profile", () => {
     unmount();
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Mi perfil" });
+    await navigate("Mi perfil");
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
@@ -188,6 +198,7 @@ describe("APP-03 profile", () => {
       "No fue posible cargar el perfil.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await navigate("Organizaciones");
     expect(
       await screen.findByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
@@ -267,6 +278,7 @@ describe("APP-03 profile", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(
       "No fue posible cerrar la sesión. Intenta nuevamente.",
     );
+    await navigate("Mi perfil");
     expect(screen.getByText("Ada Lovelace")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Cerrar sesión" }),
@@ -301,7 +313,7 @@ describe("APP-04 organization groups", () => {
       .mockReturnValueOnce(discovery);
 
     render(<App />);
-
+    await navigate("Organizaciones");
     expect(
       await screen.findByText("Cargando organizaciones administrables..."),
     ).toBeTruthy();
@@ -333,13 +345,19 @@ describe("APP-04 organization groups", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
+    await navigate("Mis grupos");
     expect(await screen.findByText("Advanced topics")).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Nuevo grupo" })).toBeTruthy();
+    expect(
+      screen.getByRole("textbox", { name: "Nuevo grupo en AI Academy" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Crear grupo en AI Academy" }),
     ).toBeTruthy();
+    await navigate("Recursos");
     expect(
-      screen.getByText("No tienes organizaciones para consultar recursos."),
+      await screen.findByText(
+        "No tienes organizaciones para consultar recursos.",
+      ),
     ).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(
@@ -349,7 +367,7 @@ describe("APP-04 organization groups", () => {
       ),
     ).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Ver facturas" }));
+    await navigate("Facturas");
 
     expect(
       await screen.findByText(
@@ -443,12 +461,13 @@ describe("APP-04 organization groups", () => {
       });
 
     render(<App />);
-
+    await navigate("Mis grupos");
     expect(await screen.findByText("Local group")).toBeTruthy();
+    await navigate("Organizaciones");
     fireEvent.click(
       screen.getByRole("button", { name: "Reintentar organizaciones" }),
     );
-
+    await navigate("Mis grupos");
     expect(await screen.findByText("Reloaded local group")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/groups", {
       credentials: "same-origin",
@@ -514,15 +533,19 @@ describe("APP-04 organization groups", () => {
       );
 
     render(<App />);
-
+    await navigate("Mis grupos");
     expect(
-      await screen.findByRole("heading", { name: "Mis grupos" }),
+      await screen.findByRole("heading", { name: "Mis grupos", level: 1 }),
     ).toBeTruthy();
-    expect(screen.getByText("Advanced topics")).toBeTruthy();
+    expect(await screen.findByText("Advanced topics")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Quitar a Grace Hopper" }),
+      screen.getByRole("button", {
+        name: "Quitar a Grace Hopper de Advanced topics",
+      }),
     ).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Nuevo grupo" })).toBeTruthy();
+    expect(
+      screen.getByRole("textbox", { name: "Nuevo grupo en AI Academy" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Crear grupo en AI Academy" }),
     ).toBeTruthy();
@@ -568,11 +591,13 @@ describe("APP-04 organization groups", () => {
       );
 
     render(<App />);
-
+    await navigate("Mis grupos");
     expect(
       await screen.findByText("No perteneces a grupos todavía."),
     ).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Nuevo grupo" })).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: /^Nuevo grupo en/ }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: /Crear grupo en/ })).toBeNull();
   });
 });

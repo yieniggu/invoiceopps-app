@@ -106,7 +106,9 @@ function http(admin = false) {
 }
 async function start() {
   const view = render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Mis grupos" }));
   await screen.findByText("Group A");
+  navigate("Mi perfil");
   return view;
 }
 async function signOut() {
@@ -121,9 +123,15 @@ async function signInB() {
     target: { value: "test-password-123" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Mis grupos" }));
   await screen.findByText("Group B");
+  navigate("Mi perfil");
+}
+function navigate(name: string) {
+  fireEvent.click(screen.getByRole("button", { name }));
 }
 function expectB() {
+  navigate("Mi perfil");
   expect(screen.getByText("Person B")).toBeTruthy();
   expect(screen.queryByText("Person A")).toBeNull();
   expect(screen.queryByText("Group A")).toBeNull();
@@ -131,14 +139,172 @@ function expectB() {
   expect(
     screen.getByRole("button", { name: "Guardar cambios" }),
   ).toHaveProperty("disabled", false);
-  expect(screen.getByRole("button", { name: "Guardar grupo" })).toHaveProperty(
-    "disabled",
-    false,
-  );
+  navigate("Mis grupos");
+  expect(screen.getByText("Group B")).toBeTruthy();
+  expect(screen.queryByText("Group A")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Guardar grupo Group B" }),
+  ).toHaveProperty("disabled", false);
+  navigate("Mi perfil");
 }
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe("CR007 App-owned protected reads", () => {
+  const cases = [
+    { label: "member groups", admin: false, discovery: false },
+    { label: "administrator groups", admin: true, discovery: false },
+    { label: "administrator discovery", admin: true, discovery: true },
+  ];
+
+  for (const testCase of cases) {
+    for (const phase of ["initial", "reload"] as const) {
+      it(`expires the current session on ${phase} ${testCase.label} 401`, async () => {
+        const api = http(testCase.admin);
+        const read = testCase.discovery ? api.discovery : api.groups;
+        const pending = deferred();
+        if (phase === "reload") await start();
+        read.mockReturnValueOnce(pending.promise);
+        if (phase === "initial") render(<App />);
+        else {
+          navigate("Mis grupos");
+          fireEvent.click(
+            screen.getByRole("button", { name: "Eliminar grupo Group A" }),
+          );
+        }
+        await waitFor(() =>
+          expect(read).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2),
+        );
+        expect(
+          screen.getByRole("button", { name: "Cerrar sesión" }),
+        ).toBeTruthy();
+        const groupReads = api.groups.mock.calls.length;
+        await act(async () => pending.resolve(json({}, 401)));
+        expect(
+          await screen.findByRole("button", { name: "Iniciar sesión" }),
+        ).toBeTruthy();
+        expect(screen.queryByRole("navigation")).toBeNull();
+        expect(screen.queryByLabelText("Contexto de trabajo")).toBeNull();
+        expect(api.groups).toHaveBeenCalledTimes(groupReads);
+        expect(api.logout).not.toHaveBeenCalled();
+      });
+
+      it(`ignores a late ${phase} ${testCase.label} 401 after login B`, async () => {
+        const api = http(testCase.admin);
+        const read = testCase.discovery ? api.discovery : api.groups;
+        const pending = deferred();
+        if (phase === "reload") await start();
+        read.mockReturnValueOnce(pending.promise);
+        if (phase === "initial") render(<App />);
+        else {
+          navigate("Mis grupos");
+          fireEvent.click(
+            screen.getByRole("button", { name: "Eliminar grupo Group A" }),
+          );
+        }
+        await waitFor(() =>
+          expect(read).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2),
+        );
+        await signOut();
+        await signInB();
+        const count = api.fetchMock.mock.calls.length;
+        await act(async () => pending.resolve(json({}, 401)));
+        expectB();
+        expect(api.fetchMock).toHaveBeenCalledTimes(count);
+      });
+    }
+
+    it.each(["body", "error"])(
+      `ignores delayed initial ${testCase.label} JSON %s after login B`,
+      async (outcome) => {
+        const api = http(testCase.admin);
+        const read = testCase.discovery ? api.discovery : api.groups;
+        let resolve!: (value: unknown) => void;
+        let reject!: (reason: Error) => void;
+        const response = json({});
+        const parse = vi.spyOn(response, "json").mockReturnValue(
+          new Promise<unknown>((yes, no) => {
+            resolve = yes;
+            reject = no;
+          }),
+        );
+        read.mockResolvedValueOnce(response);
+        render(<App />);
+        await waitFor(() => expect(parse).toHaveBeenCalledTimes(1));
+        await signOut();
+        await signInB();
+        const count = api.fetchMock.mock.calls.length;
+        await act(async () => {
+          if (outcome === "error") reject(new Error("Old JSON failure"));
+          else
+            resolve(
+              testCase.discovery
+                ? {
+                    organizations: [
+                      {
+                        id: "org-A",
+                        name: "Old discovery",
+                        groups: [group("A")],
+                      },
+                    ],
+                  }
+                : { groups: [group("A")] },
+            );
+        });
+        expectB();
+        expect(api.fetchMock).toHaveBeenCalledTimes(count);
+      },
+    );
+
+    it.each([403, 404, 500])(
+      `retains session and retry for ${testCase.label} HTTP %s`,
+      async (status) => {
+        const api = http(testCase.admin);
+        const read = testCase.discovery ? api.discovery : api.groups;
+        read.mockResolvedValueOnce(json({}, status));
+        render(<App />);
+        fireEvent.click(
+          await screen.findByRole("button", {
+            name: testCase.discovery ? "Organizaciones" : "Mis grupos",
+          }),
+        );
+        const retry = await screen.findByRole("button", {
+          name: testCase.discovery
+            ? "Reintentar organizaciones"
+            : "Reintentar grupos",
+        });
+        expect(screen.getByRole("alert").textContent).toContain(
+          testCase.discovery
+            ? "No fue posible cargar las organizaciones."
+            : "No fue posible cargar los grupos.",
+        );
+        expect(
+          screen.getByRole("button", { name: "Cerrar sesión" }),
+        ).toBeTruthy();
+        fireEvent.click(retry);
+        await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+        await screen.findByText(
+          testCase.discovery ? "Organization A" : "Group A",
+        );
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(api.logout).not.toHaveBeenCalled();
+      },
+    );
+  }
+
+  it("does not launch protected discovery or groups for an anonymous profile", async () => {
+    const api = http(true);
+    api.getProfile.mockResolvedValueOnce(json({}, 401));
+    render(<App />);
+    await screen.findByRole("button", { name: "Iniciar sesión" });
+    expect(api.getProfile).toHaveBeenCalledTimes(1);
+    expect(api.discovery).not.toHaveBeenCalled();
+    expect(api.groups).not.toHaveBeenCalled();
+    expect(api.fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("CR-001 mounted session isolation", () => {
@@ -161,6 +327,18 @@ describe("CR-001 mounted session isolation", () => {
       const pending = deferred();
       api.patch.mockReturnValueOnce(pending.promise);
       await start();
+      navigate("Recursos");
+      fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
+        target: { value: "org-A:group:group-A" },
+      });
+      await waitFor(() =>
+        expect(
+          api.fetchMock.mock.calls.some(([path]) =>
+            path.toString().includes("ownerId=group-A"),
+          ),
+        ).toBe(true),
+      );
+      navigate("Mi perfil");
       fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
       await signOut();
       const boundary = api.fetchMock.mock.calls.length;
@@ -170,7 +348,9 @@ describe("CR-001 mounted session isolation", () => {
         else pending.resolve(json({ profile: profile("A") }, status));
       });
       expectB();
-      fireEvent.click(screen.getByRole("button", { name: "Ver facturas" }));
+      navigate("Recursos");
+      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
+      navigate("Facturas");
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls.some(([path]) =>
@@ -197,7 +377,7 @@ describe("CR-001 mounted session isolation", () => {
       }
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
       expect(screen.getAllByRole("option", { name: /Group B/ })).toHaveLength(
-        2,
+        1,
       );
     },
   );
@@ -209,6 +389,7 @@ describe("CR-001 mounted session isolation", () => {
       const pending = deferred();
       api.mutation.mockReturnValueOnce(pending.promise);
       await start();
+      navigate("Mis grupos");
       fireEvent.click(
         screen.getByRole("button", { name: "Eliminar grupo Group A" }),
       );
@@ -228,6 +409,7 @@ describe("CR-001 mounted session isolation", () => {
       const pending = deferred();
       await start();
       api.groups.mockReturnValueOnce(pending.promise);
+      navigate("Mis grupos");
       fireEvent.click(
         screen.getByRole("button", { name: "Eliminar grupo Group A" }),
       );
@@ -238,8 +420,12 @@ describe("CR-001 mounted session isolation", () => {
         pending.resolve(json({ groups: [group("A")] }, status)),
       );
       expectB();
+      navigate("Mis grupos");
       expect(screen.getByText("Group B")).toBeTruthy();
+      expect(screen.queryByText("Group A")).toBeNull();
+      navigate("Recursos");
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
+      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
     },
   );
 
@@ -289,6 +475,7 @@ describe("CR-001 mounted session isolation", () => {
     const pending = deferred();
     await start();
     api.discovery.mockReturnValueOnce(pending.promise);
+    navigate("Mis grupos");
     fireEvent.click(
       screen.getByRole("button", { name: "Eliminar grupo Group A" }),
     );
@@ -339,6 +526,7 @@ describe("CR-001 mounted session isolation", () => {
     const pending = deferred();
     api.mutation.mockReturnValueOnce(pending.promise);
     const view = await start();
+    navigate("Mis grupos");
     fireEvent.click(
       screen.getByRole("button", { name: "Eliminar grupo Group A" }),
     );
@@ -372,6 +560,11 @@ describe("CR-001 mounted session isolation", () => {
       if (status === 401) await signInB();
       else {
         fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+        fireEvent.click(
+          await screen.findByRole("button", {
+            name: "Mis grupos",
+          }),
+        );
         await screen.findByText("Group B");
       }
       expectB();

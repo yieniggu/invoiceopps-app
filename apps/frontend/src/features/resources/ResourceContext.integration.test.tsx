@@ -78,7 +78,7 @@ describe("APP-09 selector and live MLflow panel integration", () => {
       path.includes("ownerType=user"),
     )?.signal;
     fireEvent.change(screen.getByLabelText("Propietario"), {
-      target: { value: "group:group-1:organization-1" },
+      target: { value: "organization-1:group:group-1" },
     });
     expect(await screen.findByText("group-run")).toBeTruthy();
     expect(

@@ -15,7 +15,23 @@ export default defineConfig({
       "/resources": "http://localhost:3000",
       "/mlflow/resources": "http://localhost:3000",
       "/organizations": "http://localhost:3000",
+      "^/evidence-(?:records(?:/[^/?]+)?|batches(?:/[^/?]+(?:/proofs/[^/?]+)?)?)(?:\\?|$)":
+        {
+          target: "http://localhost:3000",
+          changeOrigin: false,
+          xfwd: true,
+        },
+      "^/business-policies(?:/[^/?]+)?(?:\\?|$)": {
+        target: "http://localhost:3000",
+        changeOrigin: false,
+        xfwd: true,
+      },
       "^/platform/organizations(?:\\?|$)": {
+        target: "http://localhost:3000",
+        changeOrigin: false,
+        xfwd: true,
+      },
+      "^/platform/organizations/[^/?]+/members(?:/[^/?]+)?(?:\\?|$)": {
         target: "http://localhost:3000",
         changeOrigin: false,
         xfwd: true,

@@ -79,7 +79,7 @@ describe("APP-05 resource ownership context", () => {
 
     expect(await screen.findByText("Personal experiment")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Propietario"), {
-      target: { value: "group:group-1:organization-1" },
+      target: { value: "organization-1:group:group-1" },
     });
 
     expect(await screen.findByText("Group model")).toBeTruthy();
@@ -88,7 +88,7 @@ describe("APP-05 resource ownership context", () => {
     ).toHaveLength(2);
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/resources?organizationId=organization-1&ownerType=group&ownerId=group-1",
-      { credentials: "same-origin" },
+      { credentials: "same-origin", signal: expect.any(AbortSignal) },
     );
   });
 
@@ -117,7 +117,7 @@ describe("APP-05 resource ownership context", () => {
     ).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Propietario"), {
-      target: { value: "group:group-1:organization-1" },
+      target: { value: "organization-1:group:group-1" },
     });
     expect((await screen.findByRole("alert")).textContent).toContain(
       "No fue posible cargar los recursos",
