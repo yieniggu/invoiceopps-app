@@ -9,8 +9,9 @@ No es una revisión formal nueva, aprobación humana ni certificación productiv
 Frontend final **335/335**; 330/330 queda histórico. Backend **94/94** y SQL **74/74**
 se reutilizan porque backend/API/schema no cambiaron tras el último delta frontend;
 no son ejecuciones nuevas de este cierre documental. El cierre S8 y sus 65 layouts
-son históricos, no prueba de estos bytes. App sigue **14/15**, sin crédito adicional
-por APP-12; **APP-13 no iniciado**. CR001–CR008 y CR005 humano solo para S1 intactos.
+son históricos, no prueba de estos bytes. APP-12 no recibe crédito adicional;
+APP-13 está **CLOSED / COMPLETED_LOCAL_VALIDATED**. CR001–CR008 y CR005 humano
+solo para S1 permanecen intactos.
 
 - **CR009:** PATCH solo fusiona `email`/`username` confirmados del mismo actor,
   nunca roles ni membresías. Las lecturas de capacidades usan una revisión
@@ -90,7 +91,9 @@ proveedores vivos ni cadena. Sin commit, push ni nuevo trabajo funcional.
 
 Aplicación académica InvoiceOps: backend Express con TypeScript, frontend React
 con Vite y PostgreSQL. APP-12 está **CLOSED / COMPLETED_LOCAL_VALIDATED** en su
-contrato de interfaz aprobado; esto no implica despliegue ni cierre de APP-13.
+contrato de interfaz aprobado. APP-13 está **CLOSED / COMPLETED_LOCAL_VALIDATED**
+para CI e imágenes Docker locales; ninguno de los dos cierres implica publicación,
+despliegue ni ejecución remota del workflow.
 
 ## Interfaz en español — APP-12 / S8
 
@@ -385,6 +388,29 @@ con autorización separada; `start` sólo admite cinco IDs locales verificados y
 - Node.js 24 o superior.
 - pnpm 11 o superior.
 - Docker Desktop con Docker Compose, para ejecutar el entorno completo.
+
+## Verificación local equivalente a CI
+
+La CI se ejecuta únicamente al abrir o actualizar un pull request contra `main`
+y al hacer push a `main`. Usa Node 24, `pnpm@11.17.0` y el lockfile congelado.
+Desde la raíz de `invoiceops-app`, reproduce sus gates sin iniciar servicios:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm test
+pnpm typecheck
+pnpm build
+pnpm format:check
+docker compose config
+docker compose build
+```
+
+`pnpm test` cubre las pruebas unitarias definidas por el workspace. La
+verificación no ejecuta `pnpm test:integration`, migraciones, seed ni
+`docker compose up`; tampoco publica imágenes, inicia sesión en un registry,
+despliega, configura TLS o usa servicios externos reales. `docker compose build`
+solo construye las imágenes existentes de backend y frontend.
 
 ## Configuración local
 
