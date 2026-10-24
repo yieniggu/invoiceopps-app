@@ -120,15 +120,41 @@ describe("readEvidenceAnchorConfig", () => {
     },
   );
 
-  it.each(["http://127.0.0.1:8545", "http://[::1]:8545"])(
-    "allows literal loopback HTTP endpoint %s",
-    (rpcUrl) => {
-      expect(
-        readEvidenceAnchorConfig(environment({ EVM_RPC_URL: rpcUrl }), "anchor")
-          .kind,
-      ).toBe("configured");
+  it.each([
+    ["STACK-04 loopback endpoint", "http://127.0.0.1:8545"],
+    ["STACK-04 IPv6 loopback endpoint", "http://[::1]:8545"],
+  ])("allows %s: %s", (_label, rpcUrl) => {
+    expect(
+      readEvidenceAnchorConfig(environment({ EVM_RPC_URL: rpcUrl }), "anchor")
+        .kind,
+    ).toBe("configured");
+  });
+
+  it.each(["31336", "31338"])(
+    "rejects IPv4 and IPv6 Stack local RPCs configured with chain ID %s",
+    (chainId) => {
+      for (const rpcUrl of ["http://127.0.0.1:18545", "http://[::1]:18545"]) {
+        expect(() =>
+          readEvidenceAnchorConfig(
+            environment({ EVM_RPC_URL: rpcUrl, EVM_CHAIN_ID: chainId }),
+            "anchor",
+          ),
+        ).toThrow();
+      }
     },
   );
+
+  it("preserves configured remote targets outside the STACK-04 local profile", () => {
+    expect(
+      readEvidenceAnchorConfig(
+        environment({
+          EVM_RPC_URL: "https://rpc.example.invalid",
+          EVM_CHAIN_ID: "10200",
+        }),
+        "anchor",
+      ).kind,
+    ).toBe("configured");
+  });
 
   it.each([
     "http://localhost:8545",

@@ -19,6 +19,8 @@ export type EvidenceAnchorConfig =
     };
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const STACK04_CHAIN_ID = 31337;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]"]);
 
 export class EvidenceAnchorConfigurationError extends Error {
   constructor() {
@@ -46,10 +48,18 @@ function validateRpcUrl(value: string): string {
   )
     return invalid();
   if (url.protocol === "http:") {
-    const loopback = url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-    if (!loopback) return invalid();
+    if (!LOOPBACK_HOSTS.has(url.hostname)) return invalid();
   }
   return value;
+}
+
+function validateTarget(rpcUrl: string, chainId: number): string {
+  const validatedRpcUrl = validateRpcUrl(rpcUrl);
+  const url = new URL(validatedRpcUrl);
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) {
+    if (chainId !== STACK04_CHAIN_ID) return invalid();
+  }
+  return validatedRpcUrl;
 }
 
 export function readEvidenceAnchorConfig(
@@ -85,7 +95,7 @@ export function readEvidenceAnchorConfig(
   const target = {
     chainId,
     contractAddress: contract.toLowerCase(),
-    rpcUrl: validateRpcUrl(rpcUrl),
+    rpcUrl: validateTarget(rpcUrl, chainId),
   };
   Object.defineProperty(target, "toJSON", {
     value: () => ({ chainId, contractAddress: target.contractAddress }),
