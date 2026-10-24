@@ -44,13 +44,18 @@ export interface EvidenceRpcProvider {
 export function createEvidenceAnchorHttpProvider(
   endpoint: string,
   action: EvidenceAnchorAction,
+  stack08ComposeAnvil = false,
 ): EvidenceRpcProvider {
   const url = new URL(endpoint);
   if (
     url.protocol !== "https:" &&
     !(
       url.protocol === "http:" &&
-      (url.hostname === "127.0.0.1" || url.hostname === "[::1]")
+      (url.hostname === "127.0.0.1" ||
+        url.hostname === "[::1]" ||
+        (stack08ComposeAnvil &&
+          url.hostname === "anvil" &&
+          url.port === "8545"))
     )
   )
     throw new Error("Evidence RPC endpoint rejected");
@@ -180,6 +185,7 @@ export function createEvidenceAnchorRuntime(
   provider: EvidenceRpcProvider = createEvidenceAnchorHttpProvider(
     config.target.rpcUrl,
     action,
+    config.target.stack08ComposeAnvil === true,
   ),
 ): { transport: EvidenceAnchorTransport; chainReader: ChainReader } {
   const publicClient = createPublicClient({

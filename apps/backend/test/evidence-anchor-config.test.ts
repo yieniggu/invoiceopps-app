@@ -130,6 +130,43 @@ describe("readEvidenceAnchorConfig", () => {
     ).toBe("configured");
   });
 
+  it("allows only the isolated STACK-08 Compose Anvil endpoint under its local smoke contract", () => {
+    const config = readEvidenceAnchorConfig(
+      environment({
+        EVM_RPC_URL: "http://anvil:8545",
+        NODE_ENV: "development",
+        EVM_LOCAL_STACK_SMOKE: "STACK-08",
+      }),
+      "anchor",
+    );
+    expect(config.kind).toBe("configured");
+    if (config.kind === "configured")
+      expect(config.target.stack08ComposeAnvil).toBe(true);
+
+    for (const overrides of [
+      { EVM_RPC_URL: "http://anvil:8545" },
+      {
+        EVM_RPC_URL: "http://anvil:8545",
+        NODE_ENV: "production",
+        EVM_LOCAL_STACK_SMOKE: "STACK-08",
+      },
+      {
+        EVM_RPC_URL: "http://anvil:9545",
+        NODE_ENV: "development",
+        EVM_LOCAL_STACK_SMOKE: "STACK-08",
+      },
+      {
+        EVM_RPC_URL: "http://other:8545",
+        NODE_ENV: "development",
+        EVM_LOCAL_STACK_SMOKE: "STACK-08",
+      },
+    ]) {
+      expect(() =>
+        readEvidenceAnchorConfig(environment(overrides), "anchor"),
+      ).toThrow();
+    }
+  });
+
   it.each(["31336", "31338"])(
     "rejects IPv4 and IPv6 Stack local RPCs configured with chain ID %s",
     (chainId) => {

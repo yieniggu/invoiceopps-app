@@ -7,13 +7,20 @@ export interface EvidenceAnchorEnvironment {
   EVM_CHAIN_ID?: string;
   EVIDENCE_CONTRACT_ADDRESS?: string;
   EVM_SIGNER_PRIVATE_KEY?: string;
+  EVM_LOCAL_STACK_SMOKE?: string;
+  NODE_ENV?: string;
 }
 
 export type EvidenceAnchorConfig =
   | { kind: "unavailable" }
   | {
       kind: "configured";
-      target: { rpcUrl: string; chainId: number; contractAddress: string };
+      target: {
+        rpcUrl: string;
+        chainId: number;
+        contractAddress: string;
+        stack08ComposeAnvil?: true;
+      };
       signerAddress?: string;
       getAccount?: () => PrivateKeyAccount;
     };
@@ -21,6 +28,9 @@ export type EvidenceAnchorConfig =
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const STACK04_CHAIN_ID = 31337;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]"]);
+const STACK08_COMPOSE_ANVIL_HOST = "anvil";
+const STACK08_COMPOSE_ANVIL_PORT = "8545";
+const STACK08_SMOKE_MARKER = "STACK-08";
 
 export class EvidenceAnchorConfigurationError extends Error {
   constructor() {
@@ -32,7 +42,22 @@ function invalid(): never {
   throw new EvidenceAnchorConfigurationError();
 }
 
-function validateRpcUrl(value: string): string {
+function isStack08ComposeAnvil(
+  url: URL,
+  environment: EvidenceAnchorEnvironment,
+): boolean {
+  return (
+    environment.NODE_ENV === "development" &&
+    environment.EVM_LOCAL_STACK_SMOKE === STACK08_SMOKE_MARKER &&
+    url.hostname === STACK08_COMPOSE_ANVIL_HOST &&
+    url.port === STACK08_COMPOSE_ANVIL_PORT
+  );
+}
+
+function validateRpcUrl(
+  value: string,
+  environment: EvidenceAnchorEnvironment,
+): string {
   let url: URL;
   try {
     url = new URL(value);
@@ -48,15 +73,27 @@ function validateRpcUrl(value: string): string {
   )
     return invalid();
   if (url.protocol === "http:") {
-    if (!LOOPBACK_HOSTS.has(url.hostname)) return invalid();
+    if (
+      !LOOPBACK_HOSTS.has(url.hostname) &&
+      !isStack08ComposeAnvil(url, environment)
+    )
+      return invalid();
   }
   return value;
 }
 
-function validateTarget(rpcUrl: string, chainId: number): string {
-  const validatedRpcUrl = validateRpcUrl(rpcUrl);
+function validateTarget(
+  rpcUrl: string,
+  chainId: number,
+  environment: EvidenceAnchorEnvironment,
+): string {
+  const validatedRpcUrl = validateRpcUrl(rpcUrl, environment);
   const url = new URL(validatedRpcUrl);
-  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) {
+  if (
+    url.protocol === "http:" &&
+    (LOOPBACK_HOSTS.has(url.hostname) ||
+      isStack08ComposeAnvil(url, environment))
+  ) {
     if (chainId !== STACK04_CHAIN_ID) return invalid();
   }
   return validatedRpcUrl;
@@ -92,10 +129,16 @@ export function readEvidenceAnchorConfig(
     contract.toLowerCase() === `0x${"0".repeat(40)}`
   )
     return invalid();
+  const validatedRpcUrl = validateTarget(rpcUrl, chainId, environment);
+  const stack08ComposeAnvil = isStack08ComposeAnvil(
+    new URL(validatedRpcUrl),
+    environment,
+  );
   const target = {
     chainId,
     contractAddress: contract.toLowerCase(),
-    rpcUrl: validateTarget(rpcUrl, chainId),
+    rpcUrl: validatedRpcUrl,
+    ...(stack08ComposeAnvil ? { stack08ComposeAnvil: true as const } : {}),
   };
   Object.defineProperty(target, "toJSON", {
     value: () => ({ chainId, contractAddress: target.contractAddress }),

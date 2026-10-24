@@ -27,6 +27,15 @@ const CONTRACT = `0x${"11".repeat(20)}`;
 const ROOT = `0x${"aa".repeat(32)}` as Hex;
 
 describe("evidence anchor runtime", () => {
+  it("allows the Compose Anvil endpoint only with the validated STACK-08 capability", () => {
+    expect(() =>
+      createEvidenceAnchorHttpProvider("http://anvil:8545", "anchor"),
+    ).toThrow("Evidence RPC endpoint rejected");
+    expect(() =>
+      createEvidenceAnchorHttpProvider("http://anvil:8545", "anchor", true),
+    ).not.toThrow();
+  });
+
   it("settles response emitter errors once and retains request error handling through destroy", async () => {
     const request = new EventEmitter() as EventEmitter & {
       destroy(): void;
