@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 
 import {
   OrganizationRole,
+  PlatformAdministrativeAuditEventType,
   type PrismaClient,
 } from "./generated/prisma/client.js";
 import { normalizeRut } from "./identity.js";
@@ -11,8 +12,6 @@ const scryptAsync = promisify(scrypt);
 const PASSWORD_KEY_LENGTH = 64;
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const DUMMY_PASSWORD_HASH = `scrypt$${Buffer.alloc(16).toString("base64")}$${Buffer.alloc(PASSWORD_KEY_LENGTH).toString("base64")}`;
-
-export type AuthMode = "open" | "allowlist";
 
 export interface AuthUser {
   id: string;
@@ -23,6 +22,7 @@ export interface AuthUser {
 export interface AuthProfile extends AuthUser {
   email: string | null;
   username: string | null;
+  mustChangePassword?: boolean;
   isPlatformAdministrator: boolean;
   memberships: Array<{
     organization: { id: string; name: string; slug: string };
@@ -31,11 +31,6 @@ export interface AuthProfile extends AuthUser {
 }
 
 export interface AuthService {
-  signUp(input: {
-    name: string;
-    rut: string;
-    password: string;
-  }): Promise<AuthUser>;
   login(input: { rut: string; password: string }): Promise<{
     sessionToken: string;
     user: AuthUser;
@@ -46,6 +41,10 @@ export interface AuthService {
     sessionToken: string,
     input: { email?: string | null; username?: string | null },
   ): Promise<AuthProfile>;
+  changePassword?(
+    sessionToken: string,
+    input: { currentPassword: string; newPassword: string },
+  ): Promise<void>;
 }
 
 export interface AuthServiceOptions {
@@ -58,34 +57,6 @@ export class AuthError extends Error {
     message: string,
   ) {
     super(message);
-  }
-}
-
-function parseSignUp(input: {
-  name: unknown;
-  rut: unknown;
-  password: unknown;
-}) {
-  if (typeof input.name !== "string" || !input.name.trim()) {
-    throw new AuthError(400, "Invalid signup request");
-  }
-
-  if (typeof input.rut !== "string" || typeof input.password !== "string") {
-    throw new AuthError(400, "Invalid signup request");
-  }
-
-  if (input.password.length < 12) {
-    throw new AuthError(400, "Invalid signup request");
-  }
-
-  try {
-    return {
-      name: input.name.trim(),
-      password: input.password,
-      rut: normalizeRut(input.rut),
-    };
-  } catch {
-    throw new AuthError(400, "Invalid signup request");
   }
 }
 
@@ -105,7 +76,7 @@ function hashSessionToken(sessionToken: string) {
   return createHash("sha256").update(sessionToken).digest("base64");
 }
 
-async function hashPassword(password: string) {
+export async function hashPassword(password: string) {
   const salt = randomBytes(16);
   const derivedKey = (await scryptAsync(
     password,
@@ -142,23 +113,8 @@ async function verifyPassword(password: string, passwordHash: string) {
   );
 }
 
-export function authModeFromEnvironment(
-  value = process.env.AUTH_MODE,
-): AuthMode {
-  if (value === undefined || value === "open") {
-    return "open";
-  }
-
-  if (value === "allowlist") {
-    return value;
-  }
-
-  throw new Error("AUTH_MODE must be open or allowlist");
-}
-
 export function createAuthService(
   prisma: PrismaClient,
-  authMode = authModeFromEnvironment(),
   {
     verifyPassword: passwordVerifier = verifyPassword,
   }: AuthServiceOptions = {},
@@ -175,6 +131,7 @@ export function createAuthService(
             rut: true,
             email: true,
             username: true,
+            mustChangePassword: true,
             platformAdministrator: { select: { id: true } },
             memberships: {
               orderBy: [
@@ -217,59 +174,18 @@ export function createAuthService(
   }
 
   return {
-    async signUp(input) {
-      const signup = parseSignUp(input);
-      const passwordHash = await hashPassword(signup.password);
-
-      try {
-        return await prisma.$transaction(async (transaction) => {
-          const authorizedOrganizations =
-            authMode === "allowlist"
-              ? await transaction.authorizedUserOrganization.findMany({
-                  where: { rut: signup.rut },
-                  select: { organizationId: true },
-                })
-              : [];
-
-          if (
-            authMode === "allowlist" &&
-            authorizedOrganizations.length === 0
-          ) {
-            throw new AuthError(403, "Signup is not authorized");
-          }
-
-          return transaction.user.create({
-            data: {
-              name: signup.name,
-              rut: signup.rut,
-              passwordHash,
-              memberships: {
-                create: authorizedOrganizations.map(({ organizationId }) => ({
-                  organizationId,
-                  role: OrganizationRole.STUDENT,
-                })),
-              },
-            },
-            select: { id: true, name: true, rut: true },
-          });
-        });
-      } catch (error) {
-        if (error instanceof AuthError) {
-          throw error;
-        }
-
-        if ((error as { code?: unknown }).code === "P2002") {
-          throw new AuthError(409, "Account cannot be created");
-        }
-
-        throw error;
-      }
-    },
     async login(input) {
       const login = parseLogin(input);
       const user = await prisma.user.findUnique({
         where: { rut: login.rut },
-        select: { id: true, name: true, rut: true, passwordHash: true },
+        select: {
+          id: true,
+          name: true,
+          rut: true,
+          passwordHash: true,
+          mustChangePassword: true,
+          temporaryPasswordExpiresAt: true,
+        },
       });
 
       const passwordHash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
@@ -278,7 +194,13 @@ export function createAuthService(
         passwordHash,
       );
 
-      if (!user?.passwordHash || !passwordMatches) {
+      if (
+        !user?.passwordHash ||
+        !passwordMatches ||
+        (user.mustChangePassword &&
+          (!user.temporaryPasswordExpiresAt ||
+            user.temporaryPasswordExpiresAt <= new Date()))
+      ) {
         throw new AuthError(401, "Invalid credentials");
       }
 
@@ -307,6 +229,69 @@ export function createAuthService(
       });
 
       return { ...profile, ...user };
+    },
+    async changePassword(sessionToken, input) {
+      if (
+        typeof input.currentPassword !== "string" ||
+        typeof input.newPassword !== "string" ||
+        input.newPassword.length < 12
+      ) {
+        throw new AuthError(400, "Invalid password change");
+      }
+      const tokenHash = hashSessionToken(sessionToken);
+      const session = await prisma.session.findUnique({
+        where: { tokenHash },
+        select: {
+          userId: true,
+          expiresAt: true,
+          user: {
+            select: {
+              passwordHash: true,
+              mustChangePassword: true,
+              temporaryPasswordExpiresAt: true,
+            },
+          },
+        },
+      });
+      if (
+        !session ||
+        session.expiresAt <= new Date() ||
+        !session.user.passwordHash ||
+        (session.user.mustChangePassword &&
+          (!session.user.temporaryPasswordExpiresAt ||
+            session.user.temporaryPasswordExpiresAt <= new Date()))
+      ) {
+        throw new AuthError(401, "Unauthorized");
+      }
+      if (
+        !(await passwordVerifier(
+          input.currentPassword,
+          session.user.passwordHash,
+        ))
+      ) {
+        throw new AuthError(401, "Invalid credentials");
+      }
+      const passwordHash = await hashPassword(input.newPassword);
+      await prisma.$transaction(async (transaction) => {
+        await transaction.user.update({
+          where: { id: session.userId },
+          data: {
+            passwordHash,
+            mustChangePassword: false,
+            temporaryPasswordExpiresAt: null,
+          },
+        });
+        await transaction.session.deleteMany({
+          where: { userId: session.userId, tokenHash: { not: tokenHash } },
+        });
+        await transaction.platformAdministrativeAuditEvent.create({
+          data: {
+            type: PlatformAdministrativeAuditEventType.PASSWORD_CHANGED,
+            actorUserId: session.userId,
+            targetUserId: session.userId,
+          },
+        });
+      });
     },
   };
 }

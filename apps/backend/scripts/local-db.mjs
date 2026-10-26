@@ -387,7 +387,7 @@ function dockerInspect(args, env, phase) {
   ];
 }
 
-function verifyVolume(env) {
+function verifyManagedVolume(env) {
   const volume = dockerInspect(
     ["--type", "volume", volumeName],
     env,
@@ -420,6 +420,48 @@ function verifyVolume(env) {
   }
 }
 
+function cleanupManagedClone(container, dockerEnv) {
+  const verifiedContainer = verifyManagedContainer(
+    dockerInspect([containerName], dockerEnv, "managed clone cleanup preflight"),
+  );
+  if (!verifiedContainer || verifiedContainer.Id !== container.Id) {
+    fail("Managed clone identity changed before cleanup; refusing removal");
+  }
+  const verifiedVolume = dockerInspect(
+    ["--type", "volume", volumeName],
+    dockerEnv,
+    "managed clone volume cleanup preflight",
+  )?.[0];
+  if (
+    !verifiedVolume ||
+    verifiedVolume.Driver !== "local" ||
+    verifiedVolume.Labels?.[ownerLabel] !== ownerValue ||
+    verifiedVolume.Labels?.[projectLabel] !== projectValue
+  ) {
+    fail("Managed clone volume identity changed before cleanup; refusing removal");
+  }
+  dockerCall(["rm", "--force", verifiedContainer.Id], {
+    env: dockerEnv,
+    phase: "managed clone container cleanup",
+  });
+  if (dockerInspect([containerName], dockerEnv, "managed clone absence check")) {
+    fail("Managed clone container still exists after cleanup");
+  }
+  dockerCall(["volume", "rm", volumeName], {
+    env: dockerEnv,
+    phase: "managed clone volume cleanup",
+  });
+  if (
+    dockerInspect(
+      ["--type", "volume", volumeName],
+      dockerEnv,
+      "managed clone volume absence check",
+    )
+  ) {
+    fail("Managed clone volume still exists after cleanup");
+  }
+}
+
 function verifySourceContainer(source) {
   if (
     !source ||
@@ -439,6 +481,28 @@ function verifySourceContainer(source) {
     );
   }
   return source;
+}
+
+function cleanupManagedMetadata(stateDirectory, metadata, container) {
+  if (!metadata) return;
+  if (
+    metadata.target?.container !== containerName ||
+    metadata.target?.containerId !== container.Id ||
+    metadata.target?.volume !== volumeName ||
+    metadata.target?.port !== Number(targetPort)
+  ) {
+    fail("Managed clone metadata identity changed before cleanup; refusing removal");
+  }
+  if (metadata.session?.sessionId && metadata.session?.tokenFile) {
+    const tokenPath = verifiedSessionTokenPath(
+      stateDirectory,
+      metadata.session.sessionId,
+      metadata.session.tokenFile,
+    );
+    rmSync(tokenPath, { force: true });
+    rmdirSync(dirname(tokenPath));
+  }
+  rmSync(join(stateDirectory, "local-db.json"), { force: true });
 }
 
 export function verifyManagedContainer(container) {
@@ -565,10 +629,13 @@ function tableFingerprintSql(excludedSessionId) {
   }
   return `SELECT json_agg(json_build_object('table', name, 'rows', row_count, 'hash', digest) ORDER BY name) FROM (
     ${legacyTables
-      .map(
-        (table) =>
-          `SELECT '${table}'::text AS name, count(*)::bigint AS row_count, md5(coalesce(string_agg(to_jsonb(t)::text, E'\\n' ORDER BY to_jsonb(t)->>'id'), '')) AS digest FROM "${table}" AS t${table === "Session" && excludedSessionId ? ` WHERE t.id <> '${excludedSessionId}'` : ""}`,
-      )
+      .map((table) => {
+        const rowJson =
+          table === "User"
+            ? "to_jsonb(t) - 'mustChangePassword' - 'temporaryPasswordExpiresAt'"
+            : "to_jsonb(t)";
+        return `SELECT '${table}'::text AS name, count(*)::bigint AS row_count, md5(coalesce(string_agg((${rowJson})::text, E'\\n' ORDER BY to_jsonb(t)->>'id'), '')) AS digest FROM "${table}" AS t${table === "Session" && excludedSessionId ? ` WHERE t.id <> '${excludedSessionId}'` : ""}`;
+      })
       .join(" UNION ALL ")}
   ) AS fingerprints`;
 }
@@ -1138,6 +1205,8 @@ async function migrate() {
     DOCKER_CONFIG: dockerConfig,
   });
   let client;
+  let managedTarget;
+  let metadata;
   try {
     dockerCall(["info", "--format", "{{.ServerVersion}}"], {
       env: dockerEnv,
@@ -1146,6 +1215,7 @@ async function migrate() {
     let existing = verifyManagedContainer(
       dockerInspect([containerName], dockerEnv, "managed container preflight"),
     );
+    managedTarget = existing;
     let createdPassword;
     let imageId;
     if (!existing) {
@@ -1164,7 +1234,7 @@ async function migrate() {
         env: dockerEnv,
         phase: "cached PostgreSQL image verification",
       });
-      verifyVolume(dockerEnv);
+      verifyManagedVolume(dockerEnv);
       createdPassword = randomBytes(32).toString("base64url");
       const containerEnv = safeChildEnvironment({
         ...dockerEnv,
@@ -1210,6 +1280,7 @@ async function migrate() {
       if (!existing) {
         fail("New managed target identity was not returned by Docker");
       }
+      managedTarget = existing;
       dockerCall(["start", existing.Id], {
         env: dockerEnv,
         phase: "owned target start",
@@ -1238,7 +1309,7 @@ async function migrate() {
     console.info("stage:managed-target-readiness");
     await waitForManagedPostgres(databaseUrl);
     const config = migrationConfig(tempDirectory);
-    let metadata = readMetadata(stateDirectory);
+    metadata = readMetadata(stateDirectory);
     const expected = expectedMigrations();
     const sourceFingerprintSql = tableFingerprintSql();
     const env = safeChildEnvironment({
@@ -1282,7 +1353,13 @@ async function migrate() {
       newTableCounts,
       targetRelations,
     );
-    await verifyAuditGuard(client, !cleanBootstrap);
+    await verifyAuditGuard(
+      client,
+      targetBefore.some(
+        (fingerprint) =>
+          fingerprint.table === "DecisionEvent" && Number(fingerprint.rows) > 0,
+      ),
+    );
     if (metadata) {
       if (
         metadata.target?.containerId !== existing.Id ||
@@ -1428,7 +1505,14 @@ async function migrate() {
         const targetFingerprint = await getTargetFingerprint(client);
         compareFingerprints(sourceFingerprint, targetFingerprint);
         await verifyNewTablesEmpty(client);
-        await verifyAuditGuard(client);
+        await verifyAuditGuard(
+          client,
+          targetFingerprint.some(
+            (fingerprint) =>
+              fingerprint.table === "DecisionEvent" &&
+              Number(fingerprint.rows) > 0,
+          ),
+        );
         metadata = {
           createdAt: new Date().toISOString(),
           target: {
@@ -1463,7 +1547,14 @@ async function migrate() {
       }
     }
     let session;
-    if (metadata.bootstrap !== "verified-clean-source") {
+    const expectedDemoUser = await client.query(
+      'SELECT 1 FROM "User" WHERE id = $1',
+      [expectedUserId],
+    );
+    if (
+      metadata.bootstrap !== "verified-clean-source" &&
+      expectedDemoUser.rowCount === 1
+    ) {
       const profileEnv = { DATABASE_URL: databaseUrl };
       session = await ensureSession(
         client,
@@ -1474,6 +1565,8 @@ async function migrate() {
       metadata.session = session.session;
       metadata.dataFingerprint = await getTargetFingerprint(client);
       writeMetadata(stateDirectory, metadata);
+    } else if (metadata.bootstrap !== "verified-clean-source") {
+      console.info("stage:profile-proof-skipped-no-canonical-demo-user");
     }
     console.info(
       JSON.stringify(
@@ -1494,8 +1587,21 @@ async function migrate() {
       ),
     );
   } finally {
-    if (client) await client.end();
-    rmSync(tempDirectory, { recursive: true, force: true });
+    try {
+      if (client) await client.end();
+    } finally {
+      try {
+        if (managedTarget) {
+          cleanupManagedClone(managedTarget, dockerEnv);
+          cleanupManagedMetadata(stateDirectory, metadata, managedTarget);
+          console.info(
+            "cleanup: exact managed migration-validation clone and volume removed",
+          );
+        }
+      } finally {
+        rmSync(tempDirectory, { recursive: true, force: true });
+      }
+    }
   }
 }
 

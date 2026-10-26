@@ -17,9 +17,6 @@ const validOrigin = "http://127.0.0.1";
 
 function createAuth(): AuthService {
   return {
-    async signUp() {
-      throw new Error("not used");
-    },
     async login() {
       throw new Error("not used");
     },

@@ -174,6 +174,7 @@ const names = [
   "20261011010000_add_evidence_prepared_transactions",
   "20261011020000_add_evidence_anchor_observations",
   "20261013000000_correct_model_inference_snapshot_guard",
+  "20261025170000_closed_access_provisioning",
 ];
 const expected = expectedMigrationChecksums(migrationDirectory, names);
 const completed = (count: number): MigrationLedgerRow[] =>
@@ -198,7 +199,7 @@ describe("integration migration ledger", () => {
     expect(() =>
       assertMigrationLedger(completed(12), expected.slice(0, 12)),
     ).not.toThrow();
-    expect(() => assertMigrationLedger(completed(13), expected)).not.toThrow();
+    expect(() => assertMigrationLedger(completed(14), expected)).not.toThrow();
     for (const altered of [
       completed(8).map((row, index) =>
         index === 3 ? { ...row, checksum: "0".repeat(64) } : row,
@@ -258,7 +259,7 @@ function fixture({
         if (failure === "checksum") rows[0].checksum = "f".repeat(64);
         return { rows };
       }
-      if (sql.includes('UPDATE "DecisionEvent"') && migrationCount === 13) {
+      if (sql.includes('UPDATE "DecisionEvent"') && migrationCount === 14) {
         throw Object.assign(new Error("synthetic check violation"), {
           code: "23514",
         });
@@ -358,7 +359,7 @@ function fixture({
     if (args.includes("migrate")) {
       migrationCount = args[args.indexOf("--config") + 1].includes("/baseline/")
         ? 8
-        : 13;
+        : 14;
       return success();
     }
     if (args.includes("vitest")) {
@@ -373,7 +374,7 @@ function fixture({
         : args.some((arg) => arg.includes("organization-persistence"))
           ? failure === "organization-count"
             ? 31
-            : 34
+            : 35
           : args.some((arg) => arg.includes("evidence-anchor-transactions"))
             ? 4
             : args.some((arg) => arg.includes("evidence-anchor-reconciliation"))
@@ -464,9 +465,9 @@ describe("integration runner orchestration without external processes", () => {
     expect(logs).toEqual(
       expect.arrayContaining([
         "stage: SQL 10 passed",
-        "stage: organization 34 passed",
+        "stage: organization 35 passed",
         "stage: batch 7 passed",
-        "stage: migrations-9-13",
+        "stage: migrations-9-14",
         "stage: reservation 6 passed",
         "stage: transaction 4 passed",
         "stage: CLI authorization 4 passed",
@@ -548,9 +549,9 @@ describe("integration runner orchestration without external processes", () => {
   it("requires the three group catalog SQL cases in the normal organization gate", async () => {
     const { dependencies, logs } = fixture({ failure: "organization-count" });
     await expect(runIntegrationGate(dependencies)).rejects.toThrow(
-      "organization suite did not pass all 34 expected cases",
+      "organization suite did not pass all 35 expected cases",
     );
-    expect(logs).not.toContain("stage: organization 34 passed");
+    expect(logs).not.toContain("stage: organization 35 passed");
     expect(logs).toContain(
       "cleanup: exact owned container removed and absence verified",
     );

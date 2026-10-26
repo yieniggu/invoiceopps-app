@@ -281,41 +281,29 @@ describe("APP12 S8 global acceptance characterization", () => {
     },
   );
 
-  it("submits signup and login separately, then establishes authority only through the native profile read", async () => {
+  it("logs in only and establishes authority through the native profile read", async () => {
     const requests = http({ anonymous: true });
     render(<App />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Crear cuenta" }),
-    );
-    fireEvent.change(screen.getByLabelText("Nombre"), {
-      target: { value: "Persona S8" },
-    });
-    fireEvent.change(screen.getByLabelText("RUT"), {
+    fireEvent.change(await screen.findByLabelText("RUT"), {
       target: { value: "123456785" },
     });
     fireEvent.change(screen.getByLabelText("Contraseña"), {
       target: { value: "synthetic-s8-password" },
     });
-    semantics();
-    fireEvent.submit(screen.getByRole("form", { name: "Crear cuenta" }));
-    await screen.findByText(
-      "Cuenta creada. Inicia sesión con tu RUT y contraseña.",
-    );
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.getByLabelText("Contraseña")).toHaveProperty("value", "");
-    fireEvent.change(screen.getByLabelText("Contraseña"), {
-      target: { value: "synthetic-s8-password" },
-    });
+    expect(screen.queryByRole("button", { name: "Crear cuenta" })).toBeNull();
     fireEvent.submit(screen.getByRole("form", { name: "Iniciar sesión" }));
     await screen.findByText("Bienvenido, Persona S8");
     expect(
       requests.mock.calls.filter(([input]) => input === "/profile"),
     ).toHaveLength(2);
-    for (const path of ["/auth/signup", "/auth/login"]) {
-      const request = requests.mock.calls.find(([input]) => input === path);
-      expect(request?.[1]?.credentials).toBe("same-origin");
-      expect(request?.[1]?.method).toBe("POST");
-    }
+    const login = requests.mock.calls.find(
+      ([input]) => input === "/auth/login",
+    );
+    expect(login?.[1]?.credentials).toBe("same-origin");
+    expect(login?.[1]?.method).toBe("POST");
+    expect(
+      requests.mock.calls.some(([input]) => input === "/auth/signup"),
+    ).toBe(false);
     semantics();
   });
 

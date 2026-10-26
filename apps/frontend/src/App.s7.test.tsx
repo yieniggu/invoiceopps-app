@@ -272,7 +272,7 @@ describe("APP12 S7 administration", () => {
       expect.stringContaining("UUID de usuario válido"),
     );
     expect(api.writes).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText(/correo|RUT/i)).toBeNull();
+    expect(screen.queryByLabelText(/correo/i)).toBeNull();
     draft();
     fireEvent.change(screen.getByLabelText("Organización administrada"), {
       target: { value: "" },

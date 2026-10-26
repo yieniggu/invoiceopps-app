@@ -10,9 +10,6 @@ function createProvisionTestApp() {
     .fn<AuthService["getProfile"]>()
     .mockRejectedValue(new AuthError(401, "Unauthorized"));
   const auth: AuthService = {
-    async signUp() {
-      throw new Error("signUp must not be called");
-    },
     async login() {
       throw new Error("login must not be called");
     },
@@ -99,7 +96,6 @@ describe("MLFLOW07 provisioning authentication HTTP contract", () => {
 describe("MLFLOW07 platform authorization and strict HTTP input", () => {
   function authorizedApp(platform: boolean) {
     const auth: AuthService = {
-      signUp: vi.fn(),
       login: vi.fn(),
       logout: vi.fn(),
       updateProfile: vi.fn(),

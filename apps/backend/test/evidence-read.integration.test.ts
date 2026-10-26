@@ -88,7 +88,7 @@ async function fixture() {
   });
   const app = createApp(
     { isReady: async () => true },
-    createAuthService(prisma, "open"),
+    createAuthService(prisma),
     { evidenceRead: createEvidenceReadService(prisma) },
   );
   async function record(

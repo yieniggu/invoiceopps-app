@@ -5,6 +5,9 @@ import {
   type PrismaClient,
 } from "./generated/prisma/client.js";
 import { AuthError } from "./auth.js";
+import { hashPassword } from "./auth.js";
+import { normalizeRut } from "./identity.js";
+import { randomBytes } from "node:crypto";
 import type { GroupResponse } from "./groups.js";
 
 const MAX_SERIALIZABLE_RETRIES = 3;
@@ -15,6 +18,27 @@ export interface PlatformAdministratorService {
   listOrganizations(
     actorUserId: string,
   ): Promise<PlatformOrganizationResponse[]>;
+  createOrganization?(
+    actorUserId: string,
+    input: { name: string; slug: string; description?: string | null },
+  ): Promise<{
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+  }>;
+  provisionUser?(
+    actorUserId: string,
+    input: {
+      name: string;
+      rut: string;
+      organizationId: string;
+      role: OrganizationRole;
+    },
+  ): Promise<{
+    user: OrganizationMembershipResponse & { name: string; rut: string };
+    temporaryPassword: string;
+  }>;
   createMembership(
     actorUserId: string,
     organizationId: string,
@@ -223,6 +247,89 @@ export function createPlatformAdministratorService(
             members: group.memberships.map(({ user }) => user),
           })),
         }));
+      });
+    },
+    async createOrganization(actorUserId, input) {
+      return prisma.$transaction(async (transaction) => {
+        await requirePlatformAdministrator(transaction, actorUserId);
+        try {
+          const organization = await transaction.organization.create({
+            data: input,
+            select: { id: true, name: true, slug: true, description: true },
+          });
+          await transaction.platformAdministrativeAuditEvent.create({
+            data: {
+              type: PlatformAdministrativeAuditEventType.ORGANIZATION_CREATED,
+              actorUserId,
+              organizationId: organization.id,
+            },
+          });
+          return organization;
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "P2002")
+            throw new AuthError(409, "Organization already exists");
+          throw error;
+        }
+      });
+    },
+    async provisionUser(actorUserId, input) {
+      const temporaryPassword = randomBytes(24).toString("base64url");
+      const passwordHash = await hashPassword(temporaryPassword);
+      let rut: string;
+      try {
+        rut = normalizeRut(input.rut);
+      } catch {
+        throw new AuthError(400, "Invalid user provision");
+      }
+      if (!input.name.trim())
+        throw new AuthError(400, "Invalid user provision");
+      return prisma.$transaction(async (transaction) => {
+        await requirePlatformAdministrator(transaction, actorUserId);
+        const organization = await transaction.organization.findUnique({
+          where: { id: input.organizationId },
+          select: { id: true },
+        });
+        if (!organization) throw notFound();
+        try {
+          const user = await transaction.user.create({
+            data: {
+              name: input.name.trim(),
+              rut,
+              passwordHash,
+              mustChangePassword: true,
+              temporaryPasswordExpiresAt: new Date(
+                Date.now() + 24 * 60 * 60 * 1000,
+              ),
+              memberships: {
+                create: { organizationId: organization.id, role: input.role },
+              },
+            },
+            select: { id: true, name: true, rut: true },
+          });
+          await transaction.platformAdministrativeAuditEvent.create({
+            data: {
+              type: PlatformAdministrativeAuditEventType.USER_PROVISIONED,
+              actorUserId,
+              targetUserId: user.id,
+              organizationId: organization.id,
+              role: input.role,
+            },
+          });
+          return {
+            user: {
+              userId: user.id,
+              name: user.name,
+              rut: user.rut,
+              organizationId: organization.id,
+              role: input.role,
+            },
+            temporaryPassword,
+          };
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "P2002")
+            throw new AuthError(409, "User already exists");
+          throw error;
+        }
       });
     },
     async createMembership(actorUserId, organizationId, userId, role) {

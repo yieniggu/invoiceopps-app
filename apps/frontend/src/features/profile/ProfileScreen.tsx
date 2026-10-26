@@ -7,6 +7,7 @@ export type Profile = {
   email: string | null;
   username: string | null;
   isPlatformAdministrator: boolean;
+  mustChangePassword?: boolean;
   memberships: Array<{
     organization: { id: string; name: string; slug: string };
     role: string;

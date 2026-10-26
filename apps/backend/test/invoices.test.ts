@@ -16,9 +16,6 @@ const context = {
 
 function createAuth(): AuthService {
   return {
-    async signUp() {
-      throw new Error("not used");
-    },
     async login() {
       throw new Error("not used");
     },

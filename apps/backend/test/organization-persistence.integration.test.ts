@@ -6,6 +6,7 @@ import {
   PrismaClient,
 } from "../src/generated/prisma/client.js";
 import { AuthError, createAuthService } from "../src/auth.js";
+import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
 import {
@@ -466,7 +467,7 @@ describe("APP-01 PostgreSQL persistence", () => {
 });
 
 describe("APP-02 PostgreSQL authentication persistence", () => {
-  it("creates STUDENT memberships for every allowlisted organization and stores only a password hash", async () => {
+  it("keeps legacy authorized-user records inert and provisions credentials only through an internal fixture", async () => {
     const firstOrganization = await persistence.createOrganization({
       name: "Diplomado IA 2029",
       slug: "diplomado-ia-2029",
@@ -483,8 +484,7 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
       ],
     });
 
-    const auth = createAuthService(prisma, "allowlist");
-    const user = await auth.signUp({
+    const user = await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut,
       password: "correct-horse-battery-staple",
@@ -497,10 +497,7 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
       orderBy: { organizationId: "asc" },
     });
 
-    expect(memberships).toHaveLength(2);
-    expect(
-      memberships.every(({ role }) => role === OrganizationRole.STUDENT),
-    ).toBe(true);
+    expect(memberships).toHaveLength(0);
     expect(storedUser.passwordHash).toMatch(/^scrypt\$/);
     expect(storedUser.passwordHash).not.toContain(
       "correct-horse-battery-staple",
@@ -508,46 +505,26 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
     expect(user).not.toHaveProperty("passwordHash");
   });
 
-  it("rejects non-allowlisted RUTs and leaves no records", async () => {
-    const auth = createAuthService(prisma, "allowlist");
-
-    await expect(
-      auth.signUp({
-        name: "Grace Hopper",
-        rut: "12.345.679-3",
-        password: "correct-horse-battery-staple",
-      }),
-    ).rejects.toMatchObject({ status: 403 });
-    expect(await prisma.user.count()).toBe(0);
-    expect(await prisma.organizationMembership.count()).toBe(0);
-  });
-
-  it("does not leave partial records when the signup transaction fails", async () => {
-    const organization = await persistence.createOrganization({
-      name: "Diplomado IA 2030",
-      slug: "diplomado-ia-2030",
-    });
-    await prisma.authorizedUserOrganization.create({
-      data: { rut: "123456785", organizationId: organization.id },
-    });
-    const auth = createAuthService(prisma, "allowlist");
-    const signup = {
+  it("rejects duplicate internal fixture identities without memberships", async () => {
+    const provision = {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
     };
 
-    await auth.signUp(signup);
-    await expect(auth.signUp(signup)).rejects.toMatchObject({ status: 409 });
+    await provisionInternalUser(prisma, provision);
+    await expect(
+      provisionInternalUser(prisma, provision),
+    ).rejects.toMatchObject({ code: "P2002" });
 
     expect(await prisma.user.count()).toBe(1);
-    expect(await prisma.organizationMembership.count()).toBe(1);
+    expect(await prisma.organizationMembership.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
   });
 
   it("rejects invalid credentials without revealing whether the user exists", async () => {
-    const auth = createAuthService(prisma, "open");
-    await auth.signUp({
+    const auth = createAuthService(prisma);
+    await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
@@ -577,7 +554,7 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
       name: "Existing User",
       rut: "12.345.678-5",
     });
-    const auth = createAuthService(prisma, "open");
+    const auth = createAuthService(prisma);
 
     await expect(
       auth.login({
@@ -588,8 +565,8 @@ describe("APP-02 PostgreSQL authentication persistence", () => {
   });
 
   it("persists only a hash for an opaque login session", async () => {
-    const auth = createAuthService(prisma, "open");
-    await auth.signUp({
+    const auth = createAuthService(prisma);
+    await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
@@ -618,8 +595,8 @@ describe("APP-03 PostgreSQL profile persistence", () => {
       name: "Alpha Academy",
       slug: "alpha-academy",
     });
-    const auth = createAuthService(prisma, "open");
-    const user = await auth.signUp({
+    const auth = createAuthService(prisma);
+    const user = await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
@@ -679,8 +656,8 @@ describe("APP-03 PostgreSQL profile persistence", () => {
 
 describe("APP-02.1 PostgreSQL session lifecycle", () => {
   it("revokes only the current non-expired opaque session", async () => {
-    const auth = createAuthService(prisma, "open");
-    await auth.signUp({
+    const auth = createAuthService(prisma);
+    await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
@@ -955,6 +932,123 @@ describe("Organization group catalog PostgreSQL integration", () => {
 });
 
 describe("PlatformAdministrator PostgreSQL integration", () => {
+  it("allows only the global administrator to create organizations and provision a temporary credential transactionally", async () => {
+    const global = await persistence.createUser({
+      name: "Global",
+      rut: "12.345.678-5",
+    });
+    const organizationAdmin = await persistence.createUser({
+      name: "Organization",
+      rut: "12.345.679-3",
+    });
+    const service = createPlatformAdministratorService(prisma);
+    await service.bootstrap(global.id);
+    await expect(
+      service.createOrganization!(organizationAdmin.id, {
+        name: "Denied",
+        slug: "denied",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    const organization = await service.createOrganization!(global.id, {
+      name: "Provisioned",
+      slug: "provisioned",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: organizationAdmin.id,
+        organizationId: organization.id,
+        role: OrganizationRole.ADMIN,
+      },
+    });
+    await expect(
+      service.provisionUser!(organizationAdmin.id, {
+        name: "Denied",
+        rut: "12.345.670-K",
+        organizationId: organization.id,
+        role: OrganizationRole.STUDENT,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    const provisioned = await service.provisionUser!(global.id, {
+      name: "Student",
+      rut: "12.345.670-K",
+      organizationId: organization.id,
+      role: OrganizationRole.STUDENT,
+    });
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: provisioned.user.userId },
+    });
+    const membership = await prisma.organizationMembership.findUniqueOrThrow({
+      where: {
+        userId_organizationId: {
+          userId: stored.id,
+          organizationId: organization.id,
+        },
+      },
+    });
+    const audit = await prisma.platformAdministrativeAuditEvent.findMany({
+      where: { targetUserId: stored.id },
+    });
+    expect(provisioned.temporaryPassword).toHaveLength(32);
+    expect(stored.passwordHash).toMatch(/^scrypt\$/);
+    expect(stored.passwordHash).not.toContain(provisioned.temporaryPassword);
+    expect(stored.mustChangePassword).toBe(true);
+    expect(stored.temporaryPasswordExpiresAt).toBeInstanceOf(Date);
+    expect(membership.role).toBe(OrganizationRole.STUDENT);
+    expect(audit.map(({ type }) => type)).toContain("USER_PROVISIONED");
+    expect(JSON.stringify(audit)).not.toContain(provisioned.temporaryPassword);
+  });
+
+  it("clears the temporary requirement, keeps the current session and revokes other sessions after password change", async () => {
+    const global = await persistence.createUser({
+      name: "Global",
+      rut: "12.345.678-5",
+    });
+    const service = createPlatformAdministratorService(prisma);
+    await service.bootstrap(global.id);
+    const organization = await service.createOrganization!(global.id, {
+      name: "Provisioned",
+      slug: "provisioned",
+    });
+    const provisioned = await service.provisionUser!(global.id, {
+      name: "Student",
+      rut: "12.345.679-3",
+      organizationId: organization.id,
+      role: OrganizationRole.STUDENT,
+    });
+    const auth = createAuthService(prisma);
+    const first = await auth.login({
+      rut: "12.345.679-3",
+      password: provisioned.temporaryPassword,
+    });
+    const second = await auth.login({
+      rut: "12.345.679-3",
+      password: provisioned.temporaryPassword,
+    });
+    expect((await auth.getProfile(first.sessionToken)).mustChangePassword).toBe(
+      true,
+    );
+    await auth.changePassword!(first.sessionToken, {
+      currentPassword: provisioned.temporaryPassword,
+      newPassword: "changed-password-123",
+    });
+    expect(await auth.getProfile(first.sessionToken)).toMatchObject({
+      mustChangePassword: false,
+    });
+    await expect(auth.getProfile(second.sessionToken)).rejects.toMatchObject({
+      status: 401,
+    });
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: provisioned.user.userId },
+    });
+    expect(stored.temporaryPasswordExpiresAt).toBeNull();
+    expect(stored.mustChangePassword).toBe(false);
+    expect(
+      await prisma.platformAdministrativeAuditEvent.count({
+        where: { targetUserId: stored.id, type: "PASSWORD_CHANGED" },
+      }),
+    ).toBe(1);
+  });
+
   it("discovers every organization and group without local membership only for the platform administrator", async () => {
     const platformUser = await persistence.createUser({
       name: "Ada Lovelace",

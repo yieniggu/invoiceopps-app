@@ -76,7 +76,7 @@ describe("APP-03 profile", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("status").textContent).toContain("Cargando perfil");
+    expect(screen.getByRole("status").textContent).toContain("Cargando sesión");
     await navigate("Mi perfil");
     expect(
       await screen.findByRole("heading", { name: "Mi perfil" }),

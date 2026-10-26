@@ -30,6 +30,9 @@ enum PlatformAdministrativeAuditEventType {
   ORGANIZATION_MEMBERSHIP_CREATED
   ORGANIZATION_MEMBERSHIP_ROLE_CHANGED
   ORGANIZATION_MEMBERSHIP_REMOVED
+  ORGANIZATION_CREATED
+  USER_PROVISIONED
+  PASSWORD_CHANGED
 }
 
 model User {
@@ -39,6 +42,8 @@ model User {
   email                              String?
   username                           String?
   passwordHash                       String?
+  mustChangePassword                 Boolean                            @default(false)
+  temporaryPasswordExpiresAt         DateTime?
   memberships                        OrganizationMembership[]
   groupMemberships                   GroupMembership[]
   sessions                           Session[]

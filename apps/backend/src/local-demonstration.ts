@@ -3,7 +3,7 @@ import {
   ResourceOwnerType,
   type PrismaClient,
 } from "./generated/prisma/client.js";
-import { createAuthService } from "./auth.js";
+import { provisionInternalUser } from "./internal-user-provisioning.js";
 import { createDatabase } from "./database.js";
 import { LOCAL_DEMONSTRATION } from "./invoices.js";
 
@@ -77,8 +77,7 @@ export async function seedLocalDemonstration(prisma: PrismaClient) {
     throw new Error("LOCAL_DEMONSTRATION user already belongs to other data");
   }
   const user =
-    existingUser ??
-    (await createAuthService(prisma, "open").signUp(DEMONSTRATION_USER));
+    existingUser ?? (await provisionInternalUser(prisma, DEMONSTRATION_USER));
 
   await prisma.organizationMembership.upsert({
     where: {

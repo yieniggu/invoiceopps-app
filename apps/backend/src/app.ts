@@ -177,6 +177,78 @@ function parseOrganizationMembershipInput(
   } as { userId?: string; role: OrganizationRole };
 }
 
+function parseOrganizationInput(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new AuthError(400, "Invalid organization");
+  const { name, slug, description, ...extra } = input as Record<
+    string,
+    unknown
+  >;
+  if (
+    Object.keys(extra).length ||
+    typeof name !== "string" ||
+    !name.trim() ||
+    name.trim().length > 120 ||
+    typeof slug !== "string" ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ||
+    (description !== undefined &&
+      description !== null &&
+      (typeof description !== "string" || description.trim().length > 1000))
+  )
+    throw new AuthError(400, "Invalid organization");
+  return {
+    name: name.trim(),
+    slug,
+    ...(description === undefined
+      ? {}
+      : {
+          description: description === null ? null : description.trim() || null,
+        }),
+  };
+}
+
+function parseProvisionUserInput(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new AuthError(400, "Invalid user provision");
+  const { name, rut, organizationId, role, ...extra } = input as Record<
+    string,
+    unknown
+  >;
+  if (
+    Object.keys(extra).length ||
+    typeof name !== "string" ||
+    !name.trim() ||
+    name.trim().length > 120 ||
+    typeof rut !== "string" ||
+    typeof organizationId !== "string" ||
+    !organizationId.trim() ||
+    (role !== OrganizationRole.ADMIN && role !== OrganizationRole.STUDENT)
+  )
+    throw new AuthError(400, "Invalid user provision");
+  return {
+    name: name.trim(),
+    rut,
+    organizationId: organizationId.trim(),
+    role,
+  };
+}
+
+function parsePasswordChange(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new AuthError(400, "Invalid password change");
+  const record = input as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2 ||
+    typeof record.currentPassword !== "string" ||
+    typeof record.newPassword !== "string"
+  )
+    throw new AuthError(400, "Invalid password change");
+  return {
+    currentPassword: record.currentPassword,
+    newPassword: record.newPassword,
+  };
+}
+
 function parseResourceContext(input: unknown): ResourceContext {
   const { organizationId, ownerType, ownerId } = input as Record<
     string,
@@ -341,6 +413,28 @@ export function createApp(
     next();
   });
 
+  app.use(async (request, _response, next) => {
+    const permitted =
+      request.path === "/profile" ||
+      request.path === "/auth/logout" ||
+      request.path === "/auth/change-password" ||
+      request.path === "/auth/login" ||
+      request.path === "/mlflow/resources" ||
+      request.path === "/health/live" ||
+      request.path === "/health/ready";
+    if (permitted || !request.headers.cookie || !auth) return next();
+    try {
+      const token = sessionTokenFromCookie(request.headers.cookie);
+      if (!token) throw new AuthError(401, "Unauthorized");
+      const profile = await auth.getProfile(token);
+      if (profile.mustChangePassword)
+        throw new AuthError(403, "Password change required");
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/health/live", (_request, response) => {
     response.status(200).json({ status: "ok" });
   });
@@ -401,16 +495,6 @@ export function createApp(
     next();
   };
 
-  app.post("/auth/signup", limitAuthAttempts, async (request, response) => {
-    if (!auth) {
-      response.status(503).json({ status: "unavailable" });
-      return;
-    }
-
-    const user = await auth.signUp(request.body);
-    response.status(201).json({ user });
-  });
-
   app.post("/auth/login", limitAuthAttempts, async (request, response) => {
     if (!auth) {
       response.status(503).json({ status: "unavailable" });
@@ -441,6 +525,14 @@ export function createApp(
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
     });
+    response.status(204).end();
+  });
+
+  app.post("/auth/change-password", async (request, response) => {
+    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !auth.changePassword || !sessionToken)
+      throw new AuthError(401, "Unauthorized");
+    await auth.changePassword(sessionToken, parsePasswordChange(request.body));
     response.status(204).end();
   });
 
@@ -487,6 +579,28 @@ export function createApp(
     response.status(200).json({
       organizations: await platformAdministrators.listOrganizations(profile.id),
     });
+  });
+
+  app.post("/platform/organizations", async (request, response) => {
+    const token = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !platformAdministrators?.createOrganization || !token)
+      throw new AuthError(401, "Unauthorized");
+    const organization = await platformAdministrators.createOrganization(
+      (await auth.getProfile(token)).id,
+      parseOrganizationInput(request.body),
+    );
+    response.status(201).json({ organization });
+  });
+
+  app.post("/platform/users", async (request, response) => {
+    const token = sessionTokenFromCookie(request.headers.cookie);
+    if (!auth || !platformAdministrators?.provisionUser || !token)
+      throw new AuthError(401, "Unauthorized");
+    const provisioned = await platformAdministrators.provisionUser(
+      (await auth.getProfile(token)).id,
+      parseProvisionUserInput(request.body),
+    );
+    response.status(201).json(provisioned);
   });
 
   app.post(
@@ -567,6 +681,8 @@ export function createApp(
     response.locals.mlflowStartedAt = startedAt;
     const result = await withMlflowDeadline(async (signal) => {
       const profile = await auth.getProfile(sessionToken);
+      if (profile.mustChangePassword)
+        throw new AuthError(403, "Password change required");
       signal.throwIfAborted();
       if (Object.keys(request.query).length !== 3) {
         throw new AuthError(400, "Invalid resource context");

@@ -488,12 +488,34 @@ export function App() {
     }
   };
 
+  const changeTemporaryPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const currentPassword = String(data.get("currentPassword") ?? "");
+    const newPassword = String(data.get("newPassword") ?? "");
+    setMessage(undefined);
+    const response = await fetch("/auth/change-password", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (response.status === 401) return endSession();
+    if (!response.ok) {
+      setMessage(
+        "No fue posible cambiar la contraseña. Revisa los datos e intenta nuevamente.",
+      );
+      return;
+    }
+    await loadProfile();
+  };
+
   if (state.kind === "loading") {
     return (
-      <main className="shell" aria-labelledby="page-title">
+      <main className="shell" aria-labelledby="session-loading-title">
         <p className="eyebrow">InvoiceOps</p>
-        <h1 id="page-title">Mi perfil</h1>
-        <p role="status">Cargando perfil...</p>
+        <h1 id="session-loading-title">Cargando sesión</h1>
+        <p role="status">Cargando sesión...</p>
       </main>
     );
   }
@@ -516,6 +538,45 @@ export function App() {
   }
 
   const { profile } = state;
+
+  if (profile.mustChangePassword) {
+    return (
+      <main className="shell" aria-labelledby="password-change-title">
+        <p className="eyebrow">InvoiceOps</p>
+        <h1 id="password-change-title">Cambia tu contraseña temporal</h1>
+        <p>
+          Debes establecer una contraseña nueva antes de acceder al resto de la
+          aplicación.
+        </p>
+        <form onSubmit={(event) => void changeTemporaryPassword(event)}>
+          <label>
+            Contraseña temporal
+            <input
+              name="currentPassword"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          <label>
+            Contraseña nueva
+            <input
+              name="newPassword"
+              type="password"
+              autoComplete="new-password"
+              minLength={12}
+              required
+            />
+          </label>
+          <button type="submit">Cambiar contraseña</button>
+        </form>
+        {message ? <p role="alert">{message}</p> : null}
+        <button type="button" onClick={() => void logout()}>
+          Cerrar sesión
+        </button>
+      </main>
+    );
+  }
 
   const administrationEpoch = session.current.epoch;
   const administrationSessionCurrent = () =>

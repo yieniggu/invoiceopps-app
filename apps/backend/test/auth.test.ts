@@ -16,15 +16,14 @@ function createAuthServiceForHttpTest(): AuthService {
     string,
     { id: string; name: string; password: string; rut: string }
   >();
+  users.set("123456785", {
+    id: "user-1",
+    name: "Ada Lovelace",
+    rut: "123456785",
+    password: "correct-horse-battery-staple",
+  });
 
   return {
-    async signUp({ name, rut, password }) {
-      const normalizedRut = rut.replace(/[.\-\s]/g, "");
-      const user = { id: "user-1", name, password, rut: normalizedRut };
-      users.set(normalizedRut, user);
-
-      return { id: user.id, name: user.name, rut: user.rut };
-    },
     async login({ rut, password }) {
       const user = users.get(rut.replace(/[.\-\s]/g, ""));
 
@@ -50,11 +49,58 @@ function createAuthServiceForHttpTest(): AuthService {
 }
 
 describe("APP-02 auth HTTP contract", () => {
-  it("signs up successfully and logs in with an httpOnly cookie session without a JSON token", async () => {
-    const app = createApp(
-      { isReady: async () => true },
-      createAuthServiceForHttpTest(),
-    );
+  it("fails closed on sensitive routes while allowing the constrained temporary-password session endpoints", async () => {
+    const profile = {
+      id: "user-1",
+      name: "Ada",
+      rut: "123456785",
+      email: null,
+      username: null,
+      mustChangePassword: true,
+      isPlatformAdministrator: false,
+      memberships: [],
+    };
+    const auth: AuthService = {
+      async login() {
+        throw new Error("not used");
+      },
+      async logout() {},
+      async getProfile() {
+        return profile;
+      },
+      async updateProfile() {
+        return profile;
+      },
+      async changePassword() {},
+    };
+    const app = createApp({ isReady: async () => true }, auth, {
+      groups: { listGroups: async () => [] } as unknown as GroupService,
+    });
+    const cookie = "invoiceops_session=temporary-session";
+    expect(
+      (await request(app).get("/groups").set("Cookie", cookie)).status,
+    ).toBe(403);
+    expect(
+      (await request(app).get("/profile").set("Cookie", cookie)).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(app)
+          .post("/auth/change-password")
+          .set("Host", "127.0.0.1")
+          .set("Origin", "http://127.0.0.1")
+          .set("Cookie", cookie)
+          .send({
+            currentPassword: "temporary-password",
+            newPassword: "changed-password-123",
+          })
+      ).status,
+    ).toBe(204);
+  });
+
+  it("rejects public signup and logs in with an httpOnly cookie session without a JSON token", async () => {
+    const auth = createAuthServiceForHttpTest();
+    const app = createApp({ isReady: async () => true }, auth);
     const credentials = {
       name: "Ada Lovelace",
       rut: "12.345.678-5",
@@ -68,7 +114,7 @@ describe("APP-02 auth HTTP contract", () => {
       .post("/auth/login")
       .send({ rut: credentials.rut, password: credentials.password });
 
-    expect.soft(signupResponse.status).toBe(201);
+    expect.soft(signupResponse.status).toBe(404);
     expect.soft(loginResponse.status).toBe(200);
     const sessionCookie = String(loginResponse.headers["set-cookie"] ?? "");
 
@@ -91,11 +137,6 @@ describe("APP-02 auth HTTP contract", () => {
       { isReady: async () => true },
       createAuthServiceForHttpTest(),
     );
-    await request(app).post("/auth/signup").send({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-      password: "correct-horse-battery-staple",
-    });
 
     const unknownUser = await request(app).post("/auth/login").send({
       rut: "11.111.111-1",
@@ -133,8 +174,7 @@ describe("APP-02 auth HTTP contract", () => {
 
     expect((await failedLogin()).status).toBe(401);
     expect((await failedLogin()).status).toBe(401);
-    const limitedResponse = await request(app).post("/auth/signup").send({
-      name: "Ada Lovelace",
+    const limitedResponse = await request(app).post("/auth/login").send({
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
     });
@@ -164,7 +204,6 @@ describe("APP-02 auth HTTP contract", () => {
         {
           user: { findUnique: async () => user },
         } as unknown as PrismaClient,
-        "open",
         { verifyPassword: passwordVerifier },
       );
 

@@ -30,6 +30,7 @@ import {
 import { createEvidencePersistence } from "../src/evidence-persistence.js";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { createAuthService } from "../src/auth.js";
+import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createInvoiceService } from "../src/invoices.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
 import {
@@ -325,8 +326,8 @@ describe("APP11 opt-in own-local Anvil and PostgreSQL smoke", () => {
       const organization = await prisma.organization.create({
         data: { name: "Owned Anvil smoke", slug: "owned-anvil-smoke" },
       });
-      const auth = createAuthService(prisma, "open");
-      const actor = await auth.signUp({
+      const auth = createAuthService(prisma);
+      const actor = await provisionInternalUser(prisma, {
         name: "Local actor",
         rut: "12.345.678-5",
         password: "local-smoke-password-123",
@@ -335,7 +336,7 @@ describe("APP11 opt-in own-local Anvil and PostgreSQL smoke", () => {
         rut: "12.345.678-5",
         password: "local-smoke-password-123",
       });
-      const outsider = await auth.signUp({
+      const outsider = await provisionInternalUser(prisma, {
         name: "Other local actor",
         rut: "12.345.679-3",
         password: "local-outsider-password-456",

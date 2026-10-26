@@ -119,7 +119,7 @@ function fixture() {
     },
   };
   const prisma = db as unknown as PrismaClient;
-  const auth = createAuthService(prisma, "open");
+  const auth = createAuthService(prisma);
   const app = createApp({ isReady: async () => true }, auth, {
     evidenceRead: createEvidenceReadService(prisma),
   });

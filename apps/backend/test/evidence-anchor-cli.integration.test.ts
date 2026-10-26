@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import { AuthError, createAuthService } from "../src/auth.js";
+import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createEvidenceAnchorCommand } from "../src/evidence-anchor-command.js";
 import { runEvidenceAnchorCli } from "../src/evidence-anchor-cli.js";
 import { createEvidenceAnchorObservations } from "../src/evidence-anchor-observations.js";
@@ -19,7 +20,7 @@ const databaseUrl = requireTestDatabaseUrl(process.env.TEST_DATABASE_URL);
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: databaseUrl }),
 });
-const auth = createAuthService(prisma, "open");
+const auth = createAuthService(prisma);
 const privateKey = generatePrivateKey();
 const signer = privateKeyToAccount(privateKey).address;
 const contractAddress = `0x${"11".repeat(20)}`;
@@ -52,7 +53,7 @@ afterAll(async () => {
 });
 
 async function fixture() {
-  const actor = await auth.signUp({
+  const actor = await provisionInternalUser(prisma, {
     name: "CLI Operator",
     rut: "12.345.678-5",
     password: "synthetic-password-123",
@@ -61,7 +62,7 @@ async function fixture() {
     rut: "12.345.678-5",
     password: "synthetic-password-123",
   });
-  const outsider = await auth.signUp({
+  const outsider = await provisionInternalUser(prisma, {
     name: "CLI Outsider",
     rut: "12.345.679-3",
     password: "synthetic-password-456",

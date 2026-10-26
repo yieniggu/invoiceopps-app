@@ -25,6 +25,12 @@ const correctedModelInferenceMigrationPath = fileURLToPath(
     import.meta.url,
   ),
 );
+const closedAccessMigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20261025170000_closed_access_provisioning/migration.sql",
+    import.meta.url,
+  ),
+);
 
 function modelBlock(schema: string, modelName: string) {
   const match = schema.match(
@@ -193,8 +199,31 @@ describe("APP-01 Prisma schema contract", () => {
     expect(user).toMatch(/^\s*username\s+String\?(?:\s|$)/m);
     expect(user).toMatch(/^\s*passwordHash\s+String\?(?:\s|$)/m);
     expect(user).toMatch(
+      /^\s*mustChangePassword\s+Boolean\s+@default\(false\)/m,
+    );
+    expect(user).toMatch(
+      /^\s*temporaryPasswordExpiresAt\s+DateTime\?(?:\s|$)/m,
+    );
+    expect(user).toMatch(
       /^\s*memberships\s+OrganizationMembership\[\](?:\s|$)/m,
     );
+  });
+
+  it("adds temporary credential state and closed-access audit events additively", async () => {
+    const migration = await readFile(closedAccessMigrationPath, "utf8");
+    expect(migration).toContain(
+      'ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false',
+    );
+    expect(migration).toContain(
+      'ADD COLUMN "temporaryPasswordExpiresAt" TIMESTAMP(3)',
+    );
+    for (const event of [
+      "ORGANIZATION_CREATED",
+      "USER_PROVISIONED",
+      "PASSWORD_CHANGED",
+    ]) {
+      expect(migration).toContain(`ADD VALUE '${event}'`);
+    }
   });
 
   it("declares the allowlist and hashed server-side sessions", async () => {

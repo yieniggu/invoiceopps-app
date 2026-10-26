@@ -95,14 +95,6 @@ function fillCredentials(value = password) {
   });
 }
 
-async function openSignup() {
-  fireEvent.click(await screen.findByRole("button", { name: signupName }));
-  fireEvent.change(screen.getByRole("textbox", { name: /nombre/i }), {
-    target: { value: user.name },
-  });
-  fillCredentials();
-}
-
 function expectJsonPost(
   fetchMock: ReturnType<typeof mockAuthHttp>["fetchMock"],
   path: string,
@@ -190,28 +182,61 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     }
   });
 
-  it("registers with the existing payload and confirms registration without creating a session", async () => {
+  it("offers login only and never emits a signup request", async () => {
     const { fetchMock, login, authenticatedProfile } = mockAuthHttp();
     render(<App />);
-    await openSignup();
-    fireEvent.click(screen.getByRole("button", { name: signupName }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toMatch(
-        /(?:cuenta|registro).*(?:cread|exitos|complet)|registrad/i,
-      );
-    });
-    expect(screen.getByRole("button", { name: loginName })).toBeTruthy();
-    expectJsonPost(fetchMock, "/auth/signup", {
-      name: user.name,
-      rut: user.rut,
-      password,
-    });
+    expect(await screen.findByRole("button", { name: loginName })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: signupName })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /nombre/i })).toBeNull();
     expect(login).not.toHaveBeenCalled();
     expect(authenticatedProfile).not.toHaveBeenCalled();
     expectNoProtectedResourceRequests(fetchMock);
+    expect(
+      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+    ).toBe(false);
     expect(screen.queryByRole("button", { name: /cerrar sesión/i })).toBeNull();
     expect(screen.queryByText(profile.name)).toBeNull();
+  });
+
+  it("forces the temporary-password screen and submits only the password-change endpoint", async () => {
+    const temporaryProfile = { ...profile, mustChangePassword: true };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "/profile")
+          return jsonResponse({ profile: temporaryProfile });
+        if (url === "/auth/change-password" && init?.method === "POST")
+          return new Response(null, { status: 204 });
+        if (url === "/groups") return jsonResponse({ groups: [] });
+        throw new Error(`Unexpected fetch request: ${url}`);
+      });
+    render(<App />);
+    expect(
+      await screen.findByRole("heading", {
+        name: /cambia tu contraseña temporal/i,
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Contraseña temporal"), {
+      target: { value: password },
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña nueva"), {
+      target: { value: "changed-password-123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar contraseña" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/auth/change-password",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            currentPassword: password,
+            newPassword: "changed-password-123",
+          }),
+        }),
+      ),
+    );
   });
 
   it("announces rejected credentials safely in Spanish and allows another login attempt", async () => {
@@ -284,59 +309,25 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     }
   });
 
-  it("explains the minimum signup password length before sending a request", async () => {
-    const { signup } = mockAuthHttp();
+  it("does not expose a signup form or client-side signup validation", async () => {
+    const { fetchMock } = mockAuthHttp();
     render(<App />);
-    await openSignup();
-    fillCredentials("too-short");
-    fireEvent.click(screen.getByRole("button", { name: signupName }));
-
-    expect((await screen.findByRole("alert")).textContent).toMatch(
-      /(?:contraseña.*12|12.*caracteres)/i,
-    );
-    expect(signup).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: signupName })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(screen.queryByText(/cuenta creada|registro/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: signupName })).toBeNull();
+    expect(
+      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+    ).toBe(false);
   });
 
-  it.each([
-    { status: 400, message: "Invalid signup request" },
-    { status: 409, message: "Account cannot be created" },
-  ])(
-    "recovers from signup HTTP $status without exposing the API message",
-    async ({ status, message }) => {
-      const { signup, authenticatedProfile } = mockAuthHttp();
-      signup.mockResolvedValueOnce(
-        jsonResponse({ status: "error", message }, status),
-      );
-      render(<App />);
-      await openSignup();
-      fireEvent.click(screen.getByRole("button", { name: signupName }));
-
-      const alert = await screen.findByRole("alert");
-      expect(alert.textContent).toMatch(/cuenta|registro|registr|datos/i);
-      expect(alert.textContent).not.toContain(message);
-      expect(alert.textContent).not.toContain(password);
-      expect(authenticatedProfile).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: signupName })).toHaveProperty(
-        "disabled",
-        false,
-      );
-      expect(screen.getByRole("textbox", { name: /nombre/i })).toHaveProperty(
-        "value",
-        user.name,
-      );
-      fillCredentials();
-      fireEvent.click(screen.getByRole("button", { name: signupName }));
-      await waitFor(() => {
-        expect(screen.getByRole("status").textContent).toMatch(
-          /(?:cuenta|registro).*(?:cread|exitos|complet)|registrad/i,
-        );
-      });
-      expect(signup).toHaveBeenCalledTimes(2);
-      expect(authenticatedProfile).not.toHaveBeenCalled();
-    },
-  );
+  it("keeps signup failures unreachable from the login surface", async () => {
+    const { fetchMock, authenticatedProfile } = mockAuthHttp();
+    render(<App />);
+    expect(
+      screen.queryByText(/Invalid signup request|Account cannot be created/),
+    ).toBeNull();
+    expect(authenticatedProfile).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+    ).toBe(false);
+  });
 });

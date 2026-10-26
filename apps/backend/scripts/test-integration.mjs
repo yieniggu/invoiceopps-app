@@ -506,7 +506,7 @@ export async function runIntegrationGate({
       assertMigrationLedger(applied.rows, expectedBaseline);
       log("stage: seed-legacy-transaction");
       const legacyId = await seedLegacy(client);
-      log("stage: migrations-9-13");
+      log("stage: migrations-9-14");
       const verifyCorrectedAuditConstraint =
         await verifyAuditConstraintForwardCorrection(client, legacyId);
       await migrate(
@@ -528,6 +528,7 @@ export async function runIntegrationGate({
           "20261011010000_add_evidence_prepared_transactions",
           "20261011020000_add_evidence_anchor_observations",
           "20261013000000_correct_model_inference_snapshot_guard",
+          "20261025170000_closed_access_provisioning",
         ]),
       ]);
       await verifyCorrectedAuditConstraint();
@@ -545,7 +546,7 @@ export async function runIntegrationGate({
       };
       for (const [label, suite, expected] of [
         ["SQL", suites[0], 10],
-        ["organization", suites[1], 34],
+        ["organization", suites[1], 35],
         ["batch", suites[2], 7],
         ["reservation", suites[3], 6],
         ["transaction", suites[4], 4],

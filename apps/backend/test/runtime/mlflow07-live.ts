@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import type { Server } from "node:http";
 import { createApp } from "../../src/app.js";
 import { createAuthService } from "../../src/auth.js";
+import { provisionInternalUser } from "../../src/internal-user-provisioning.js";
 import { createDatabase } from "../../src/database.js";
 import { normalizeRut } from "../../src/identity.js";
 import { createPlatformAdministratorService } from "../../src/platform-administrator.js";
@@ -225,7 +226,7 @@ const provision = createMlflowProvisionService({
     loadProvisionSecrets(passwordFile, resolve("../.."), names),
   now: () => cooldownNow,
 });
-const auth = createAuthService(prisma, "open");
+const auth = createAuthService(prisma);
 const app = () =>
   createApp(database, auth, {
     platformAdministrators: createPlatformAdministratorService(prisma),
@@ -299,17 +300,13 @@ async function http(
   const operation =
     origin === providerOrigin
       ? "provider-request"
-      : path === "/auth/signup"
-        ? "signup"
-        : path === "/auth/login"
-          ? "login"
-          : path === "/profile"
-            ? "profile"
-            : "app-request";
+      : path === "/auth/login"
+        ? "login"
+        : path === "/profile"
+          ? "profile"
+          : "app-request";
   const fixtureIndex =
-    operation === "signup" || operation === "login"
-      ? diagnostic.fixtureIndex
-      : undefined;
+    operation === "login" ? diagnostic.fixtureIndex : undefined;
   const context: Diagnostic = {
     operation,
     assertion: "http.fetch",
@@ -671,16 +668,10 @@ async function main() {
     step("database", "database.ready");
     check(await database.isReady(), "database.ready");
     for (const [index, user] of users.entries()) {
-      step("signup", "http.fetch", index + 1);
-      const signup = await appRequest(
-        "/auth/signup",
-        "POST",
-        { name: user.name, rut: user.rut, password: user.password },
-        user,
-        201,
-      );
-      diagnostic.assertion = "auth.signup-user";
-      user.id = text(record(signup.data.user).id);
+      step("internal-provision", "database.write", index + 1);
+      const provisioned = await provisionInternalUser(prisma, user);
+      diagnostic.assertion = "auth.internal-provision-user";
+      user.id = provisioned.id;
     }
     // A fixture-only listener restart preserves the default five-attempt auth limiter,
     // instead of disabling it, changing its clock, or impersonating client addresses.

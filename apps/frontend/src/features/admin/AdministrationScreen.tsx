@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { roleLabel, type Profile } from "../profile/ProfileScreen";
 import {
   PlatformDiscoveryStatus,
@@ -308,9 +308,107 @@ export function AdministrationScreen({
             idempotencia del servidor. Una nueva sesión reinicia el registro, no
             verifica operaciones anteriores.
           </p>
+          <GlobalProvisioning onCreated={onRetry} />
         </section>
       ) : null}
     </div>
+  );
+}
+
+function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
+  const [message, setMessage] = useState<string>();
+  const [temporaryPassword, setTemporaryPassword] = useState<string>();
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const action = String(form.get("action"));
+    const payload =
+      action === "organization"
+        ? {
+            name: String(form.get("organizationName") ?? ""),
+            slug: String(form.get("slug") ?? ""),
+          }
+        : {
+            name: String(form.get("userName") ?? ""),
+            rut: String(form.get("rut") ?? ""),
+            organizationId: String(form.get("organizationId") ?? ""),
+            role: String(form.get("role") ?? "STUDENT"),
+          };
+    const response = await fetch(
+      action === "organization" ? "/platform/organizations" : "/platform/users",
+      {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!response.ok) {
+      setTemporaryPassword(undefined);
+      setMessage(
+        "La operación fue rechazada; revisa los datos y tus permisos.",
+      );
+      return;
+    }
+    const body =
+      action === "organization"
+        ? undefined
+        : ((await response.json()) as { temporaryPassword?: unknown });
+    setTemporaryPassword(
+      typeof body?.temporaryPassword === "string"
+        ? body.temporaryPassword
+        : undefined,
+    );
+    setMessage(
+      action === "organization"
+        ? "Organización creada."
+        : "Usuario provisionado. Guarda la contraseña temporal ahora: no volverá a mostrarse.",
+    );
+    event.currentTarget.reset();
+    onCreated();
+  };
+  return (
+    <section aria-labelledby="global-provisioning-title">
+      <h2 id="global-provisioning-title">Crear organización o usuario</h2>
+      <p>Solo el administrador de plataforma puede usar estas operaciones.</p>
+      <form onSubmit={(event) => void submit(event)}>
+        <fieldset>
+          <legend>Organización</legend>
+          <input
+            name="organizationName"
+            aria-label="Nombre de organización"
+            required
+          />
+          <input name="slug" aria-label="Slug de organización" required />
+          <button name="action" value="organization" type="submit">
+            Crear organización
+          </button>
+        </fieldset>
+        <fieldset>
+          <legend>Usuario</legend>
+          <input name="userName" aria-label="Nombre de usuario" required />
+          <input name="rut" aria-label="RUT de usuario" required />
+          <input
+            name="organizationId"
+            aria-label="UUID de organización para usuario"
+            required
+          />
+          <select name="role" aria-label="Rol inicial">
+            <option value="STUDENT">Estudiante</option>
+            <option value="ADMIN">Administrador de organización</option>
+          </select>
+          <button name="action" value="user" type="submit">
+            Provisionar usuario
+          </button>
+        </fieldset>
+      </form>
+      {message ? <p role="status">{message}</p> : null}
+      {temporaryPassword ? (
+        <p role="alert">
+          Contraseña temporal: <code>{temporaryPassword}</code>
+        </p>
+      ) : null}
+    </section>
   );
 }
 function Summary({ intent }: { intent: AdministrationIntent }) {

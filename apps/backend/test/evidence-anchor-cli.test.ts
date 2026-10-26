@@ -190,9 +190,12 @@ describe("evidence anchor CLI entry point", () => {
     );
   });
 
-  it("preserves the primary configuration failure when database cleanup also fails", async () => {
+  it("preserves the execution failure when cleanup also fails", async () => {
     const output: string[] = [];
     const diagnostics: unknown[] = [];
+    executeCommand.mockRejectedValue(
+      new AuthError(401, "synthetic-auth-secret"),
+    );
     const status = await runEvidenceAnchorCli(
       [
         "anchor",
@@ -208,7 +211,6 @@ describe("evidence anchor CLI entry point", () => {
       {
         DATABASE_URL:
           "postgresql://synthetic-user:synthetic-password@db.invalid/app",
-        AUTH_MODE: "unsupported-mode",
       },
       (line) => output.push(line),
       (event) => diagnostics.push(event),
@@ -220,15 +222,15 @@ describe("evidence anchor CLI entry point", () => {
       },
     );
 
-    expect(status).toBe(2);
+    expect(status).toBe(1);
     expect(output).toEqual([
-      JSON.stringify({ error: "EVIDENCE_ANCHOR_CONFIG_INVALID" }),
+      JSON.stringify({ error: "EVIDENCE_ANCHOR_FAILED" }),
     ]);
     expect(diagnostics).toEqual([
       {
         phase: "execute",
         operation: "anchor",
-        reason: "configuration",
+        reason: "authentication",
         outcome: "failed",
       },
       {

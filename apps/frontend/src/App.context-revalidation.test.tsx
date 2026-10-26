@@ -244,7 +244,11 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     vi.spyOn(globalThis, "fetch").mockReturnValueOnce(pending.promise);
     document.title = "Facturas · InvoiceOps";
     render(<App />);
-    expect(screen.getByText("Cargando perfil...")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Cargando sesión" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Cargando sesión...");
+    expect(screen.queryByRole("heading", { name: "Mi perfil" })).toBeNull();
     expect(document.title).toBe("Cargando sesión · InvoiceOps");
     await act(async () => pending.resolve(json({}, 401)));
     await screen.findByRole("button", { name: "Iniciar sesión" });

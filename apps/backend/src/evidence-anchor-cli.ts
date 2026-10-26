@@ -122,10 +122,7 @@ export async function runEvidenceAnchorCli(
     try {
       phase = "execute";
       const { prisma } = database;
-      const authMode = environment.AUTH_MODE ?? "open";
-      if (authMode !== "open" && authMode !== "allowlist")
-        throw new EvidenceAnchorConfigurationError();
-      const auth = createAuthService(prisma, authMode);
+      const auth = createAuthService(prisma);
       const evidence = createEvidencePersistence(prisma);
       const reservation = createEvidenceAnchorReservation(prisma);
       const transactions = createEvidenceAnchorTransactions(prisma);
