@@ -32,11 +32,12 @@ services:
           "CMD",
           "python",
           "-c",
-          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/models/invoice-review/health', timeout=2).close()",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=2).close()",
         ]
       interval: 5s
       timeout: 3s
       retries: 12
+      start_period: 60s
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MODEL_API_ARTIFACT_DOWNLOAD_MODE: proxy-http
