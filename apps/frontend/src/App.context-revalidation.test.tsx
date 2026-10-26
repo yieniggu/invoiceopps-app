@@ -21,7 +21,7 @@ const group = {
 const profile = {
   id: "user-A",
   name: "Ada",
-  rut: "123456785",
+  rut: "12345678-5",
   email: null,
   username: null,
   isPlatformAdministrator: false,
@@ -57,29 +57,29 @@ function http() {
       return json({});
     if (path === "/auth/logout" && init?.method === "POST")
       return new Response(null, { status: 204 });
-    if (/^\/(?:resources|invoices|mlflow\/resources)\?/.test(path)) {
+    if (/^\/invoices\?/.test(path)) {
       protectedRequests.push(path);
       const url = new URL(path, "http://test.invalid");
       const owner = url.searchParams.get("ownerId");
-      if (url.pathname === "/resources")
-        return json({
-          resources: [
-            {
-              id: `resource-${owner}`,
-              label: `Recurso ${owner}`,
-              type: "ml-experiment",
-            },
-          ],
-        });
-      if (url.pathname === "/invoices")
-        return json({ invoices: [], nextCursor: null });
       return json({
-        experiment: null,
-        runs: [],
-        registeredModel: null,
-        versions: [],
-        truncated: false,
-        fetchedAt: "2026-10-21T00:00:00.000Z",
+        invoices: [
+          {
+            id: `INV-${owner}`,
+            businessId: `INV-${owner}`,
+            organizationId: "organization-1",
+            groupId: "group-1",
+            currency: "CLP",
+            issuedOn: "2026-10-25",
+            dueOn: "2026-11-25",
+            processingStatus: "NOT_REQUESTED",
+            createdByUserId: "user-1",
+            createdAt: "2026-10-21T00:00:00Z",
+            supplierName: `Proveedor ${owner}`,
+            amountPesos: 100,
+            businessStatus: "PENDING",
+          },
+        ],
+        nextCursor: null,
       });
     }
     unexpected.push(path);
@@ -98,12 +98,12 @@ async function selectGroupAndSave(
 ) {
   render(<App />);
   await screen.findByRole("navigation");
-  navigate("Recursos");
-  await screen.findByText("Recurso user-A");
+  navigate("Facturas");
+  await screen.findByText("Proveedor user-A");
   fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
     target: { value: "org-A:group:group-A" },
   });
-  await screen.findByText("Recurso group-A");
+  await screen.findByText("Proveedor group-A");
   api.groups.mockReturnValueOnce(pending.promise);
   navigate("Mis grupos");
   fireEvent.click(
@@ -116,14 +116,11 @@ function expectProtectedViewsBlocked(
   boundary: number,
   message: string,
 ) {
-  for (const destination of ["Recursos", "Facturas"]) {
+  for (const destination of ["Facturas"]) {
     navigate(destination);
     expect(screen.getByText(message)).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Propietario" })).toBeNull();
-    expect(screen.queryByText("Recurso group-A")).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "Recursos de MLflow" }),
-    ).toBeNull();
+    expect(screen.queryByText("Proveedor group-A")).toBeNull();
     expect(
       screen.queryByRole("textbox", { name: "Buscar por ID o proveedor" }),
     ).toBeNull();
@@ -159,12 +156,11 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
         expect(screen.queryByRole("option", { name: /Grupo A/ })).toBeNull();
         expect(api.protectedRequests.slice(boundary)).toEqual([]);
       } else {
-        await screen.findByText("No hay facturas para este propietario.");
+        await screen.findByText("Proveedor group-A");
         expect(api.protectedRequests.slice(boundary)).toEqual([
           "/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
         ]);
       }
-      navigate("Recursos");
       if (revoked) {
         expect(
           screen.getByRole<HTMLSelectElement>("combobox", {
@@ -173,7 +169,6 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
         ).toBe("");
         expect(api.protectedRequests.slice(boundary)).toEqual([]);
       } else {
-        await screen.findByText("Recurso group-A");
         expect(
           api.protectedRequests
             .slice(boundary)
@@ -219,7 +214,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
         })
       ).value,
     ).toBe("org-A:group:group-A");
-    await screen.findByText("No hay facturas para este propietario.");
+    await screen.findByText("Proveedor group-A");
     expect(api.protectedRequests.slice(boundary)).toEqual([
       "/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
     ]);
@@ -231,9 +226,9 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     render(<App />);
     await screen.findByRole("navigation");
     navigate("Facturas");
-    await screen.findByText("No hay facturas para este propietario.");
+    await screen.findByText("Proveedor user-A");
     expect(document.title).toBe("Facturas · InvoiceOps");
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     expect(document.title).toBe("Iniciar sesión · InvoiceOps");
     expect(screen.queryByRole("navigation")).toBeNull();
@@ -244,12 +239,13 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     vi.spyOn(globalThis, "fetch").mockReturnValueOnce(pending.promise);
     document.title = "Facturas · InvoiceOps";
     render(<App />);
-    expect(
-      screen.getByRole("heading", { name: "Cargando sesión" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Cargando sesión...");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Preparando tu espacio de trabajo",
+    );
     expect(screen.queryByRole("heading", { name: "Mi perfil" })).toBeNull();
-    expect(document.title).toBe("Cargando sesión · InvoiceOps");
+    expect(document.title).toBe(
+      "Preparando tu espacio de trabajo · InvoiceOps",
+    );
     await act(async () => pending.resolve(json({}, 401)));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     expect(document.title).toBe("Iniciar sesión · InvoiceOps");

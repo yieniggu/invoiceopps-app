@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { AuthError, type AuthService } from "../src/auth.js";
 import {
-  EvidencePersistenceError,
+  createInvoiceService as createPrismaInvoiceService,
+  toInvoiceDto,
+  type InvoiceDto,
   type InvoiceService,
 } from "../src/invoices.js";
 
@@ -43,143 +45,41 @@ function createAuth(): AuthService {
   };
 }
 
+const invoice: InvoiceDto = {
+  id: "11111111-1111-4111-8111-111111111111",
+  businessId: "FAC-2026-001",
+  organizationId: "organization-1",
+  groupId: "group-1",
+  supplierName: "Proveedor local",
+  amountPesos: 12500,
+  currency: "CLP",
+  issuedOn: "2026-10-25",
+  dueOn: "2026-11-25",
+  businessStatus: "PENDING",
+  processingStatus: "NOT_REQUESTED",
+  createdByUserId: "user-1",
+  createdAt: "2026-10-25T12:00:00.000Z",
+};
+
 function createInvoiceService(): InvoiceService {
   return {
     async listInvoices(userId, receivedContext, query) {
       expect(userId).toBe("user-1");
       expect(receivedContext).toEqual(context);
       expect(query).toEqual({ q: "acme", cursor: undefined, limit: 50 });
-      return {
-        invoices: [
-          {
-            invoiceId: "INV-001",
-            vendorName: "Acme Ltd.",
-            invoiceAmountCents: 500_000,
-            hasPurchaseOrder: true,
-            threeWayMatch: true,
-            status: "PENDING",
-            policyProbability: null,
-            policyProbabilitySource: null,
-            modelId: null,
-            modelVersion: null,
-            modelRunId: null,
-            recommendation: null,
-          },
-        ],
-        nextCursor: null,
-      };
+      return { invoices: [invoice], nextCursor: null };
     },
     async getInvoice(userId, receivedContext, invoiceId) {
       expect(userId).toBe("user-1");
       expect(receivedContext).toEqual(context);
-      expect(invoiceId).toBe("INV-001");
-      return {
-        invoice: {
-          invoiceId,
-          vendorName: "Acme Ltd.",
-          invoiceAmountCents: 500_000,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          status: "PENDING",
-          policyProbability: null,
-          policyProbabilitySource: null,
-          modelId: null,
-          modelVersion: null,
-          modelRunId: null,
-          recommendation: null,
-          riskContext: {
-            vendorTenureDays: 365,
-            previousIncidents12m: 0,
-            bankAccountRecentlyChanged: false,
-            amountVsVendorMedian: 1,
-            countryRisk: "medium",
-          },
-          createdAt: "2026-09-21T00:00:00.000Z",
-          updatedAt: "2026-09-21T00:00:00.000Z",
-        },
-        auditEvents: [],
-      };
-    },
-    async decideInvoice(user, receivedContext, invoiceId, input) {
-      expect(user).toMatchObject({
-        id: "user-1",
-        name: "Ada Lovelace",
-        rut: "123456785",
-      });
-      expect(receivedContext).toEqual(context);
-      expect(invoiceId).toBe("INV-001");
-      expect(input).toEqual({ mode: "RULE_V1" });
-      return {
-        invoice: {
-          invoiceId,
-          status: "AUTO_PROCESSED",
-          updatedAt: "2026-09-21T00:01:00.000Z",
-        },
-        auditEvent: {
-          decision: "AUTO_PROCESS",
-          ruleVersion: "invoice-rules-v1",
-          mode: "RULE_V1",
-          policyVersion: null,
-          manualReviewThreshold: null,
-          policyProbability: null,
-          policyProbabilitySource: null,
-          modelId: null,
-          modelVersion: null,
-          modelRunId: null,
-          recommendation: null,
-          actor: { name: "Ada Lovelace", rut: "123456785" },
-          correlationId: "correlation-1",
-          createdAt: "2026-09-21T00:01:00.000Z",
-        },
-      };
+      expect(invoiceId).toBe(invoice.id);
+      return { invoice };
     },
   };
 }
 
 describe("APP-06 invoice HTTP contract", () => {
-  it.each(["CONSTRUCTION", "INSERTION"] as const)(
-    "keeps %s failures behind a safe 500 and emits only allowlisted diagnostics",
-    async (category) => {
-      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const app = createApp({ isReady: async () => true }, createAuth(), {
-          invoices: {
-            ...createInvoiceService(),
-            async decideInvoice() {
-              const error = new EvidencePersistenceError(
-                category,
-                "00000000-0000-4000-8000-000000000003",
-              );
-              Object.assign(error, {
-                cause: "secret SQL RUT invoice connection URL",
-              });
-              throw error;
-            },
-          },
-        });
-        const response = await request(app)
-          .post(`/invoices/INV-001/decision?${new URLSearchParams(context)}`)
-          .set("Host", "127.0.0.1")
-          .set("Origin", "http://127.0.0.1")
-          .set("Cookie", "invoiceops_session=valid-session")
-          .send({ mode: "RULE_V1" });
-        expect(response.status).toBe(500);
-        expect(response.body).toEqual({ status: "error" });
-        expect(errorLog).toHaveBeenCalledOnce();
-        expect(JSON.parse(errorLog.mock.calls[0][0])).toEqual({
-          feature: "invoice-evidence",
-          outcome: "failure",
-          category,
-          correlationId: "00000000-0000-4000-8000-000000000003",
-        });
-        expect(errorLog.mock.calls[0][0]).not.toContain("secret");
-      } finally {
-        errorLog.mockRestore();
-      }
-    },
-  );
-
-  it("lists, reads, and decides invoices in the active authorized context", async () => {
+  it("lists and reads invoices in the active authorized context", async () => {
     const app = createApp({ isReady: async () => true }, createAuth(), {
       invoices: createInvoiceService(),
     });
@@ -189,24 +89,37 @@ describe("APP-06 invoice HTTP contract", () => {
       .get(`/invoices?${query}`)
       .set("Cookie", "invoiceops_session=valid-session");
     const detail = await request(app)
-      .get(`/invoices/INV-001?${query}`)
+      .get(`/invoices/${invoice.id}?${query}`)
       .set("Cookie", "invoiceops_session=valid-session");
-    const decision = await request(app)
-      .post(`/invoices/INV-001/decision?${query}`)
-      .set("Host", "127.0.0.1")
-      .set("Origin", "http://127.0.0.1")
-      .set("Cookie", "invoiceops_session=valid-session")
-      .send({ mode: "RULE_V1" });
-
     expect(list.status).toBe(200);
-    expect(list.body.invoices[0]).toMatchObject({ invoiceId: "INV-001" });
+    expect(list.body.invoices[0]).toMatchObject({ businessId: "FAC-2026-001" });
     expect(detail.status).toBe(200);
-    expect(detail.body.invoice.riskContext.countryRisk).toBe("medium");
-    expect(decision.status).toBe(200);
-    expect(decision.body.auditEvent).toMatchObject({
-      ruleVersion: "invoice-rules-v1",
-      actor: { name: "Ada Lovelace", rut: "123456785" },
+    expect(detail.body.invoice).toEqual(invoice);
+  });
+
+  it("maps a malformed percent-escaped invoice id to 400 without logging or leaking", async () => {
+    const app = createApp({ isReady: async () => true }, createAuth(), {
+      invoices: createInvoiceService(),
     });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await request(app)
+        .get(
+          "/invoices/%E0%A4%A?organizationId=organization-1&ownerType=group&ownerId=group-1",
+        )
+        .set("Cookie", "invoiceops_session=valid-session");
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        status: "error",
+        message: "Bad request",
+      });
+      expect(JSON.stringify(response.body)).not.toMatch(
+        /URIError|at \w+|stack/,
+      );
+      expect(logged).not.toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("rejects malformed invoice inputs and unauthenticated access", async () => {
@@ -223,100 +136,155 @@ describe("APP-06 invoice HTTP contract", () => {
     expect(unauthenticated.status).toBe(401);
   });
 
-  it("rejects a cookie-authenticated decision without a same-origin Origin header", async () => {
+  it.each([
+    [
+      "invalid ownerType",
+      { organizationId: "o", ownerType: "team", ownerId: "u" },
+    ],
+    ["missing ownerId", { organizationId: "o", ownerType: "user" }],
+    ["missing organizationId", { ownerType: "user", ownerId: "u" }],
+  ])("returns 400 for %s on GET /invoices", async (_label, params) => {
     const app = createApp({ isReady: async () => true }, createAuth(), {
       invoices: createInvoiceService(),
     });
-    const decision = await request(app)
-      .post(`/invoices/INV-001/decision?${new URLSearchParams(context)}`)
-      .set("Cookie", "invoiceops_session=valid-session")
-      .send({ mode: "RULE_V1" });
+    const response = await request(app)
+      .get(`/invoices?${new URLSearchParams(params)}`)
+      .set("Cookie", "invoiceops_session=valid-session");
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      status: "error",
+      message: "Invalid resource context",
+    });
+  });
+});
 
-    expect(decision.status).toBe(403);
-    expect(decision.body).toEqual({ status: "error", message: "Forbidden" });
+describe("invoice read model (P0)", () => {
+  const row = {
+    id: invoice.id,
+    businessId: invoice.businessId,
+    organizationId: invoice.organizationId,
+    groupId: invoice.groupId,
+    supplierName: invoice.supplierName,
+    amountPesos: 12500,
+    currency: "CLP" as const,
+    issuedOn: new Date("2026-10-25T00:00:00.000Z"),
+    dueOn: new Date("2026-11-25T00:00:00.000Z"),
+    businessStatus: "PENDING" as const,
+    processingStatus: "NOT_REQUESTED" as const,
+    createdByUserId: "user-1",
+    createdAt: new Date("2026-10-25T12:00:00.000Z"),
+    deletedAt: null,
+    deletedByUserId: null,
+    internal: "must-not-leak",
+  };
+
+  it("maps explicitly without leaking internal columns or shifting dates", () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = "America/Santiago";
+    try {
+      expect(toInvoiceDto(row)).toEqual(invoice);
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
+    expect(Object.keys(toInvoiceDto(row)).sort()).toEqual([
+      "amountPesos",
+      "businessId",
+      "businessStatus",
+      "createdAt",
+      "createdByUserId",
+      "currency",
+      "dueOn",
+      "groupId",
+      "id",
+      "issuedOn",
+      "organizationId",
+      "processingStatus",
+      "supplierName",
+    ]);
   });
 
-  it("keeps CSRF, authentication, and ownership boundaries for probability decisions", async () => {
-    const decideInvoice = vi.fn(
-      async (actor, receivedContext, invoiceId, input) => {
-        if (receivedContext.ownerId !== actor.id) {
-          throw new AuthError(404, "Invoice not found");
-        }
-        expect(invoiceId).toBe("INV-001");
-        expect(input).toEqual({
-          mode: "PROBABILITY_POLICY",
-          policyVersion: "ml-policy-v1",
-        });
-        return {
-          invoice: {
-            invoiceId,
-            status: "MANUAL_REVIEW" as const,
-            updatedAt: "2026-09-21T00:01:00.000Z",
-          },
-          auditEvent: {
-            decision: "MANUAL_REVIEW" as const,
-            ruleVersion: "ml-policy-v1",
-            mode: "PROBABILITY_POLICY" as const,
-            policyVersion: "ml-policy-v1",
-            manualReviewThreshold: 0.8,
-            policyProbability: null,
-            policyProbabilitySource: "MODEL_API_FALLBACK",
-            modelId: null,
-            modelVersion: null,
-            modelRunId: null,
-            recommendation: "MANUAL_REVIEW" as const,
-            actor: { name: "Ada Lovelace", rut: "123456785" },
-            correlationId: "correlation-1",
-            createdAt: "2026-09-21T00:01:00.000Z",
-          },
-        };
+  function fakePrisma() {
+    const findMany = vi.fn(async () => [row]);
+    const findFirst = vi.fn(async () => row);
+    const prisma = {
+      organizationMembership: {
+        findUnique: vi.fn(async () => ({ userId: "user-1" })),
       },
-    );
-    const app = createApp({ isReady: async () => true }, createAuth(), {
-      invoices: { ...createInvoiceService(), decideInvoice },
-    });
-    const decisionPath = `/invoices/INV-001/decision?${new URLSearchParams(context)}`;
-    const csrfRejected = await request(app)
-      .post(decisionPath)
-      .set("Cookie", "invoiceops_session=valid-session")
-      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
-    const unauthenticated = await request(app)
-      .post(decisionPath)
-      .set("Host", "127.0.0.1")
-      .set("Origin", "http://127.0.0.1")
-      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
-    const crossOwner = await request(app)
-      .post(
-        `/invoices/INV-001/decision?${new URLSearchParams({ ...context, ownerId: "user-2" })}`,
-      )
-      .set("Host", "127.0.0.1")
-      .set("Origin", "http://127.0.0.1")
-      .set("Cookie", "invoiceops_session=valid-session")
-      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
-    const permitted = await request(app)
-      .post(decisionPath)
-      .set("Host", "127.0.0.1")
-      .set("Origin", "http://127.0.0.1")
-      .set("Cookie", "invoiceops_session=valid-session")
-      .send({ mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" });
+      groupMembership: { findFirst: vi.fn(async () => ({ userId: "user-1" })) },
+      invoice: { findMany, findFirst },
+    };
+    return { prisma, findMany, findFirst };
+  }
 
-    expect(csrfRejected.status).toBe(403);
-    expect(unauthenticated.status).toBe(401);
-    expect(crossOwner.status).toBe(404);
-    expect(crossOwner.body).toEqual({
-      status: "error",
-      message: "Invoice not found",
+  it("filters group lists by group and organization excluding deleted rows", async () => {
+    const { prisma, findMany } = fakePrisma();
+    const service = createPrismaInvoiceService(prisma as never);
+    const result = await service.listInvoices(
+      "user-1",
+      {
+        organizationId: "organization-1",
+        ownerType: "group",
+        ownerId: "group-1",
+      },
+      { q: "", limit: 10 },
+    );
+    expect(result.invoices).toEqual([invoice]);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: [
+            {
+              organizationId: "organization-1",
+              groupId: "group-1",
+              deletedAt: null,
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("has no personal invoices: user lists are empty and details are 404", async () => {
+    const { prisma, findMany, findFirst } = fakePrisma();
+    const service = createPrismaInvoiceService(prisma as never);
+    const userContext = {
+      organizationId: "organization-1",
+      ownerType: "user" as const,
+      ownerId: "user-1",
+    };
+    await expect(
+      service.listInvoices("user-1", userContext, { q: "", limit: 10 }),
+    ).resolves.toEqual({ invoices: [], nextCursor: null });
+    await expect(
+      service.getInvoice("user-1", userContext, invoice.id),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(findMany).not.toHaveBeenCalled();
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for a missing or deleted group invoice", async () => {
+    const { prisma, findFirst } = fakePrisma();
+    findFirst.mockResolvedValueOnce(null as never);
+    const service = createPrismaInvoiceService(prisma as never);
+    await expect(
+      service.getInvoice(
+        "user-1",
+        {
+          organizationId: "organization-1",
+          ownerType: "group",
+          ownerId: "group-1",
+        },
+        invoice.id,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        id: invoice.id,
+        organizationId: "organization-1",
+        groupId: "group-1",
+        deletedAt: null,
+      },
     });
-    expect(permitted.status).toBe(200);
-    expect(permitted.body.auditEvent.policyProbabilitySource).toBe(
-      "MODEL_API_FALLBACK",
-    );
-    expect(decideInvoice).toHaveBeenCalledTimes(2);
-    expect(decideInvoice).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: "user-1" }),
-      context,
-      "INV-001",
-      { mode: "PROBABILITY_POLICY", policyVersion: "ml-policy-v1" },
-    );
   });
 });

@@ -25,11 +25,11 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function http(platform = true, role = "STUDENT", member = true) {
+function http(platform = true, role = "USER", member = true) {
   let profile: Profile = {
     id: id(2),
     name: "Persona",
-    rut: "123456785",
+    rut: "12345678-5",
     email: null,
     username: null,
     isPlatformAdministrator: platform,
@@ -70,29 +70,20 @@ function http(platform = true, role = "STUDENT", member = true) {
     .mockImplementation(async () => {
       throw new Error("unknown policy");
     });
-  const invoiceWrite = vi
-    .fn<() => Promise<Response>>()
-    .mockImplementation(async () => {
-      throw new Error("unknown invoice");
-    });
   const invoice = {
-    invoiceId: "INV-A",
-    vendorName: "Proveedor",
-    invoiceAmountCents: 100,
-    hasPurchaseOrder: true,
-    threeWayMatch: true,
-    status: "PENDING",
-    policyProbability: null,
-    policyProbabilitySource: null,
+    id: "INV-A",
+    businessId: "INV-A",
+    organizationId: "organization-1",
+    groupId: "group-1",
+    currency: "CLP",
+    issuedOn: "2026-10-25",
+    dueOn: "2026-11-25",
+    processingStatus: "NOT_REQUESTED",
+    createdByUserId: "user-1",
+    supplierName: "Proveedor",
+    amountPesos: 100,
+    businessStatus: "PENDING",
     createdAt: "2026-10-21T00:00:00Z",
-    updatedAt: "2026-10-21T00:00:00Z",
-    riskContext: {
-      vendorTenureDays: 365,
-      previousIncidents12m: 0,
-      bankAccountRecentlyChanged: false,
-      amountVsVendorMedian: 1,
-      countryRisk: "low",
-    },
   };
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
@@ -110,11 +101,9 @@ function http(platform = true, role = "STUDENT", member = true) {
           ? policyWrite()
           : json({ policies: [{ version: "v1", manualReviewThreshold: 0.8 }] });
       if (path.startsWith("/invoices"))
-        return init?.method
-          ? invoiceWrite()
-          : path === "/invoices"
-            ? json({ invoices: [invoice], nextCursor: null })
-            : json({ invoice, auditEvents: [] });
+        return path === "/invoices"
+          ? json({ invoices: [invoice], nextCursor: null })
+          : json({ invoice });
       throw new Error(`Unexpected request ${path}`);
     });
   return {
@@ -124,12 +113,20 @@ function http(platform = true, role = "STUDENT", member = true) {
     logout,
     fetchMock,
     policyWrite,
-    invoiceWrite,
     setProfile: (next: Profile) => {
       profile = next;
     },
     getProfile: () => profile,
   };
+}
+// The active context is observable on the dashboard "Tu espacio de trabajo" card.
+function dashboardContext() {
+  fireEvent.click(
+    within(screen.getByRole("navigation")).getByRole("button", {
+      name: "Panel principal",
+    }),
+  );
+  return screen.getByRole("region", { name: "Tu espacio de trabajo" });
 }
 async function open() {
   render(<App />);
@@ -161,7 +158,7 @@ afterEach(() => {
 describe("APP12 S7 administration", () => {
   it.each([
     [false, "ADMIN"],
-    [true, "STUDENT"],
+    [true, "USER"],
   ] as const)(
     "exposes management navigation and dashboard for platform=%s role=%s",
     async (platform, role) => {
@@ -172,7 +169,7 @@ describe("APP12 S7 administration", () => {
         within(nav).getByRole("button", { name: "Administración" }),
       ).toBeTruthy();
       fireEvent.click(
-        screen.getByRole("button", { name: "Abrir administración" }),
+        screen.getByRole("button", { name: "Ir a administración" }),
       );
       expect(
         screen.getByRole("heading", { level: 1, name: "Administración" }),
@@ -197,14 +194,14 @@ describe("APP12 S7 administration", () => {
     await screen.findByRole("navigation");
     expect(screen.queryByRole("button", { name: "Administración" })).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Abrir administración" }),
+      screen.queryByRole("button", { name: "Ir a administración" }),
     ).toBeNull();
     expect(api.discovery).not.toHaveBeenCalled();
   });
   it.each(["POST", "PATCH", "DELETE"])(
     "confirms the exact %s contract, retains a target summary and never parses DELETE 204",
     async (method) => {
-      const api = http(true, "STUDENT", false);
+      const api = http(true, "USER", false);
       const empty = new Response(null, { status: 204 });
       const parse = vi.spyOn(empty, "json");
       if (method === "DELETE") api.writes.mockResolvedValueOnce(empty);
@@ -247,17 +244,17 @@ describe("APP12 S7 administration", () => {
           ? undefined
           : JSON.stringify(
               method === "POST"
-                ? { userId: target, role: "STUDENT" }
-                : { role: "STUDENT" },
+                ? { userId: target, role: "USER" }
+                : { role: "USER" },
             ),
       );
       expect(parse).not.toHaveBeenCalled();
-      expect(
-        screen.getByLabelText("Contexto de trabajo").textContent,
-      ).toContain("Contexto no disponible");
+      expect(dashboardContext().textContent).toContain(
+        "Elige una organización o grupo para empezar.",
+      );
       expect(
         api.fetchMock.mock.calls.some(([path]) =>
-          /resources|invoices|business-policies|evidence-/.test(String(path)),
+          /invoices|business-policies/.test(String(path)),
         ),
       ).toBe(false);
     },
@@ -341,7 +338,7 @@ describe("APP12 S7 administration", () => {
             membership: {
               userId: target,
               organizationId: org.id,
-              role: "STUDENT",
+              role: "USER",
             },
           },
           201,
@@ -363,7 +360,7 @@ describe("APP12 S7 administration", () => {
               membership: {
                 userId: id(99),
                 organizationId: org.id,
-                role: "STUDENT",
+                role: "USER",
               },
             },
             failure === "500" ? 500 : 201,
@@ -455,8 +452,13 @@ describe("APP12 S7 administration", () => {
     });
     confirm();
     await screen.findByText(/Operación confirmada/);
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toContain(
-      "Contexto no disponible",
+    expect(dashboardContext().textContent).toContain(
+      "Elige una organización o grupo para empezar.",
+    );
+    fireEvent.click(
+      within(screen.getByRole("navigation")).getByRole("button", {
+        name: "Administración",
+      }),
     );
     expect(screen.getByLabelText("UUID de usuario existente")).toBeTruthy();
   });
@@ -469,12 +471,12 @@ describe("APP12 S7 administration", () => {
     confirm();
     await screen.findByText(/Resultado no confirmado/);
     api.logout.mockRejectedValueOnce(new Error("failed logout"));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByText(/No fue posible cerrar la sesión/);
     expect(
       screen.getByRole("button", { name: "Revisar operación" }),
     ).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     fireEvent.change(screen.getByLabelText("RUT"), {
       target: { value: "123456785" },
@@ -510,7 +512,7 @@ describe("APP12 S7 administration", () => {
       await waitFor(() => expect(api.writes).toHaveBeenCalledTimes(1));
       if (outcome === "body")
         await waitFor(() => expect(parse).toHaveBeenCalledOnce());
-      fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+      fireEvent.click(screen.getByRole("button", { name: "Salir" }));
       await screen.findByRole("button", { name: "Iniciar sesión" });
       api.setProfile({ ...api.getProfile(), id: id(9), name: "Persona B" });
       fireEvent.change(screen.getByLabelText("RUT"), {
@@ -530,7 +532,7 @@ describe("APP12 S7 administration", () => {
             membership: {
               userId: target,
               organizationId: org.id,
-              role: "STUDENT",
+              role: "USER",
             },
           });
         else response.resolve(json({}, 401));
@@ -552,7 +554,7 @@ describe("APP12 S7 administration", () => {
     confirm();
     await waitFor(() => expect(api.writes).toHaveBeenCalledTimes(1));
     api.logout.mockRejectedValueOnce(new Error("failed logout"));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByText(/No fue posible cerrar la sesión/);
     await screen.findByText(/Resultado no confirmado/);
     await act(async () => response.resolve(json({}, 401)));
@@ -574,7 +576,7 @@ describe("APP12 S7 administration", () => {
     confirm();
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
     const oldProfile = api.getProfile();
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     api.setProfile({
       ...oldProfile,
@@ -590,9 +592,9 @@ describe("APP12 S7 administration", () => {
       target: { value: "synthetic-password" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
-    await screen.findByText("Bienvenido, Persona B");
+    await screen.findByText(/Bienvenido, Persona B/);
     await act(async () => body.resolve({ profile: oldProfile }));
-    expect(screen.getByText("Bienvenido, Persona B")).toBeTruthy();
+    expect(screen.getByText(/Bienvenido, Persona B/)).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /^Administración$/ }),
     ).toBeNull();
@@ -621,7 +623,7 @@ describe("APP12 S7 administration", () => {
     expect(api.writes.mock.calls[0][1].body).toBe(
       JSON.stringify({ role: "ADMIN" }),
     );
-    expect(api.getProfile().memberships[0].role).toBe("STUDENT");
+    expect(api.getProfile().memberships[0].role).toBe("USER");
   });
   it("does not clear target B's pending lock with target A's late body after failed logout", async () => {
     const api = http();
@@ -635,7 +637,7 @@ describe("APP12 S7 administration", () => {
     confirm();
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
     api.logout.mockRejectedValueOnce(new Error("failed logout"));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByText(/No fue posible cerrar la sesión/);
     fireEvent.change(screen.getByLabelText("UUID de usuario existente"), {
       target: { value: id(4) },
@@ -647,7 +649,7 @@ describe("APP12 S7 administration", () => {
     await waitFor(() => expect(api.writes).toHaveBeenCalledTimes(2));
     await act(async () =>
       body.resolve({
-        membership: { organizationId: org.id, userId: target, role: "STUDENT" },
+        membership: { organizationId: org.id, userId: target, role: "USER" },
       }),
     );
     expect(
@@ -661,7 +663,7 @@ describe("APP12 S7 administration", () => {
             membership: {
               organizationId: org.id,
               userId: id(4),
-              role: "STUDENT",
+              role: "USER",
             },
           },
           201,
@@ -674,84 +676,41 @@ describe("APP12 S7 administration", () => {
     });
     await screen.findByText(/Resultado no confirmado/);
   });
-  it.each(["policy", "invoice"])(
-    "preserves the unrelated %s operation ledger through a same-actor self-membership refresh",
-    async (feature) => {
-      const api = http(true, "ADMIN");
-      const pendingInvoice = deferred<Response>();
-      if (feature === "invoice")
-        api.invoiceWrite.mockReturnValueOnce(pendingInvoice.promise);
-      render(<App />);
-      if (feature === "policy") {
-        fireEvent.click(
-          await screen.findByRole("button", { name: /^Políticas$/ }),
-        );
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Editar v1" }),
-        );
-        fireEvent.change(
-          screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
-          { target: { value: "1" } },
-        );
-        fireEvent.submit(screen.getByRole("form", { name: "Editar política" }));
-        await screen.findByText(/resultado es desconocido/i);
-      } else {
-        fireEvent.click(
-          await screen.findByRole("button", { name: /^Facturas$/ }),
-        );
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Ver INV-A" }),
-        );
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Aplicar Regla v1" }),
-        );
-        await waitFor(() => expect(api.invoiceWrite).toHaveBeenCalledTimes(1));
-      }
-      fireEvent.click(screen.getByRole("button", { name: /^Administración$/ }));
-      draft("PATCH", api.getProfile().id);
-      review();
-      api.writes.mockImplementationOnce(async () => {
-        api.setProfile({
-          ...api.getProfile(),
-          memberships: [{ organization: org, role: "STUDENT" }],
-        });
-        return json({
-          membership: {
-            userId: api.getProfile().id,
-            organizationId: org.id,
-            role: "STUDENT",
-          },
-        });
+  it("preserves the unrelated policy operation ledger through a same-actor self-membership refresh", async () => {
+    const api = http(true, "ADMIN");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Políticas$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar v1" }));
+    fireEvent.change(
+      screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
+      { target: { value: "1" } },
+    );
+    fireEvent.submit(screen.getByRole("form", { name: "Editar política" }));
+    await screen.findByText(/resultado es desconocido/i);
+    fireEvent.click(screen.getByRole("button", { name: /^Administración$/ }));
+    draft("PATCH", api.getProfile().id);
+    review();
+    api.writes.mockImplementationOnce(async () => {
+      api.setProfile({
+        ...api.getProfile(),
+        memberships: [{ organization: org, role: "USER" }],
       });
-      confirm();
-      await screen.findByText(/Operación confirmada/);
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: feature === "policy" ? /^Políticas$/ : /^Facturas$/,
-        }),
-      );
-      if (feature === "policy") {
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Editar v1" }),
-        );
-        await screen.findByText(/resultado es desconocido/i);
-        expect(
-          screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
-        ).toHaveProperty("value", "1");
-        expect(api.policyWrite).toHaveBeenCalledTimes(1);
-      } else {
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Ver INV-A" }),
-        );
-        expect(
-          await screen.findByRole("button", {
-            name: "Registrando decisión...",
-          }),
-        ).toHaveProperty("disabled", true);
-        expect(api.invoiceWrite).toHaveBeenCalledTimes(1);
-        await act(async () => pendingInvoice.resolve(json({}, 500)));
-        await screen.findByText(/El resultado es desconocido/);
-      }
-    },
-  );
+      return json({
+        membership: {
+          userId: api.getProfile().id,
+          organizationId: org.id,
+          role: "USER",
+        },
+      });
+    });
+    confirm();
+    await screen.findByText(/Operación confirmada/);
+    fireEvent.click(screen.getByRole("button", { name: /^Políticas$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar v1" }));
+    await screen.findByText(/resultado es desconocido/i);
+    expect(
+      screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
+    ).toHaveProperty("value", "1");
+    expect(api.policyWrite).toHaveBeenCalledTimes(1);
+  });
 });

@@ -1,6 +1,6 @@
 import { execFile, type ExecFileException } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -59,22 +59,12 @@ function startBoundedChild(
 }
 
 describe("integration gate entry point", () => {
-  it("uses the repository-owned orchestrator and explicitly selects every PostgreSQL suite", () => {
+  it("uses the repository-owned orchestrator and explicitly selects the PostgreSQL suite", () => {
     expect(manifest.scripts["test:integration"]).toBe(
       "node scripts/test-integration.mjs",
     );
     const source = readFileSync(runner, "utf8");
-    for (const suite of [
-      "evidence-persistence.integration.test.ts",
-      "organization-persistence.integration.test.ts",
-      "evidence-batches.integration.test.ts",
-      "evidence-anchor-reservations.integration.test.ts",
-      "evidence-anchor-transactions.integration.test.ts",
-      "evidence-anchor-cli.integration.test.ts",
-      "evidence-read.integration.test.ts",
-    ]) {
-      expect(source).toContain(suite);
-    }
+    expect(source).toContain("organization-persistence.integration.test.ts");
   });
 
   // Independent unsafe-input contracts each own exactly one subprocess and its
@@ -160,22 +150,10 @@ describe("integration gate entry point", () => {
 });
 
 const migrationDirectory = resolve("prisma/migrations");
-const names = [
-  "20260909214652_create_organization_memberships",
-  "20260910120000_add_authentication",
-  "20260911170000_add_organization_groups",
-  "20260912120000_add_resource_references",
-  "20260921194000_add_invoices",
-  "20260922213000_add_platform_administrator",
-  "20260923203000_add_business_policies",
-  "20260927213500_add_model_inference_audit",
-  "20261008060000_add_evidence_persistence",
-  "20261011000000_add_evidence_anchor_reservations",
-  "20261011010000_add_evidence_prepared_transactions",
-  "20261011020000_add_evidence_anchor_observations",
-  "20261013000000_correct_model_inference_snapshot_guard",
-  "20261025170000_closed_access_provisioning",
-];
+const baseline = "20261026000000_initial_recovery_p0";
+const names = readdirSync(migrationDirectory)
+  .filter((entry) => /^\d{14}_/.test(entry))
+  .sort();
 const expected = expectedMigrationChecksums(migrationDirectory, names);
 const completed = (count: number): MigrationLedgerRow[] =>
   expected.slice(0, count).map((row) => ({
@@ -189,50 +167,47 @@ describe("integration migration ledger", () => {
     expect(expected[0].checksum).toBe(
       createHash("sha256")
         .update(
-          readFileSync(resolve(migrationDirectory, names[0], "migration.sql")),
+          readFileSync(resolve(migrationDirectory, baseline, "migration.sql")),
         )
         .digest("hex"),
     );
-    expect(() =>
-      assertMigrationLedger(completed(8), expected.slice(0, 8)),
-    ).not.toThrow();
-    expect(() =>
-      assertMigrationLedger(completed(12), expected.slice(0, 12)),
-    ).not.toThrow();
-    expect(() => assertMigrationLedger(completed(14), expected)).not.toThrow();
+    const all = completed(names.length);
+    expect(() => assertMigrationLedger(all, expected)).not.toThrow();
+    // Each case keeps the full row count and alters one field of the last
+    // row, so a failure can only come from the field under test.
+    const alterLast = (change: Partial<MigrationLedgerRow>) =>
+      all.map((row, index) =>
+        index === all.length - 1 ? { ...row, ...change } : row,
+      );
     for (const altered of [
-      completed(8).map((row, index) =>
-        index === 3 ? { ...row, checksum: "0".repeat(64) } : row,
-      ),
-      completed(8).map((row, index) =>
-        index === 3 ? { ...row, migration_name: "wrong" } : row,
-      ),
-      completed(8).slice(0, 7),
-      completed(10),
-      completed(8).map((row, index) =>
-        index === 3 ? { ...row, finished_at: null } : row,
-      ),
-      completed(8).map((row, index) =>
-        index === 3 ? { ...row, rolled_back_at: new Date() } : row,
-      ),
+      alterLast({ checksum: "0".repeat(64) }),
+      alterLast({ migration_name: "wrong" }),
+      alterLast({ finished_at: null }),
+      alterLast({ rolled_back_at: new Date() }),
     ]) {
-      expect(() =>
-        assertMigrationLedger(altered, expected.slice(0, 8)),
-      ).toThrow("Migration ledger name, checksum or status mismatch");
+      expect(altered).toHaveLength(all.length);
+      expect(() => assertMigrationLedger(altered, expected)).toThrow(
+        "Migration ledger name, checksum or status mismatch",
+      );
     }
+    // Length mismatches: missing and duplicated rows.
+    for (const altered of [[], all.slice(0, -1), [...all, all[0]]]) {
+      expect(() => assertMigrationLedger(altered, expected)).toThrow(
+        "Migration ledger name, checksum or status mismatch",
+      );
+    }
+  });
+
+  it("ships the consolidated baseline migration first", () => {
+    expect(names[0]).toBe(baseline);
+    expect(expected[0].migration_name).toBe(baseline);
   });
 });
 
 function fixture({
   failure,
 }: {
-  failure?:
-    | "checksum"
-    | "suite"
-    | "unowned"
-    | "cleanup"
-    | "evidence-read-count"
-    | "organization-count";
+  failure?: "checksum" | "suite" | "unowned" | "cleanup" | "organization-count";
 } = {}) {
   const calls: Array<{
     binary: string;
@@ -259,54 +234,6 @@ function fixture({
         if (failure === "checksum") rows[0].checksum = "f".repeat(64);
         return { rows };
       }
-      if (sql.includes('UPDATE "DecisionEvent"') && migrationCount === 14) {
-        throw Object.assign(new Error("synthetic check violation"), {
-          code: "23514",
-        });
-      }
-      if (sql.includes('UPDATE "DecisionEvent"'))
-        return { rows: [], rowCount: 1 };
-      if (sql.includes("information_schema.columns")) {
-        return {
-          rows: Object.entries({
-            User: ["id", "name", "rut"],
-            Organization: ["id", "name", "slug", "updatedAt"],
-            Invoice: [
-              "id",
-              "invoiceId",
-              "organizationId",
-              "ownerType",
-              "ownerId",
-              "createdByUserId",
-              "vendorName",
-              "invoiceAmountCents",
-              "hasPurchaseOrder",
-              "threeWayMatch",
-              "vendorTenureDays",
-              "previousIncidents12m",
-              "bankAccountRecentlyChanged",
-              "amountVsVendorMedian",
-              "countryRisk",
-              "updatedAt",
-            ],
-            DecisionEvent: [
-              "id",
-              "invoiceId",
-              "actorUserId",
-              "actorName",
-              "actorRut",
-              "correlationId",
-              "decision",
-              "mode",
-              "ruleVersion",
-            ],
-          }).flatMap(([table_name, columns]) =>
-            columns.map((column_name) => ({ table_name, column_name })),
-          ),
-        };
-      }
-      if (sql.includes('FROM "EvidenceRecord"'))
-        return { rows: [{ total: 0 }] };
       return { rows: [] };
     }
   }
@@ -357,33 +284,13 @@ function fixture({
       }
     }
     if (args.includes("migrate")) {
-      migrationCount = args[args.indexOf("--config") + 1].includes("/baseline/")
-        ? 8
-        : 14;
+      migrationCount = names.length;
       return success();
     }
     if (args.includes("vitest")) {
       if (failure === "suite")
         return { status: 1, stdout: "", stderr: "synthetic suite failure" };
-      if (args.includes("test/evidence-read.integration.test.ts")) {
-        const count = failure === "evidence-read-count" ? 6 : 7;
-        return success(`Tests  ${count} passed (${count})`);
-      }
-      const count = args.some((arg) => arg.includes("evidence-persistence"))
-        ? 10
-        : args.some((arg) => arg.includes("organization-persistence"))
-          ? failure === "organization-count"
-            ? 31
-            : 35
-          : args.some((arg) => arg.includes("evidence-anchor-transactions"))
-            ? 4
-            : args.some((arg) => arg.includes("evidence-anchor-reconciliation"))
-              ? 2
-              : args.some((arg) => arg.includes("evidence-anchor-reservations"))
-                ? 6
-                : args.some((arg) => arg.includes("evidence-anchor-cli"))
-                  ? 4
-                  : 7;
+      const count = failure === "organization-count" ? 22 : 26;
       return success(`Tests  ${count} passed (${count})`);
     }
     return success();
@@ -414,36 +321,15 @@ describe("integration runner orchestration without external processes", () => {
     expect(calls).toEqual([]);
   });
 
-  it("rejects an invalid optional Anvil identity before any Docker operation", async () => {
-    const { dependencies, calls } = fixture();
-    await expect(
-      runIntegrationGate({
-        ...dependencies,
-        ownedAnvil: { pid: 0, port: 8545 },
-      }),
-    ).rejects.toThrow("Invalid owned Anvil identity");
-    expect(calls).toEqual([]);
-  });
-
-  it("verifies both ledgers, preserves order, passes explicit timeouts and removes only the owned ID", async () => {
+  it("verifies the migration ledger, passes explicit timeouts and removes only the owned ID", async () => {
     const { dependencies, calls, queries, logs } = fixture();
     await runIntegrationGate(dependencies);
     expect(
       queries.filter((query) => query.includes('FROM "_prisma_migrations"')),
-    ).toHaveLength(2);
-    expect(queries.findIndex((query) => query === "BEGIN")).toBeGreaterThan(
-      queries.findIndex((query) => query.includes('FROM "_prisma_migrations"')),
-    );
+    ).toHaveLength(1);
     const suites = calls.filter(({ args }) => args.includes("vitest"));
     expect(suites.map(({ args }) => args[3])).toEqual([
-      "test/evidence-persistence.integration.test.ts",
       "test/organization-persistence.integration.test.ts",
-      "test/evidence-batches.integration.test.ts",
-      "test/evidence-anchor-reservations.integration.test.ts",
-      "test/evidence-anchor-transactions.integration.test.ts",
-      "test/evidence-anchor-reconciliation.integration.test.ts",
-      "test/evidence-anchor-cli.integration.test.ts",
-      "test/evidence-read.integration.test.ts",
     ]);
     for (const { args, options } of suites) {
       expect(args).toEqual(
@@ -464,33 +350,27 @@ describe("integration runner orchestration without external processes", () => {
     ]);
     expect(logs).toEqual(
       expect.arrayContaining([
-        "stage: SQL 10 passed",
-        "stage: organization 35 passed",
-        "stage: batch 7 passed",
-        "stage: migrations-9-14",
-        "stage: reservation 6 passed",
-        "stage: transaction 4 passed",
-        "stage: CLI authorization 4 passed",
-        "stage: evidence read 7 passed",
+        "stage: organization 26 passed",
+        "stage: consolidated-migration",
         "cleanup: exact owned container removed and absence verified",
       ]),
     );
   });
 
-  it("dispatches all seven evidence reads only after final migrations and legacy preservation using the normal gate", async () => {
-    const { dependencies, calls, logs, queries } = fixture();
+  it("dispatches the organization suite only after the consolidated migration using the normal gate", async () => {
+    const { dependencies, calls } = fixture();
     await runIntegrationGate(dependencies);
-    const reads = calls.filter(({ args }) =>
-      args.includes("test/evidence-read.integration.test.ts"),
+    const runs = calls.filter(({ args }) =>
+      args.includes("test/organization-persistence.integration.test.ts"),
     );
-    expect(reads).toHaveLength(1);
-    expect(reads[0]).toMatchObject({
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
       binary: "pnpm",
       args: [
         "exec",
         "vitest",
         "run",
-        "test/evidence-read.integration.test.ts",
+        "test/organization-persistence.integration.test.ts",
         "--testTimeout",
         "60000",
         "--hookTimeout",
@@ -499,59 +379,25 @@ describe("integration runner orchestration without external processes", () => {
       options: { timeout: 300000 },
     });
     const fullMigration = calls.findIndex(
-      ({ args }) =>
-        args.includes("migrate") && args.some((arg) => arg.includes("/full/")),
+      ({ args }) => args.includes("migrate") && args.includes("deploy"),
     );
     expect(fullMigration).toBeGreaterThan(-1);
-    expect(calls.indexOf(reads[0])).toBeGreaterThan(fullMigration);
-    expect(
-      queries.some((query) =>
-        query.includes('SELECT count(*)::int AS total FROM "EvidenceRecord"'),
-      ),
-    ).toBe(true);
-    const environment = reads[0].options.env!;
-    expect(environment.APP10_LEGACY_EVENT_ID).toMatch(/^[0-9a-f-]{36}$/);
+    expect(calls.indexOf(runs[0])).toBeGreaterThan(fullMigration);
+    const environment = runs[0].options.env!;
     expect(environment.APP10_TEST_NAMESPACE).toMatch(/^[a-f0-9]{10}$/);
     const url = new URL(environment.TEST_DATABASE_URL!);
     expect(url.hostname).toBe("127.0.0.1");
     expect(url.pathname).toBe("/invoiceops_test");
     expect(url.username).toBe(`evi_${environment.APP10_TEST_NAMESPACE}`);
     expect(environment.DATABASE_URL).toBeUndefined();
-    expect(logs.indexOf("stage: evidence read 7 passed")).toBeGreaterThan(
-      logs.indexOf("stage: SQL 10 passed"),
-    );
-    expect(
-      calls.some(({ args }) =>
-        args.includes("test/evidence-anchor-anvil.integration.test.ts"),
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects an incomplete evidence-read result instead of claiming seven passed and still cleans only its owned ID", async () => {
-    const { dependencies, calls, logs } = fixture({
-      failure: "evidence-read-count",
-    });
-    await expect(runIntegrationGate(dependencies)).rejects.toThrow(
-      "evidence read suite did not pass all 7 expected cases",
-    );
-    expect(logs).not.toContain("stage: evidence read 7 passed");
-    expect(calls.filter(({ args }) => args[0] === "rm")).toEqual([
-      expect.objectContaining({
-        binary: "docker",
-        args: ["rm", "--force", "a".repeat(64)],
-      }),
-    ]);
-    expect(logs).toContain(
-      "cleanup: exact owned container removed and absence verified",
-    );
   });
 
   it("requires the three group catalog SQL cases in the normal organization gate", async () => {
     const { dependencies, logs } = fixture({ failure: "organization-count" });
     await expect(runIntegrationGate(dependencies)).rejects.toThrow(
-      "organization suite did not pass all 35 expected cases",
+      "organization suite did not pass all 26 expected cases",
     );
-    expect(logs).not.toContain("stage: organization 35 passed");
+    expect(logs).not.toContain("stage: organization 26 passed");
     expect(logs).toContain(
       "cleanup: exact owned container removed and absence verified",
     );
@@ -559,7 +405,7 @@ describe("integration runner orchestration without external processes", () => {
 
   it.each([
     ["checksum", "Migration ledger name, checksum or status mismatch", true],
-    ["suite", "SQL suite failed or timed out", true],
+    ["suite", "organization suite failed or timed out", true],
     ["unowned", "Container ownership could not be verified", false],
     ["cleanup", "owned container cleanup failed or timed out", true],
   ] as const)(
@@ -571,7 +417,7 @@ describe("integration runner orchestration without external processes", () => {
         removes ? 1 : 0,
       );
       if (failure !== "cleanup")
-        expect(logs).not.toContain("stage: batch 7 passed");
+        expect(logs).not.toContain("stage: organization 26 passed");
       if (removes && failure !== "cleanup") {
         expect(logs).toContain(
           "cleanup: exact owned container removed and absence verified",

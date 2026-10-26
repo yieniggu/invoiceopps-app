@@ -1,7 +1,24 @@
 :root {
   --focus-ring: #9b4b00;
-  color: #16243a;
-  background: #f6f8fc;
+  --color-text: #16243a;
+  --color-text-muted: #4a5a72;
+  --color-bg: #f6f8fc;
+  --color-surface: #fff;
+  --color-border: #d7dfed;
+  --color-primary: #345cc4;
+  --color-primary-strong: #243b6b;
+  --color-primary-soft: #eef2fa;
+  --color-primary-tint: #e6ecf8;
+  --color-skeleton: #dfe5f0;
+  --color-on-primary: #fff;
+  --color-overlay: rgb(22 36 58 / 0.5);
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --sidebar-width: 15rem;
+  --sidebar-width-collapsed: 4rem;
+  --content-max-width: 75rem;
+  color: var(--color-text);
+  background: var(--color-bg);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -44,8 +61,9 @@ h1 {
 }
 
 .shell p,
+.app-shell p,
 dd {
-  color: #4a5a72;
+  color: var(--color-text-muted);
   line-height: 1.6;
 }
 
@@ -69,7 +87,7 @@ dl {
 }
 
 dt {
-  color: #4a5a72;
+  color: var(--color-text-muted);
   font-size: 0.875rem;
 }
 
@@ -117,15 +135,14 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.app-shell {
-  max-width: 76rem;
-  align-content: start;
-  padding: 1.5rem;
-}
-
 .app-shell main {
   display: grid;
   gap: 1rem;
+  align-content: start;
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin-inline: auto;
+  padding: clamp(1rem, 3vw, 2rem);
   min-width: 0;
 }
 
@@ -154,22 +171,6 @@ button:focus-visible {
   margin: 0;
 }
 
-.app-shell .session-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: #eef2fa;
-}
-
-.session-toolbar > p {
-  flex: 1 1 18rem;
-  min-width: 0;
-}
-
-.session-toolbar button,
 .app-shell .secondary-button {
   background: #e6ecf8;
   color: #16243a;
@@ -235,25 +236,6 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.app-shell nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.app-shell nav button {
-  flex: 1 1 10rem;
-  background: #e6ecf8;
-  color: #16243a;
-}
-
-.app-shell nav [aria-current="page"] {
-  background: #345cc4;
-  color: #fff;
-  text-decoration: underline;
-  text-underline-offset: 0.3em;
-}
-
 select {
   min-height: 2.75rem;
   max-width: 100%;
@@ -265,14 +247,6 @@ a:focus-visible,
 [tabindex="-1"]:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
-}
-
-.skip-link:not(:focus) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
 }
 
 .app-shell :where(section, form, label, ul, li, dl, dd, input, select) {
@@ -293,10 +267,6 @@ a:focus-visible,
 }
 
 @media (max-width: 30rem) {
-  .app-shell {
-    padding: 1rem;
-  }
-
   .app-shell :where(section, form) {
     padding: 0.75rem;
   }
@@ -343,11 +313,425 @@ a:focus-visible,
   min-width: 48rem;
 }
 
-.invoice-audit-table {
-  min-width: 64rem;
-}
-
 .workspace-table-scroll :where(td, th) {
   padding: 0.375rem 0.5rem;
   vertical-align: top;
+}
+
+.visually-hidden,
+.skip-link:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.button-with-icon,
+.nav-item,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* App shell: fixed sidebar + content area. */
+.app-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+  align-items: start;
+}
+
+.app-layout > .skip-link:focus {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.topbar,
+.sidebar-drawer-close {
+  display: none;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100vh;
+  height: 100dvh;
+  padding: 1rem 0.75rem;
+  overflow-y: auto;
+  border-inline-end: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding-inline-start: 0.5rem;
+}
+
+.app-shell .sidebar-brand,
+.topbar-brand {
+  color: var(--color-primary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sidebar nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.app-shell .nav-group {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-shell .nav-group-bottom {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.icon-button,
+.nav-item {
+  justify-content: flex-start;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.icon-button {
+  justify-content: center;
+  width: 2.75rem;
+  padding: 0.5rem;
+}
+
+.nav-item {
+  width: 100%;
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding: 0.5rem 0.75rem;
+  text-align: start;
+}
+
+.nav-item svg,
+.icon-button svg {
+  flex: none;
+}
+
+.icon-button:hover,
+.nav-item:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+}
+
+.app-shell .nav-item[aria-current="page"] {
+  background: var(--color-primary-tint);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+  color: var(--color-primary-strong);
+}
+
+.nav-item:disabled {
+  cursor: wait;
+}
+
+@media (forced-colors: active) {
+  .app-shell .nav-item[aria-current="page"] {
+    border-inline-start: 3px solid Highlight;
+    text-decoration: underline;
+  }
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .is-collapsed {
+    --sidebar-width: var(--sidebar-width-collapsed);
+  }
+
+  .is-collapsed .sidebar {
+    padding-inline: 0.5rem;
+  }
+
+  .is-collapsed .sidebar-header {
+    justify-content: center;
+    padding-inline-start: 0;
+  }
+
+  .is-collapsed .sidebar-brand {
+    display: none;
+  }
+
+  .is-collapsed .nav-item {
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Labels collapsed on desktop stay visible inside the drawer. */
+  .nav-label.visually-hidden {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .app-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+
+  .sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 40;
+    height: auto;
+    width: min(18rem, 85vw);
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform 0.2s ease,
+      visibility 0s linear 0.2s;
+  }
+
+  .is-drawer-open .sidebar {
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  .sidebar-collapse-toggle {
+    display: none;
+  }
+
+  .sidebar-drawer-close {
+    display: inline-flex;
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: block;
+    background: var(--color-overlay);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .is-drawer-open .sidebar {
+    transition: none;
+  }
+}
+
+/* Dashboard cards share one structure and equal heights per row. */
+.page-intro {
+  font-size: 1.0625rem;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.dash-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border-radius: var(--radius-md);
+}
+
+.dash-card h2 {
+  font-size: 1.125rem;
+}
+
+.dash-card-body {
+  display: grid;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.dash-card-actions {
+  margin-top: auto;
+  padding-top: 0.25rem;
+}
+
+.dash-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-tint);
+  color: var(--color-primary-strong);
+}
+
+.dash-card-featured {
+  grid-column: 1 / -1;
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.dash-card-featured .dash-card-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.dash-card-featured h2 {
+  font-size: 1.5rem;
+}
+
+@media (max-width: 64rem) {
+  .dash-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 40rem) {
+  .dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Session loading skeleton (neutral, decorative). */
+.session-skeleton {
+  min-height: 100vh;
+  background: var(--color-bg);
+}
+
+.skeleton-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.skeleton-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  padding: 1rem 0.75rem;
+  border-inline-end: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.skeleton-main {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin-inline: auto;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.skeleton-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 1rem;
+}
+
+.skeleton-block {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--color-skeleton);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-brand {
+  width: 60%;
+  height: 1.5rem;
+}
+
+.skeleton-nav-item {
+  height: 2.5rem;
+}
+
+.skeleton-header {
+  width: min(100%, 14rem);
+  height: 2.25rem;
+}
+
+.skeleton-intro {
+  width: min(100%, 24rem);
+  height: 1.25rem;
+}
+
+.skeleton-card {
+  height: 9rem;
+}
+
+.skeleton-card-wide {
+  height: 7rem;
+}
+
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block {
+    animation: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .skeleton-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .skeleton-sidebar {
+    display: none;
+  }
+}
+
+.field-error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 0.875rem;
 }

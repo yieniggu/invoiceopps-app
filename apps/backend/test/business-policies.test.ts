@@ -222,4 +222,45 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
     }
     expect(invoked).toBe(0);
   });
+
+  it.each([
+    [
+      "invalid ownerType",
+      { organizationId: "o", ownerType: "team", ownerId: "u" },
+    ],
+    ["missing ownerId", { organizationId: "o", ownerType: "user" }],
+  ])("returns 400 for %s on GET /business-policies", async (_label, params) => {
+    const response = await request(createPolicyApp())
+      .get(`/business-policies?${new URLSearchParams(params)}`)
+      .set("Host", "127.0.0.1")
+      .set("Cookie", "invoiceops_session=valid-session");
+    expect(response.status).toBe(400);
+  });
+
+  it("maps malformed and oversized JSON bodies to 400 and 413", async () => {
+    const app = createPolicyApp();
+    const malformed = await request(app)
+      .post(withContext("/business-policies"))
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=valid-session")
+      .set("Content-Type", "application/json")
+      .send('{"version": ');
+    expect(malformed.status).toBe(400);
+    expect(malformed.body).toEqual({
+      status: "error",
+      message: "Invalid JSON body",
+    });
+    const oversized = await request(app)
+      .post(withContext("/business-policies"))
+      .set("Host", "127.0.0.1")
+      .set("Origin", validOrigin)
+      .set("Cookie", "invoiceops_session=valid-session")
+      .send({ version: "x".repeat(20_000), manualReviewThreshold: 0.5 });
+    expect(oversized.status).toBe(413);
+    expect(oversized.body).toEqual({
+      status: "error",
+      message: "Request body too large",
+    });
+  });
 });

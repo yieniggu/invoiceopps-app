@@ -138,7 +138,7 @@ describe("APP12 S7 bounded membership transport", () => {
         const payload =
           method === "POST"
             ? { userId: "user/b", role: "ADMIN" }
-            : { role: "STUDENT" };
+            : { role: "USER" };
         const response = await fetch(`${origin}${path}`, {
           method,
           headers: {

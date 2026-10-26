@@ -131,7 +131,7 @@ export function OrganizationsScreen({
           <h2 id="platform-title">Administración de plataforma</h2>
           <p>
             El descubrimiento administrativo no otorga membresía ni acceso a
-            Recursos o Facturas.
+            Facturas.
           </p>
           <PlatformDiscoveryStatus state={discovery} onRetry={onRetry} />
           {discovery.kind === "loaded" ? (

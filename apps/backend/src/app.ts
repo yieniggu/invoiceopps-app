@@ -5,6 +5,7 @@ import {
   type AuthRateLimiter,
 } from "./auth-rate-limit.js";
 import { AuthError, type AuthService } from "./auth.js";
+import { parseRut } from "./rut.js";
 import type { DatabaseReadiness } from "./database.js";
 import {
   parseGroupPage,
@@ -13,33 +14,13 @@ import {
   type GroupUpdate,
 } from "./groups.js";
 import type { BusinessPolicyService } from "./business-policies.js";
-import {
-  EvidencePersistenceError,
-  type InvoiceDecisionInput,
-  type InvoiceService,
-} from "./invoices.js";
-import type { ResourceContext, ResourceService } from "./resources.js";
+import type { InvoiceService } from "./invoices.js";
+import type { ResourceContext } from "./resource-context.js";
 import { OrganizationRole } from "./generated/prisma/client.js";
 import type { PlatformAdministratorService } from "./platform-administrator.js";
-import type { MlflowResourceService } from "./mlflow-resources.js";
-import { MlflowReadError, withMlflowDeadline } from "./mlflow-read-client.js";
-import {
-  parseProvisionInput,
-  type MlflowProvisionService,
-} from "./mlflow-provision.js";
-import { ProvisionError } from "./mlflow-provision-plan.js";
-import {
-  evidenceId,
-  parseEvidenceQuery,
-  type EvidenceReadService,
-} from "./evidence-read.js";
-import { EvidenceIntegrityError } from "./evidence-persistence.js";
-
 const SESSION_COOKIE_NAME = "invoiceops_session";
 const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const UNKNOWN_CLIENT_IP = "unknown";
-// Share the route's accepted aliases with pre-handler parser error handling.
-const MLFLOW_PROVISION_PATH = /^\/admin\/mlflow\/provision\/?$/i;
 
 function sessionTokenFromCookie(header: string | undefined) {
   if (!header) {
@@ -166,7 +147,7 @@ function parseOrganizationMembershipInput(
     (requiresUserId &&
       (typeof record.userId !== "string" || !record.userId.trim())) ||
     (record.role !== OrganizationRole.ADMIN &&
-      record.role !== OrganizationRole.STUDENT)
+      record.role !== OrganizationRole.USER)
   ) {
     throw new AuthError(400, "Invalid organization membership");
   }
@@ -219,15 +200,20 @@ function parseProvisionUserInput(input: unknown) {
     typeof name !== "string" ||
     !name.trim() ||
     name.trim().length > 120 ||
-    typeof rut !== "string" ||
     typeof organizationId !== "string" ||
     !organizationId.trim() ||
-    (role !== OrganizationRole.ADMIN && role !== OrganizationRole.STUDENT)
+    (role !== OrganizationRole.ADMIN && role !== OrganizationRole.USER)
   )
     throw new AuthError(400, "Invalid user provision");
+  let canonicalRut: string;
+  try {
+    canonicalRut = parseRut(rut);
+  } catch {
+    throw new AuthError(400, "Invalid user provision");
+  }
   return {
     name: name.trim(),
-    rut,
+    rut: canonicalRut,
     organizationId: organizationId.trim(),
     role,
   };
@@ -284,29 +270,6 @@ function parseInvoiceListQuery(input: unknown) {
     throw new AuthError(400, "Invalid invoice query");
   }
   return { context, q: q.trim(), cursor, limit };
-}
-
-function parseInvoiceDecision(input: unknown): InvoiceDecisionInput {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new AuthError(400, "Invalid invoice decision");
-  }
-  const record = input as Record<string, unknown>;
-  if (Object.keys(record).length === 1 && record.mode === "RULE_V1") {
-    return { mode: "RULE_V1" };
-  }
-  if (
-    Object.keys(record).length === 2 &&
-    record.mode === "PROBABILITY_POLICY" &&
-    typeof record.policyVersion === "string" &&
-    record.policyVersion.trim() &&
-    record.policyVersion.trim().length <= 120
-  ) {
-    return {
-      mode: "PROBABILITY_POLICY",
-      policyVersion: record.policyVersion.trim(),
-    };
-  }
-  throw new AuthError(400, "Invalid invoice decision");
 }
 
 function parseBusinessPolicy(input: unknown, requiresVersion: boolean) {
@@ -369,11 +332,7 @@ export interface AppOptions {
   groups?: GroupService;
   invoices?: InvoiceService;
   businessPolicies?: BusinessPolicyService;
-  resources?: ResourceService;
-  mlflowResources?: MlflowResourceService;
   platformAdministrators?: PlatformAdministratorService;
-  mlflowProvision?: MlflowProvisionService;
-  evidenceRead?: EvidenceReadService;
 }
 
 export function createApp(
@@ -384,11 +343,7 @@ export function createApp(
     groups,
     invoices,
     businessPolicies,
-    resources,
-    mlflowResources,
     platformAdministrators,
-    mlflowProvision,
-    evidenceRead,
   }: AppOptions = {},
 ) {
   const app = express();
@@ -419,7 +374,6 @@ export function createApp(
       request.path === "/auth/logout" ||
       request.path === "/auth/change-password" ||
       request.path === "/auth/login" ||
-      request.path === "/mlflow/resources" ||
       request.path === "/health/live" ||
       request.path === "/health/ready";
     if (permitted || !request.headers.cookie || !auth) return next();
@@ -437,29 +391,6 @@ export function createApp(
 
   app.get("/health/live", (_request, response) => {
     response.status(200).json({ status: "ok" });
-  });
-
-  app.post(MLFLOW_PROVISION_PATH, async (request, response) => {
-    const token = sessionTokenFromCookie(request.headers.cookie);
-    if (!auth || !token) throw new AuthError(401, "Unauthorized");
-    const profile = await auth.getProfile(token);
-    if (!profile.isPlatformAdministrator) throw new AuthError(403, "Forbidden");
-    const input = parseProvisionInput(request.body);
-    if (!request.is("application/json")) throw new ProvisionError(400, "INPUT");
-    if (!mlflowProvision) throw new ProvisionError(503, "DISABLED");
-    const result = await mlflowProvision.provision(profile.id, input);
-    if (result.httpStatus >= 400)
-      console.warn(
-        JSON.stringify({
-          feature: "mlflow-provision",
-          outcome: result.body.status,
-          code: result.body.code,
-          correlationId: result.body.correlationId,
-          confirmed: result.body.confirmed,
-          unknownEffects: result.body.unknownEffects,
-        }),
-      );
-    response.status(result.httpStatus).json(result.body);
   });
 
   app.get("/health/ready", async (_request, response) => {
@@ -661,51 +592,6 @@ export function createApp(
     },
   );
 
-  app.get("/resources", async (request, response) => {
-    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
-    if (!auth || !resources || !sessionToken) {
-      throw new AuthError(401, "Unauthorized");
-    }
-
-    const profile = await auth.getProfile(sessionToken);
-    const context = parseResourceContext(request.query);
-    response
-      .status(200)
-      .json({ resources: await resources.listResources(profile.id, context) });
-  });
-
-  app.get("/mlflow/resources", async (request, response) => {
-    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
-    if (!auth || !sessionToken) throw new AuthError(401, "Unauthorized");
-    const startedAt = Date.now();
-    response.locals.mlflowStartedAt = startedAt;
-    const result = await withMlflowDeadline(async (signal) => {
-      const profile = await auth.getProfile(sessionToken);
-      if (profile.mustChangePassword)
-        throw new AuthError(403, "Password change required");
-      signal.throwIfAborted();
-      if (Object.keys(request.query).length !== 3) {
-        throw new AuthError(400, "Invalid resource context");
-      }
-      const context = parseResourceContext(request.query);
-      const uuid =
-        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-      if (!uuid.test(context.organizationId) || !uuid.test(context.ownerId)) {
-        throw new AuthError(400, "Invalid resource context");
-      }
-      if (!mlflowResources) throw new MlflowReadError(503, "NOT_CONFIGURED");
-      return mlflowResources.listResources(profile, context, signal);
-    });
-    console.info(
-      JSON.stringify({
-        feature: "mlflow-resources",
-        outcome: "success",
-        elapsedMs: Date.now() - startedAt,
-      }),
-    );
-    response.status(200).json(result);
-  });
-
   app.get("/invoices", async (request, response) => {
     const { context, q, cursor, limit } = parseInvoiceListQuery(request.query);
     const sessionToken = sessionTokenFromCookie(request.headers.cookie);
@@ -719,60 +605,6 @@ export function createApp(
         await invoices.listInvoices(profile.id, context, { q, cursor, limit }),
       );
   });
-
-  for (const kind of ["records", "batches"] as const) {
-    app.get(`/evidence-${kind}`, async (request, response) => {
-      const token = sessionTokenFromCookie(request.headers.cookie);
-      if (!auth || !token) throw new AuthError(401, "Unauthorized");
-      const actor = await auth.getProfile(token);
-      const { context, ...query } = parseEvidenceQuery(request.query, true);
-      if (!evidenceRead) {
-        response.status(503).json({ status: "unavailable" });
-        return;
-      }
-      response
-        .set("Cache-Control", "no-store")
-        .json(await evidenceRead.list(actor, context, kind, query));
-    });
-    app.get(`/evidence-${kind}/:id`, async (request, response) => {
-      const token = sessionTokenFromCookie(request.headers.cookie);
-      if (!auth || !token) throw new AuthError(401, "Unauthorized");
-      const actor = await auth.getProfile(token);
-      const { context } = parseEvidenceQuery(request.query, false);
-      const id = evidenceId(request.params.id);
-      if (!evidenceRead) {
-        response.status(503).json({ status: "unavailable" });
-        return;
-      }
-      response
-        .set("Cache-Control", "no-store")
-        .json(
-          await evidenceRead[kind === "records" ? "record" : "batch"](
-            actor,
-            context,
-            id,
-          ),
-        );
-    });
-  }
-  app.get(
-    "/evidence-batches/:batchId/proofs/:recordId",
-    async (request, response) => {
-      const token = sessionTokenFromCookie(request.headers.cookie);
-      if (!auth || !token) throw new AuthError(401, "Unauthorized");
-      const actor = await auth.getProfile(token);
-      const { context } = parseEvidenceQuery(request.query, false);
-      const batchId = evidenceId(request.params.batchId),
-        recordId = evidenceId(request.params.recordId);
-      if (!evidenceRead) {
-        response.status(503).json({ status: "unavailable" });
-        return;
-      }
-      response
-        .set("Cache-Control", "no-store")
-        .json(await evidenceRead.proof(actor, context, batchId, recordId));
-    },
-  );
 
   app.get("/business-policies", async (request, response) => {
     const context = parseResourceContext(request.query);
@@ -838,26 +670,6 @@ export function createApp(
           profile.id,
           context,
           request.params.invoiceId,
-        ),
-      );
-  });
-
-  app.post("/invoices/:invoiceId/decision", async (request, response) => {
-    const { context } = parseInvoiceListQuery(request.query);
-    const input = parseInvoiceDecision(request.body);
-    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
-    if (!auth || !invoices || !sessionToken) {
-      throw new AuthError(401, "Unauthorized");
-    }
-    const profile = await auth.getProfile(sessionToken);
-    response
-      .status(200)
-      .json(
-        await invoices.decideInvoice(
-          { id: profile.id, name: profile.name, rut: profile.rut },
-          context,
-          request.params.invoiceId,
-          input,
         ),
       );
   });
@@ -982,60 +794,6 @@ export function createApp(
     response,
     _next,
   ) => {
-    if (/^\/evidence-(?:records|batches)(?:\/|$)/.test(request.path)) {
-      if (
-        error instanceof URIError ||
-        (error as { status?: unknown })?.status === 400
-      ) {
-        response
-          .status(400)
-          .json({ status: "error", message: "Invalid evidence request" });
-        return;
-      }
-      if (error instanceof AuthError) {
-        response.status(error.status).json({
-          status: "error",
-          message:
-            error.status === 400
-              ? "Invalid evidence request"
-              : error.status === 401
-                ? "Unauthorized"
-                : error.status === 403
-                  ? "Forbidden"
-                  : "Evidence not found",
-        });
-      } else {
-        const integrity = error instanceof EvidenceIntegrityError;
-        console.error(
-          JSON.stringify({
-            feature: "evidence-read",
-            outcome: "failure",
-            code: integrity ? "INTEGRITY_INVALID" : "UNAVAILABLE",
-          }),
-        );
-        response.status(integrity ? 409 : 503).json({
-          status: "error",
-          code: integrity ? "INTEGRITY_INVALID" : "UNAVAILABLE",
-        });
-      }
-      return;
-    }
-    if (error instanceof EvidencePersistenceError) {
-      console.error(
-        JSON.stringify({
-          feature: "invoice-evidence",
-          outcome: "failure",
-          category: error.category,
-          correlationId: error.correlationId,
-        }),
-      );
-      response.status(500).json({ status: "error" });
-      return;
-    }
-    if (error instanceof ProvisionError) {
-      response.status(error.status).json({ status: "error", code: error.code });
-      return;
-    }
     if (error instanceof AuthError) {
       response
         .status(error.status)
@@ -1043,34 +801,37 @@ export function createApp(
       return;
     }
 
-    if (error instanceof MlflowReadError) {
-      const startedAt: unknown = response.locals.mlflowStartedAt;
-      console.warn(
-        JSON.stringify({
-          feature: "mlflow-resources",
-          outcome: "failure",
-          code: error.code,
-          ...(typeof startedAt === "number"
-            ? { elapsedMs: Math.max(0, Date.now() - startedAt) }
-            : {}),
-        }),
-      );
-      response.status(error.status).json({
-        status: "error",
-        code: error.code,
-        message: "MLflow resources unavailable",
-      });
+    const bodyError = error as { type?: unknown; status?: unknown } | null;
+    if (bodyError?.type === "entity.parse.failed") {
+      response
+        .status(400)
+        .json({ status: "error", message: "Invalid JSON body" });
+      return;
+    }
+    if (bodyError?.type === "entity.too.large") {
+      response
+        .status(413)
+        .json({ status: "error", message: "Request body too large" });
       return;
     }
 
-    if (MLFLOW_PROVISION_PATH.test(request.path)) {
-      const status: unknown = (error as { status?: unknown })?.status;
-      response.status(status === 400 || status === 413 ? 400 : 503).json({
-        status: "error",
-        code: status === 400 || status === 413 ? "INPUT" : "DEPENDENCY",
-      });
+    // Any other client error raised by Express or middleware (for example a
+    // malformed URL escape) keeps its 4xx status with a generic message.
+    const clientError = error as { status?: unknown; statusCode?: unknown };
+    const clientStatus = [clientError?.status, clientError?.statusCode].find(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isInteger(value) &&
+        value >= 400 &&
+        value <= 499,
+    );
+    if (clientStatus !== undefined) {
+      response
+        .status(clientStatus)
+        .json({ status: "error", message: "Bad request" });
       return;
     }
+
     console.error("Unhandled request error", error);
     response.status(500).json({ status: "error" });
   };

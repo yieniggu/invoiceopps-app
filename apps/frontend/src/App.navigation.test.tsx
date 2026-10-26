@@ -18,13 +18,13 @@ const organizations = [
 const profile = {
   id: "user-1",
   name: "Ada Lovelace",
-  rut: "123456785",
+  rut: "12345678-5",
   email: "ada@example.test",
   username: "ada",
   isPlatformAdministrator: false,
   memberships: organizations.map((organization) => ({
     organization,
-    role: "STUDENT",
+    role: "USER",
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -42,29 +42,23 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function listResponse(path: string, ownerId: string) {
-  if (path === "/resources") {
-    return json({
-      resources: [
-        {
-          id: `resource-${ownerId}`,
-          type: "ml-experiment",
-          label: `Recurso ${ownerId}`,
-        },
-      ],
-    });
-  }
+function listResponse(ownerId: string) {
   return json({
     invoices: [
       {
-        invoiceId: `invoice-${ownerId}`,
-        vendorName: `Proveedor ${ownerId}`,
-        invoiceAmountCents: 10000,
-        hasPurchaseOrder: true,
-        threeWayMatch: true,
-        status: "PENDING",
-        policyProbability: null,
-        policyProbabilitySource: null,
+        id: `invoice-${ownerId}`,
+        businessId: `invoice-${ownerId}`,
+        organizationId: "organization-1",
+        groupId: "group-1",
+        currency: "CLP",
+        issuedOn: "2026-10-25",
+        dueOn: "2026-11-25",
+        processingStatus: "NOT_REQUESTED",
+        createdByUserId: "user-1",
+        createdAt: "2026-10-21T00:00:00Z",
+        supplierName: `Proveedor ${ownerId}`,
+        amountPesos: 10000,
+        businessStatus: "PENDING",
       },
     ],
     nextCursor: null,
@@ -86,7 +80,7 @@ function mockHttp(anonymous = false) {
   const lists = vi
     .fn<(url: URL) => Promise<Response>>()
     .mockImplementation(async (url) =>
-      listResponse(url.pathname, url.searchParams.get("ownerId") ?? ""),
+      listResponse(url.searchParams.get("ownerId") ?? ""),
     );
   const unexpected: string[] = [];
   const fetchMock = vi
@@ -103,17 +97,7 @@ function mockHttp(anonymous = false) {
         if (url.pathname === "/groups") return json({ groups });
         if (url.pathname === "/business-policies")
           return json({ policies: [] });
-        if (url.pathname === "/resources" || url.pathname === "/invoices")
-          return lists(url);
-        if (url.pathname === "/mlflow/resources")
-          return json({
-            experiment: null,
-            runs: [],
-            registeredModel: null,
-            versions: [],
-            truncated: false,
-            fetchedAt: "2026-10-21T12:00:00.000Z",
-          });
+        if (url.pathname === "/invoices") return lists(url);
       }
       unexpected.push(`${method} ${path}`);
       throw new Error(`Unexpected request: ${method} ${path}`);
@@ -162,7 +146,6 @@ describe("APP12 S1 navigation and shared context", () => {
       "Mi perfil",
       "Organizaciones",
       "Mis grupos",
-      "Recursos",
       "Facturas",
       "Políticas",
     ]) {
@@ -216,12 +199,12 @@ describe("APP12 S1 navigation and shared context", () => {
     const pending = deferredResponse();
     render(<App />);
     const navigation = await screen.findByRole("navigation");
-    navigate(navigation, "Recursos");
-    await screen.findByText("Recurso user-1");
+    navigate(navigation, "Facturas");
+    await screen.findByText("Proveedor user-1");
     api.lists.mockImplementation(async (url) =>
       url.searchParams.get("ownerId") === "group-B"
         ? pending.promise
-        : listResponse(url.pathname, url.searchParams.get("ownerId") ?? ""),
+        : listResponse(url.searchParams.get("ownerId") ?? ""),
     );
     selectGroupB();
     await waitFor(() =>
@@ -242,10 +225,12 @@ describe("APP12 S1 navigation and shared context", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Reintentar organizaciones" }),
     );
+    navigate(navigation, "Panel principal");
     await waitFor(() =>
       expect(
-        screen.getByLabelText("Contexto de trabajo").textContent,
-      ).toContain("Contexto no disponible"),
+        screen.getByRole("region", { name: "Tu espacio de trabajo" })
+          .textContent,
+      ).toContain("Elige una organización o grupo para empezar."),
     );
     const boundary = api.lists.mock.calls.length;
     navigate(navigation, "Facturas");
@@ -256,29 +241,24 @@ describe("APP12 S1 navigation and shared context", () => {
     ).toBe("");
     expect(api.lists.mock.calls.slice(boundary)).toEqual([]);
     expect(screen.queryByText("Proveedor group-B")).toBeNull();
-    // Even after returning to resources, revoked groups from the old /groups response are excluded.
-    navigate(navigation, "Recursos");
+    // Even after returning to invoices, revoked groups from the old /groups response are excluded.
+    navigate(navigation, "Panel principal");
+    navigate(navigation, "Facturas");
     expect(screen.queryByRole("option", { name: /Grupo B/ })).toBeNull();
-    expect(screen.queryByText("Recurso group-B")).toBeNull();
-    await act(async () =>
-      pending.resolve(listResponse("/resources", "group-B")),
-    );
-    expect(screen.queryByText("Recurso group-B")).toBeNull();
+    expect(screen.queryByText("Proveedor group-B")).toBeNull();
+    await act(async () => pending.resolve(listResponse("group-B")));
+    expect(screen.queryByText("Proveedor group-B")).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
-  it("keeps the selected organization and group visible and current across resources and invoices", async () => {
+  it("keeps the selected organization and group visible and current across invoices and policies", async () => {
     const api = mockHttp();
     render(<App />);
 
     const navigation = await screen.findByRole("navigation");
-    navigate(navigation, "Recursos");
-    await screen.findByText("Recurso user-1");
-    selectGroupB();
-    await screen.findByText("Recurso group-B");
-    expectGroupBVisible();
-
     navigate(navigation, "Facturas");
+    await screen.findByText("Proveedor user-1");
+    selectGroupB();
     await screen.findByText("Proveedor group-B");
     expectGroupBVisible();
     expect(
@@ -291,15 +271,18 @@ describe("APP12 S1 navigation and shared context", () => {
       ),
     ).toBe(true);
 
-    navigate(navigation, "Recursos");
-    await screen.findByText("Recurso group-B");
+    navigate(navigation, "Políticas");
+    await screen.findByRole("heading", { name: "Políticas", level: 1 });
     expectGroupBVisible();
-    expect(screen.queryByText("Recurso user-1")).toBeNull();
+
+    navigate(navigation, "Facturas");
+    await screen.findByText("Proveedor group-B");
+    expectGroupBVisible();
+    expect(screen.queryByText("Proveedor user-1")).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
   it.each([
-    { path: "/resources", current: "Recurso group-B", stale: "Recurso user-1" },
     {
       path: "/invoices",
       current: "Proveedor group-B",
@@ -313,14 +296,11 @@ describe("APP12 S1 navigation and shared context", () => {
       api.lists.mockImplementation(async (url) =>
         url.pathname === path && url.searchParams.get("ownerId") === "user-1"
           ? pending.promise
-          : listResponse(url.pathname, url.searchParams.get("ownerId") ?? ""),
+          : listResponse(url.searchParams.get("ownerId") ?? ""),
       );
       try {
         render(<App />);
-        navigate(
-          await screen.findByRole("navigation"),
-          path === "/invoices" ? "Facturas" : "Recursos",
-        );
+        navigate(await screen.findByRole("navigation"), "Facturas");
         await screen.findByRole("combobox", { name: "Propietario" });
         await waitFor(() =>
           expect(
@@ -329,7 +309,7 @@ describe("APP12 S1 navigation and shared context", () => {
         );
         const region = screen
           .getAllByRole("region", {
-            name: path === "/resources" ? "Recursos" : "Facturas",
+            name: "Facturas",
           })
           .find((candidate) =>
             within(candidate).queryByRole("combobox", { name: "Propietario" }),
@@ -346,7 +326,7 @@ describe("APP12 S1 navigation and shared context", () => {
         });
         fireEvent.change(selector, { target: { value: option.value } });
         await screen.findByText(current);
-        await act(async () => pending.resolve(listResponse(path, "user-1")));
+        await act(async () => pending.resolve(listResponse("user-1")));
 
         expect(screen.getByText(current)).toBeTruthy();
         expect(screen.queryByText(stale)).toBeNull();
@@ -358,7 +338,7 @@ describe("APP12 S1 navigation and shared context", () => {
         expect(
           within(
             screen.getByRole("region", {
-              name: path === "/resources" ? "Recursos" : "Facturas",
+              name: "Facturas",
             }),
           ).getByText("Academia B · Grupo: Grupo B", {
             selector: ":not(option)",
@@ -366,12 +346,12 @@ describe("APP12 S1 navigation and shared context", () => {
         ).toBeTruthy();
         expect(api.unexpected).toEqual([]);
       } finally {
-        await act(async () => pending.resolve(listResponse(path, "user-1")));
+        await act(async () => pending.resolve(listResponse("user-1")));
       }
     },
   );
 
-  it.each(["/resources", "/invoices"])(
+  it.each(["/invoices"])(
     "ignores a delayed %s response body after the shared owner changes",
     async (path) => {
       const api = mockHttp();
@@ -385,38 +365,28 @@ describe("APP12 S1 navigation and shared context", () => {
       api.lists.mockImplementation(async (url) =>
         url.pathname === path && url.searchParams.get("ownerId") === "user-1"
           ? response
-          : listResponse(url.pathname, url.searchParams.get("ownerId") ?? ""),
+          : listResponse(url.searchParams.get("ownerId") ?? ""),
       );
       render(<App />);
-      navigate(
-        await screen.findByRole("navigation"),
-        path === "/resources" ? "Recursos" : "Facturas",
-      );
+      navigate(await screen.findByRole("navigation"), "Facturas");
       await waitFor(() => expect(body).toHaveBeenCalledTimes(1));
       selectGroupB();
-      const current =
-        path === "/resources" ? "Recurso group-B" : "Proveedor group-B";
+      const current = "Proveedor group-B";
       await screen.findByText(current);
-      await act(async () =>
-        completeBody(await listResponse(path, "user-1").json()),
-      );
+      await act(async () => completeBody(await listResponse("user-1").json()));
       expect(screen.getByText(current)).toBeTruthy();
-      expect(
-        screen.queryByText(
-          path === "/resources" ? "Recurso user-1" : "Proveedor user-1",
-        ),
-      ).toBeNull();
+      expect(screen.queryByText("Proveedor user-1")).toBeNull();
       expect(api.unexpected).toEqual([]);
     },
   );
 
-  it("control: loads the authenticated profile and resources using the existing organization and owner contract", async () => {
+  it("control: loads the authenticated profile and invoices using the existing organization and owner contract", async () => {
     const api = mockHttp();
     render(<App />);
     navigate(await screen.findByRole("navigation"), "Mi perfil");
     expect(screen.getByText(profile.name)).toBeTruthy();
-    navigate(screen.getByRole("navigation"), "Recursos");
-    await screen.findByText("Recurso user-1");
+    navigate(screen.getByRole("navigation"), "Facturas");
+    await screen.findByText("Proveedor user-1");
     expect(api.fetchMock).toHaveBeenCalledWith("/profile", {
       credentials: "same-origin",
     });
@@ -426,7 +396,7 @@ describe("APP12 S1 navigation and shared context", () => {
     expect(
       api.lists.mock.calls.some(
         ([url]) =>
-          url.pathname === "/resources" &&
+          url.pathname === "/invoices" &&
           url.searchParams.get("organizationId") === "org-A" &&
           url.searchParams.get("ownerType") === "user" &&
           url.searchParams.get("ownerId") === profile.id,

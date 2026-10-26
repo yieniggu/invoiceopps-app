@@ -1,3 +1,5 @@
+import { RutField } from "../../components/RutField";
+import { isValidRut, toApiRut } from "../../lib/rut";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 function authErrorMessage(status: number) {
@@ -15,9 +17,12 @@ function authErrorMessage(status: number) {
 export function AuthScreen({ onLogin }: { onLogin: () => void }) {
   const [rut, setRut] = useState("");
   const [password, setPassword] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const activeRequest = useRef<AbortController | null>(null);
+  const rutInput = useRef<HTMLInputElement>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => activeRequest.current?.abort(), []);
 
@@ -27,8 +32,20 @@ export function AuthScreen({ onLogin }: { onLogin: () => void }) {
       return;
     }
     setError(undefined);
-    if (!rut.trim() || !password) {
+    // Mark the attempt first so a per-field error shows even when the
+    // password is empty and the form returns early.
+    setSubmitted(true);
+    const rutMissing = !rut.trim();
+    if (rutMissing || !password) {
       setError("Completa los datos requeridos para continuar.");
+      (rutMissing || !isValidRut(rut)
+        ? rutInput
+        : passwordInput
+      ).current?.focus();
+      return;
+    }
+    if (!isValidRut(rut)) {
+      rutInput.current?.focus();
       return;
     }
 
@@ -40,7 +57,7 @@ export function AuthScreen({ onLogin }: { onLogin: () => void }) {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rut: rut.trim(), password }),
+        body: JSON.stringify({ rut: toApiRut(rut), password }),
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
@@ -83,19 +100,20 @@ export function AuthScreen({ onLogin }: { onLogin: () => void }) {
         aria-labelledby="auth-title"
         aria-busy={pending}
       >
-        <label>
-          RUT
-          <input
-            autoComplete="username"
-            value={rut}
-            onChange={(event) => setRut(event.target.value)}
-            disabled={pending}
-            required
-          />
-        </label>
+        <RutField
+          label="RUT"
+          autoComplete="username"
+          value={rut}
+          onChange={setRut}
+          disabled={pending}
+          submitted={submitted}
+          inputRef={rutInput}
+          required
+        />
         <label>
           Contraseña
           <input
+            ref={passwordInput}
             type="password"
             autoComplete="current-password"
             value={password}

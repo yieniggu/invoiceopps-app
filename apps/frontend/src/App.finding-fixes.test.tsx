@@ -22,7 +22,7 @@ const actor = "00000000-0000-4000-8000-000000000002";
 const initial: Profile = {
   id: actor,
   name: "Persona",
-  rut: "123456785",
+  rut: "12345678-5",
   email: null,
   username: null,
   isPlatformAdministrator: true,
@@ -42,6 +42,15 @@ function navigate(name: string) {
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("button", { name }),
   );
+}
+// The active context is observable on the dashboard "Tu espacio de trabajo" card.
+function dashboardContext() {
+  fireEvent.click(
+    within(screen.getByRole("navigation")).getByRole("button", {
+      name: "Panel principal",
+    }),
+  );
+  return screen.getByRole("region", { name: "Tu espacio de trabajo" });
 }
 function http(platform = true) {
   let profile = { ...initial, isPlatformAdministrator: platform };
@@ -77,7 +86,7 @@ function http(platform = true) {
           ? [
               {
                 ...group,
-                members: [{ id: actor, name: "Persona", rut: "123456785" }],
+                members: [{ id: actor, name: "Persona", rut: "12345678-5" }],
               },
             ]
           : [],
@@ -183,8 +192,8 @@ describe("FULLAPP12 authorized findings", () => {
     expect(
       screen.getByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toContain(
-      "Contexto no disponible",
+    expect(dashboardContext().textContent).toContain(
+      "Elige una organización o grupo para empezar.",
     );
   });
   it("CR010 lazily catalogs non-member groups for an organization ADMIN without granting workspace ownership", async () => {
@@ -293,8 +302,8 @@ describe("FULLAPP12 authorized findings", () => {
     expect(
       screen.getByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toContain(
-      "Contexto no disponible",
+    expect(dashboardContext().textContent).toContain(
+      "Elige una organización o grupo para empezar.",
     );
   });
   it("CR010 refreshes actual memberships and the selected catalog after self group removal without duplicate cards", async () => {
@@ -336,7 +345,7 @@ describe("FULLAPP12 authorized findings", () => {
     navigate("Mis grupos");
     createGroup();
     api.logout.mockRejectedValueOnce(new Error("Logout failed"));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByText(/No fue posible cerrar la sesión/);
     createGroup();
     expect(committed).toBe(1);
@@ -380,7 +389,7 @@ describe("FULLAPP12 authorized findings", () => {
     await start("Mi perfil");
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     api.setProfile({
       ...initial,
@@ -414,7 +423,7 @@ describe("FULLAPP12 authorized findings", () => {
     await start("Mis grupos");
     createGroup();
     api.logout.mockRejectedValueOnce(new Error("Logout failed"));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByText(/No fue posible cerrar la sesión/);
     await screen.findByText(/resultado es desconocido/i);
     fireEvent.change(
@@ -425,7 +434,7 @@ describe("FULLAPP12 authorized findings", () => {
     await act(async () => pending.resolve(json({}, 401)));
     createGroup();
     expect(api.create).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });
     fireEvent.change(screen.getByLabelText("RUT"), {
       target: { value: "123456785" },
@@ -447,7 +456,7 @@ const memberB = "abcdefab-cdef-4abc-8abc-abcdefabcdee";
 function membershipHttp() {
   const api = http(false);
   const members = new Map<string, Group["members"][number]>([
-    [actor, { id: actor, name: "Persona", rut: "123456785" }],
+    [actor, { id: actor, name: "Persona", rut: "12345678-5" }],
   ]);
   api.readGroups.mockImplementation(async () =>
     json({
@@ -481,7 +490,7 @@ function membershipHttp() {
         members.set(userId, {
           id: userId,
           name: `Integrante ${userId}`,
-          rut: "123456793",
+          rut: "12345679-3",
         });
         throw new Error("Committed membership; response lost before headers");
       }

@@ -119,18 +119,6 @@ export function useSharedWorkspace() {
   return workspace;
 }
 
-export function WorkspaceSummary() {
-  const workspace = useContext(Workspace);
-  const context = workspace?.selectedContext;
-  return (
-    <p aria-label="Contexto de trabajo">
-      {context
-        ? `${context.organizationName} · ${context.ownerType === "user" ? "Trabajo individual" : `Grupo: ${context.ownerName}`}`
-        : "Contexto no disponible. Consulta tus organizaciones o grupos."}
-    </p>
-  );
-}
-
 export function WorkspaceBoundary({ children }: { children: ReactNode }) {
   const workspace = useContext(Workspace);
   return <Fragment key={workspace?.selectedValue ?? ""}>{children}</Fragment>;

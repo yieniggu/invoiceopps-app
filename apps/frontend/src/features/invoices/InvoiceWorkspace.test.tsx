@@ -19,27 +19,40 @@ const profile = {
   memberships: [
     {
       organization: { id: "organization-1", name: "AI Academy" },
-      role: "STUDENT",
+      role: "USER",
     },
   ],
 };
 
+function invoice(
+  businessId: string,
+  supplierName: string,
+  amountPesos = 12500,
+) {
+  return {
+    id: `uuid-${businessId}`,
+    businessId,
+    organizationId: "organization-1",
+    groupId: "group-1",
+    supplierName,
+    amountPesos,
+    currency: "CLP",
+    issuedOn: "2026-10-25",
+    dueOn: "2026-11-25",
+    businessStatus: "PENDING",
+    processingStatus: "NOT_REQUESTED",
+    createdByUserId: "user-1",
+    createdAt: "2026-10-25T12:00:00.000Z",
+  };
+}
+
 describe("APP-06 invoice workspace", () => {
-  it("shows the active context list and opens a detail with a human-readable audit event", async () => {
+  it("shows the active context list and opens its detail", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-001",
-                vendorName: "Acme Ltd.",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
+            invoices: [invoice("INV-001", "Acme Ltd.", 5000)],
             nextCursor: null,
           }),
           { status: 200 },
@@ -48,57 +61,7 @@ describe("APP-06 invoice workspace", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            invoice: {
-              invoiceId: "INV-001",
-              vendorName: "Acme Ltd.",
-              invoiceAmountCents: 500000,
-              hasPurchaseOrder: true,
-              threeWayMatch: true,
-              status: "AUTO_PROCESSED",
-              riskContext: {
-                vendorTenureDays: 365,
-                previousIncidents12m: 0,
-                bankAccountRecentlyChanged: false,
-                amountVsVendorMedian: 1,
-                countryRisk: "medium",
-              },
-              createdAt: "2026-09-21T00:00:00.000Z",
-              updatedAt: "2026-09-21T00:00:00.000Z",
-            },
-            auditEvents: [
-              {
-                decision: "AUTO_PROCESS",
-                ruleVersion: "invoice-rules-v1",
-                mode: "PROBABILITY_POLICY",
-                policyVersion: "ml-policy-v1",
-                manualReviewThreshold: 0.7,
-                policyProbability: 0.8,
-                policyProbabilitySource: "MODEL_API",
-                modelId: "invoice-review",
-                modelVersion: "12",
-                modelRunId: "run-123",
-                recommendation: "AUTO_PROCESS",
-                actor: { name: "Ada Lovelace", rut: "123456785" },
-                correlationId: "correlation-1",
-                createdAt: "2026-09-21T00:01:00.000Z",
-              },
-              {
-                decision: "MANUAL_REVIEW",
-                ruleVersion: "ml-policy-v1",
-                mode: "PROBABILITY_POLICY",
-                policyVersion: "ml-policy-v1",
-                manualReviewThreshold: 0.7,
-                policyProbability: null,
-                policyProbabilitySource: "MODEL_API_FALLBACK",
-                modelId: null,
-                modelVersion: null,
-                modelRunId: null,
-                recommendation: "MANUAL_REVIEW",
-                actor: { name: "Ada Lovelace", rut: "123456785" },
-                correlationId: "correlation-2",
-                createdAt: "2026-09-21T00:02:00.000Z",
-              },
-            ],
+            invoice: invoice("INV-001", "Acme Ltd.", 12500),
           }),
           { status: 200 },
         ),
@@ -107,16 +70,18 @@ describe("APP-06 invoice workspace", () => {
     render(<InvoiceWorkspace profile={profile} groups={[]} />);
 
     expect(await screen.findByText("Acme Ltd.")).toBeTruthy();
+    expect(screen.getByText("$5.000")).toBeTruthy();
+    expect(screen.getByText("Pendiente")).toBeTruthy();
+    expect(screen.getByText("Sin procesamiento")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ver INV-001" }));
 
     expect(
-      (await screen.findAllByText("Ada Lovelace (123456785)")).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByText("user-1")).toBeNull();
-    expect(screen.getByText("Modelo: invoice-review")).toBeTruthy();
-    expect(screen.getByText("Versión: 12")).toBeTruthy();
-    expect(screen.getByText("Ejecución: run-123")).toBeTruthy();
-    expect(screen.getByText("Respaldo: revisión manual")).toBeTruthy();
+      await screen.findByRole("heading", { name: "INV-001" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Sin procesamiento")).toBeTruthy();
+    expect(screen.getByText("2026-10-25")).toBeTruthy();
+    expect(screen.getByText("2026-11-25")).toBeTruthy();
+    expect(screen.queryByText("Contexto de riesgo")).toBeNull();
   });
 
   it("shows a recoverable list error", async () => {
@@ -149,16 +114,7 @@ describe("APP-06 invoice workspace", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-001",
-                vendorName: "Acme Ltd.",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
+            invoices: [invoice("INV-001", "Acme Ltd.", 5000)],
             nextCursor: "cursor-1",
           }),
           { status: 200 },
@@ -168,22 +124,8 @@ describe("APP-06 invoice workspace", () => {
         new Response(
           JSON.stringify({
             invoices: [
-              {
-                invoiceId: "INV-001",
-                vendorName: "Acme Ltd.",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-              {
-                invoiceId: "INV-002",
-                vendorName: "Acme Next Ltd.",
-                invoiceAmountCents: 200000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
+              invoice("INV-001", "Acme Ltd.", 5000),
+              invoice("INV-002", "Acme Next Ltd.", 2000),
             ],
             nextCursor: null,
           }),
@@ -231,16 +173,7 @@ describe("APP-06 invoice workspace", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-OLD",
-                vendorName: "Old vendor",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
+            invoices: [invoice("INV-OLD", "Old vendor", 5000)],
             nextCursor: "cursor-1",
           }),
           { status: 200 },
@@ -250,16 +183,7 @@ describe("APP-06 invoice workspace", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-CURRENT",
-                vendorName: "Current vendor",
-                invoiceAmountCents: 200000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
+            invoices: [invoice("INV-CURRENT", "Current vendor", 2000)],
             nextCursor: null,
           }),
           { status: 200 },
@@ -285,142 +209,5 @@ describe("APP-06 invoice workspace", () => {
       expect(screen.queryByText("Old vendor")).toBeNull();
       expect(screen.queryByRole("alert")).toBeNull();
     });
-  });
-
-  it("updates the detail and exposes the returned audit event after a decision", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-001",
-                vendorName: "Acme Ltd.",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
-            nextCursor: null,
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            invoice: {
-              invoiceId: "INV-001",
-              vendorName: "Acme Ltd.",
-              invoiceAmountCents: 500000,
-              hasPurchaseOrder: true,
-              threeWayMatch: true,
-              status: "PENDING",
-              riskContext: {
-                vendorTenureDays: 365,
-                previousIncidents12m: 0,
-                bankAccountRecentlyChanged: false,
-                amountVsVendorMedian: 1,
-                countryRisk: "medium",
-              },
-              createdAt: "2026-09-21T00:00:00.000Z",
-              updatedAt: "2026-09-21T00:00:00.000Z",
-            },
-            auditEvents: [],
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            invoice: {
-              invoiceId: "INV-001",
-              status: "AUTO_PROCESSED",
-              updatedAt: "2026-09-21T00:01:00.000Z",
-            },
-            auditEvent: {
-              decision: "AUTO_PROCESS",
-              ruleVersion: "invoice-rules-v1",
-              actor: { name: "Ada Lovelace", rut: "123456785" },
-              correlationId: "correlation-1",
-              createdAt: "2026-09-21T00:01:00.000Z",
-            },
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<InvoiceWorkspace profile={profile} groups={[]} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Aplicar Regla v1" }),
-    );
-
-    expect(await screen.findByText("Ada Lovelace (123456785)")).toBeTruthy();
-    expect(screen.getByText("Procesada automáticamente")).toBeTruthy();
-  });
-
-  it("offers distinct Rule v1 and policy controls for a pending invoice", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            invoices: [
-              {
-                invoiceId: "INV-001",
-                vendorName: "Acme Ltd.",
-                invoiceAmountCents: 500000,
-                hasPurchaseOrder: true,
-                threeWayMatch: true,
-                status: "PENDING",
-              },
-            ],
-            nextCursor: null,
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            invoice: {
-              invoiceId: "INV-001",
-              vendorName: "Acme Ltd.",
-              invoiceAmountCents: 500000,
-              hasPurchaseOrder: true,
-              threeWayMatch: true,
-              status: "PENDING",
-              policyProbability: 0.8,
-              policyProbabilitySource: "LOCAL_DEMONSTRATION",
-              riskContext: {
-                vendorTenureDays: 365,
-                previousIncidents12m: 0,
-                bankAccountRecentlyChanged: false,
-                amountVsVendorMedian: 1,
-                countryRisk: "medium",
-              },
-              createdAt: "2026-09-21T00:00:00.000Z",
-              updatedAt: "2026-09-21T00:00:00.000Z",
-            },
-            auditEvents: [],
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<InvoiceWorkspace profile={profile} groups={[]} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ver INV-001" }));
-
-    expect(
-      await screen.findByRole("button", { name: "Aplicar Regla v1" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Aplicar política" }),
-    ).toBeTruthy();
-    expect(screen.getByText(/Fuente:/).textContent).toContain(
-      "Demostración local",
-    );
   });
 });

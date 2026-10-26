@@ -1,5 +1,5 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   OrganizationRole,
@@ -9,22 +9,11 @@ import { AuthError, createAuthService } from "../src/auth.js";
 import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
-import {
-  createInvoiceService,
-  EvidencePersistenceError,
-} from "../src/invoices.js";
-import { createModelApiClient } from "../src/model-api-client.js";
+import { createInvoiceService } from "../src/invoices.js";
 import { createBusinessPolicyService } from "../src/business-policies.js";
-import { seedLocalDemonstration } from "../src/local-demonstration.js";
 import { parsePlatformAdministratorCommand } from "../src/platform-administrator-command.js";
 import { createPlatformAdministratorService } from "../src/platform-administrator.js";
-import { createResourceService } from "../src/resources.js";
 import { requireTestDatabaseUrl } from "./test-database-url.js";
-import {
-  buildEvidenceV2Payload,
-  canonicalizeEvidenceV2,
-  hashEvidenceV2Bytes,
-} from "../src/evidence.js";
 
 // Validate before creating a client or issuing any destructive cleanup.
 const databaseUrl = requireTestDatabaseUrl(process.env.TEST_DATABASE_URL);
@@ -44,328 +33,21 @@ afterAll(async () => {
 async function resetOwnedTestDatabase() {
   // TRUNCATE bypasses the append-only DELETE trigger only while resetting isolated test data.
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "EvidenceAnchorObservation", "EvidencePreparedAnchorTransaction", "EvidenceSignerPreparationSlot", "EvidenceAnchorReservation", "EvidenceBatchItem", "EvidenceBatch", "EvidenceRecord"',
-  );
-  await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "PlatformAdministrativeAuditEvent", "PlatformAdministrator"',
   );
   await prisma.session.deleteMany();
-  await prisma.decisionEvent.deleteMany();
+  await prisma.invoiceIdempotencyRecord.deleteMany();
+  await prisma.apiToken.deleteMany();
   await prisma.invoice.deleteMany();
   await prisma.businessPolicy.deleteMany();
-  await prisma.resourceReference.deleteMany();
   await prisma.groupMembership.deleteMany();
   await prisma.group.deleteMany();
   await prisma.organizationMembership.deleteMany();
-  await prisma.authorizedUserOrganization.deleteMany();
   await prisma.user.deleteMany();
   await prisma.organization.deleteMany();
 }
 
 beforeEach(resetOwnedTestDatabase);
-
-describe("APP-10 decision evidence atomicity", () => {
-  async function fixture(owner: "user" | "group" = "user") {
-    const organization = await persistence.createOrganization({
-      name: "Evidence Academy",
-      slug: "evidence-academy",
-    });
-    const actor = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    const outsider = await persistence.createUser({
-      name: "Grace Hopper",
-      rut: "12.345.679-3",
-    });
-    await prisma.organizationMembership.create({
-      data: {
-        userId: actor.id,
-        organizationId: organization.id,
-        role:
-          owner === "group" ? OrganizationRole.ADMIN : OrganizationRole.STUDENT,
-      },
-    });
-    const group =
-      owner === "group"
-        ? await prisma.group.create({
-            data: { organizationId: organization.id, name: "Evidence group" },
-          })
-        : null;
-    if (group)
-      await prisma.groupMembership.create({
-        data: {
-          organizationId: organization.id,
-          groupId: group.id,
-          userId: actor.id,
-        },
-      });
-    const context = {
-      organizationId: organization.id,
-      ownerType: owner,
-      ownerId: group?.id ?? actor.id,
-    };
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceId: "INV-EVIDENCE",
-        organizationId: organization.id,
-        ownerType: owner === "user" ? "USER" : "GROUP",
-        ownerId: context.ownerId,
-        createdByUserId: actor.id,
-        vendorName: "Evidence vendor",
-        invoiceAmountCents: 1,
-        hasPurchaseOrder: true,
-        threeWayMatch: true,
-        vendorTenureDays: 1,
-        previousIncidents12m: 0,
-        bankAccountRecentlyChanged: false,
-        amountVsVendorMedian: 1,
-        countryRisk: "low",
-      },
-    });
-    return { actor, outsider, context, invoice };
-  }
-
-  async function assertEvidence(
-    invoiceId: string,
-    context: Awaited<ReturnType<typeof fixture>>["context"],
-  ) {
-    const event = await prisma.decisionEvent.findFirstOrThrow({
-      where: { invoiceId },
-    });
-    const record = await prisma.evidenceRecord.findFirstOrThrow({
-      where: { decisionEventId: event.id },
-    });
-    const payload = buildEvidenceV2Payload({
-      event: {
-        ...event,
-        manualReviewThreshold: event.manualReviewThreshold?.toString() ?? null,
-        policyProbability: event.policyProbability?.toString() ?? null,
-      },
-      context,
-    });
-    const bytes = canonicalizeEvidenceV2(payload);
-    expect(record).toMatchObject({
-      invoiceRecordId: invoiceId,
-      organizationId: context.organizationId,
-      ownerType: context.ownerType.toUpperCase(),
-      ownerId: context.ownerId,
-      evidenceVersion: "invoice-evidence-v2",
-      canonicalVersion: "invoice-evidence-canonical-v2",
-    });
-    expect(Buffer.from(record.canonicalPayload)).toEqual(Buffer.from(bytes));
-    expect(Buffer.from(record.leafHash)).toEqual(
-      Buffer.from(hashEvidenceV2Bytes(bytes).slice(2), "hex"),
-    );
-    expect(
-      JSON.parse(Buffer.from(record.canonicalPayload).toString("utf8"))
-        .evidence,
-    ).toEqual(payload);
-    return payload;
-  }
-
-  it("persists exact Rule v1 evidence, denies foreign owners and organizations, and rejects repeated decisions", async () => {
-    const { actor, outsider, context, invoice } = await fixture();
-    const service = createInvoiceService(prisma);
-    await expect(
-      service.decideInvoice(outsider, context, invoice.invoiceId, {
-        mode: "RULE_V1",
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      service.decideInvoice(
-        actor,
-        { ...context, organizationId: outsider.id },
-        invoice.invoiceId,
-        { mode: "RULE_V1" },
-      ),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(await prisma.decisionEvent.count()).toBe(0);
-    expect(await prisma.evidenceRecord.count()).toBe(0);
-    const result = await service.decideInvoice(
-      actor,
-      context,
-      invoice.invoiceId,
-      { mode: "RULE_V1" },
-    );
-    expect(result.invoice.status).toBe("AUTO_PROCESSED");
-    expect(result.auditEvent).not.toHaveProperty("evidence");
-    expect((await assertEvidence(invoice.id, context)).decision).toBe(
-      "AUTO_PROCESS",
-    );
-    await expect(
-      service.decideInvoice(actor, context, invoice.invoiceId, {
-        mode: "RULE_V1",
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(await prisma.decisionEvent.count()).toBe(1);
-    expect(await prisma.evidenceRecord.count()).toBe(1);
-  });
-
-  it("snapshots persisted Decimal and timestamp from model success and fallback in group context", async () => {
-    const { actor, outsider, context, invoice } = await fixture("group");
-    const policy = await createBusinessPolicyService(prisma).createPolicy(
-      actor.id,
-      context,
-      { version: "model-v1", manualReviewThreshold: 0.8 },
-    );
-    const predict = vi.fn(async () => ({
-      probability: 0.1,
-      modelId: "invoice-review",
-      modelVersion: "7",
-      runId: "run-123",
-    }));
-    const service = createInvoiceService(prisma, { predict });
-    await expect(
-      service.decideInvoice(outsider, context, invoice.invoiceId, {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: policy.version,
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(predict).not.toHaveBeenCalled();
-    await service.decideInvoice(actor, context, invoice.invoiceId, {
-      mode: "PROBABILITY_POLICY",
-      policyVersion: policy.version,
-    });
-    const payload = await assertEvidence(invoice.id, context);
-    const event = await prisma.decisionEvent.findFirstOrThrow({
-      where: { invoiceId: invoice.id },
-    });
-    expect(payload).toMatchObject({
-      policy_probability_source: "MODEL_API",
-      manual_review_threshold: event.manualReviewThreshold?.toString(),
-      policy_probability: event.policyProbability?.toString(),
-      evaluated_at: event.createdAt.toISOString(),
-      owner_type: "group",
-    });
-    const second = await prisma.invoice.create({
-      data: {
-        invoiceId: "INV-FALLBACK",
-        organizationId: context.organizationId,
-        ownerType: "GROUP",
-        ownerId: context.ownerId,
-        createdByUserId: actor.id,
-        vendorName: "Fallback vendor",
-        invoiceAmountCents: 2,
-        hasPurchaseOrder: true,
-        threeWayMatch: true,
-        vendorTenureDays: 1,
-        previousIncidents12m: 0,
-        bankAccountRecentlyChanged: false,
-        amountVsVendorMedian: 1,
-        countryRisk: "low",
-      },
-    });
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await createInvoiceService(prisma, {
-        async predict() {
-          throw new Error("provider unavailable");
-        },
-      }).decideInvoice(actor, context, second.invoiceId, {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: policy.version,
-      });
-    } finally {
-      errorLog.mockRestore();
-    }
-    expect(await assertEvidence(second.id, context)).toMatchObject({
-      policy_probability_source: "MODEL_API_FALLBACK",
-      policy_probability: null,
-      recommendation: "MANUAL_REVIEW",
-    });
-    expect(await prisma.evidenceRecord.count()).toBe(2);
-  });
-
-  it("rolls back invoice and event when canonical construction fails", async () => {
-    const { actor, context, invoice } = await fixture();
-    await createBusinessPolicyService(prisma).createPolicy(actor.id, context, {
-      version: "bad-model-v1",
-      manualReviewThreshold: 0.8,
-    });
-    const service = createInvoiceService(prisma, {
-      async predict() {
-        return {
-          probability: 0.1,
-          modelId: "",
-          modelVersion: "7",
-          runId: "run-123",
-        };
-      },
-    });
-    await expect(
-      service.decideInvoice(actor, context, invoice.invoiceId, {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "bad-model-v1",
-      }),
-    ).rejects.toMatchObject({
-      category: "CONSTRUCTION",
-      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-    } satisfies Partial<EvidencePersistenceError>);
-    expect(
-      (await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } }))
-        .status,
-    ).toBe("PENDING");
-    expect(await prisma.decisionEvent.count()).toBe(0);
-    expect(await prisma.evidenceRecord.count()).toBe(0);
-  });
-
-  it("rolls back invoice and event when evidence insertion fails in PostgreSQL", async () => {
-    const { actor, context, invoice } = await fixture();
-    try {
-      await prisma.$executeRawUnsafe(
-        `CREATE FUNCTION fail_evidence_insert() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'induced evidence failure'; END; $$ LANGUAGE plpgsql`,
-      );
-      await prisma.$executeRawUnsafe(
-        'CREATE TRIGGER fail_evidence_insert BEFORE INSERT ON "EvidenceRecord" FOR EACH ROW EXECUTE FUNCTION fail_evidence_insert()',
-      );
-      await expect(
-        createInvoiceService(prisma).decideInvoice(
-          actor,
-          context,
-          invoice.invoiceId,
-          { mode: "RULE_V1" },
-        ),
-      ).rejects.toMatchObject({
-        category: "INSERTION",
-        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-      } satisfies Partial<EvidencePersistenceError>);
-      expect(
-        (await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } }))
-          .status,
-      ).toBe("PENDING");
-      expect(await prisma.decisionEvent.count()).toBe(0);
-      expect(await prisma.evidenceRecord.count()).toBe(0);
-    } finally {
-      await prisma.$executeRawUnsafe(
-        'DROP TRIGGER IF EXISTS fail_evidence_insert ON "EvidenceRecord"; DROP FUNCTION IF EXISTS fail_evidence_insert()',
-      );
-    }
-  });
-
-  it("allows exactly one concurrent transition, event, and evidence record", async () => {
-    const { actor, context, invoice } = await fixture();
-    const service = createInvoiceService(prisma);
-    const results = await Promise.allSettled(
-      Array.from({ length: 2 }, () =>
-        service.decideInvoice(actor, context, invoice.invoiceId, {
-          mode: "RULE_V1",
-        }),
-      ),
-    );
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toEqual([
-      expect.objectContaining({
-        reason: expect.objectContaining({ status: 409 }),
-      }),
-    ]);
-    expect(await prisma.decisionEvent.count()).toBe(1);
-    expect(await prisma.evidenceRecord.count()).toBe(1);
-    await assertEvidence(invoice.id, context);
-  });
-});
 
 describe("APP-01 PostgreSQL persistence", () => {
   it("persists distinct local roles for one user across organizations", async () => {
@@ -390,7 +72,7 @@ describe("APP-01 PostgreSQL persistence", () => {
     await persistence.createMembership({
       userId: user.id,
       organizationId: secondOrganization.id,
-      role: OrganizationRole.STUDENT,
+      role: OrganizationRole.USER,
     });
 
     const memberships = await prisma.organizationMembership.findMany({
@@ -401,7 +83,7 @@ describe("APP-01 PostgreSQL persistence", () => {
     expect(user.rut).toBe("123456785");
     expect(memberships.map(({ role }) => role).sort()).toEqual([
       OrganizationRole.ADMIN,
-      OrganizationRole.STUDENT,
+      OrganizationRole.USER,
     ]);
   });
 
@@ -418,7 +100,7 @@ describe("APP-01 PostgreSQL persistence", () => {
     await persistence.createMembership({
       userId: user.id,
       organizationId: organization.id,
-      role: OrganizationRole.STUDENT,
+      role: OrganizationRole.USER,
     });
 
     await expect(
@@ -467,23 +149,8 @@ describe("APP-01 PostgreSQL persistence", () => {
 });
 
 describe("APP-02 PostgreSQL authentication persistence", () => {
-  it("keeps legacy authorized-user records inert and provisions credentials only through an internal fixture", async () => {
-    const firstOrganization = await persistence.createOrganization({
-      name: "Diplomado IA 2029",
-      slug: "diplomado-ia-2029",
-    });
-    const secondOrganization = await persistence.createOrganization({
-      name: "Diplomado Datos 2029",
-      slug: "diplomado-datos-2029",
-    });
+  it("provisions credentials only through an internal fixture", async () => {
     const rut = "12.345.678-5";
-    await prisma.authorizedUserOrganization.createMany({
-      data: [
-        { rut: "123456785", organizationId: firstOrganization.id },
-        { rut: "123456785", organizationId: secondOrganization.id },
-      ],
-    });
-
     const user = await provisionInternalUser(prisma, {
       name: "Ada Lovelace",
       rut,
@@ -611,7 +278,7 @@ describe("APP-03 PostgreSQL profile persistence", () => {
         {
           userId: user.id,
           organizationId: secondOrganization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
@@ -631,7 +298,7 @@ describe("APP-03 PostgreSQL profile persistence", () => {
     ).toEqual(["alpha-academy", "zeta-academy"]);
     expect(updated).toMatchObject({
       name: "Ada Lovelace",
-      rut: "123456785",
+      rut: "12345678-5",
       email: "ada@example.test",
       username: "ada",
     });
@@ -686,7 +353,7 @@ describe("APP-02.1 PostgreSQL session lifecycle", () => {
       auth.getProfile(secondLogin.sessionToken),
     ).resolves.toMatchObject({
       name: "Ada Lovelace",
-      rut: "123456785",
+      rut: "12345678-5",
     });
     expect(await prisma.session.count()).toBe(1);
   });
@@ -724,12 +391,12 @@ describe("APP-04 PostgreSQL organization groups", () => {
         {
           userId: student.id,
           organizationId: firstOrganization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           userId: outsider.id,
           organizationId: secondOrganization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
@@ -749,8 +416,8 @@ describe("APP-04 PostgreSQL organization groups", () => {
     );
 
     expect(populated.members).toEqual([
-      { id: admin.id, name: "Ada Lovelace", rut: "123456785" },
-      { id: student.id, name: "Grace Hopper", rut: "123456793" },
+      { id: admin.id, name: "Ada Lovelace", rut: "12345678-5" },
+      { id: student.id, name: "Grace Hopper", rut: "12345679-3" },
     ]);
     await expect(
       prisma.groupMembership.create({
@@ -813,7 +480,7 @@ describe("Organization group catalog PostgreSQL integration", () => {
         {
           userId: student.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
@@ -895,7 +562,7 @@ describe("Organization group catalog PostgreSQL integration", () => {
           organizationId: organization.id,
         },
       },
-      data: { role: OrganizationRole.STUDENT },
+      data: { role: OrganizationRole.USER },
     });
     await expect(
       groups.listOrganizationGroups(admin.id, organization.id, { limit: 50 }),
@@ -965,14 +632,14 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         name: "Denied",
         rut: "12.345.670-K",
         organizationId: organization.id,
-        role: OrganizationRole.STUDENT,
+        role: OrganizationRole.USER,
       }),
     ).rejects.toMatchObject({ status: 403 });
     const provisioned = await service.provisionUser!(global.id, {
       name: "Student",
       rut: "12.345.670-K",
       organizationId: organization.id,
-      role: OrganizationRole.STUDENT,
+      role: OrganizationRole.USER,
     });
     const stored = await prisma.user.findUniqueOrThrow({
       where: { id: provisioned.user.userId },
@@ -988,12 +655,14 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     const audit = await prisma.platformAdministrativeAuditEvent.findMany({
       where: { targetUserId: stored.id },
     });
+    expect(provisioned.user.rut).toBe("12345670-K");
+    expect(stored.rut).toBe("12345670K");
     expect(provisioned.temporaryPassword).toHaveLength(32);
     expect(stored.passwordHash).toMatch(/^scrypt\$/);
     expect(stored.passwordHash).not.toContain(provisioned.temporaryPassword);
     expect(stored.mustChangePassword).toBe(true);
     expect(stored.temporaryPasswordExpiresAt).toBeInstanceOf(Date);
-    expect(membership.role).toBe(OrganizationRole.STUDENT);
+    expect(membership.role).toBe(OrganizationRole.USER);
     expect(audit.map(({ type }) => type)).toContain("USER_PROVISIONED");
     expect(JSON.stringify(audit)).not.toContain(provisioned.temporaryPassword);
   });
@@ -1013,7 +682,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "Student",
       rut: "12.345.679-3",
       organizationId: organization.id,
-      role: OrganizationRole.STUDENT,
+      role: OrganizationRole.USER,
     });
     const auth = createAuthService(prisma);
     const first = await auth.login({
@@ -1177,7 +846,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       platformUser.id,
       organization.id,
       member.id,
-      OrganizationRole.STUDENT,
+      OrganizationRole.USER,
     );
     await platformAdministrators.changeMembershipRole(
       platformUser.id,
@@ -1189,7 +858,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       platformUser.id,
       organization.id,
       member.id,
-      OrganizationRole.STUDENT,
+      OrganizationRole.USER,
     );
     await platformAdministrators.removeMembership(
       platformUser.id,
@@ -1228,14 +897,14 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: null,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           type: "ORGANIZATION_MEMBERSHIP_ROLE_CHANGED",
           actorUserId: platformUser.id,
           targetUserId: member.id,
           organizationId: organization.id,
-          previousRole: OrganizationRole.STUDENT,
+          previousRole: OrganizationRole.USER,
           role: OrganizationRole.ADMIN,
         },
         {
@@ -1244,14 +913,14 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: OrganizationRole.ADMIN,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           type: "ORGANIZATION_MEMBERSHIP_REMOVED",
           actorUserId: platformUser.id,
           targetUserId: member.id,
           organizationId: organization.id,
-          previousRole: OrganizationRole.STUDENT,
+          previousRole: OrganizationRole.USER,
           role: null,
         },
       ]),
@@ -1295,7 +964,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
           platformUser.id,
           organization.id,
           member.id,
-          OrganizationRole.STUDENT,
+          OrganizationRole.USER,
         ),
       ).rejects.toThrow(/induced audit failure/);
       expect(
@@ -1399,7 +1068,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       data: {
         userId: member.id,
         organizationId: organization.id,
-        role: OrganizationRole.STUDENT,
+        role: OrganizationRole.USER,
       },
     });
     const platformAdministrators = createPlatformAdministratorService(prisma);
@@ -1410,7 +1079,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         unauthorizedUser.id,
         organization.id,
         unauthorizedUser.id,
-        OrganizationRole.STUDENT,
+        OrganizationRole.USER,
       ),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
@@ -1463,13 +1132,13 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         platformUser.id,
         organization.id,
         firstAdministrator.id,
-        OrganizationRole.STUDENT,
+        OrganizationRole.USER,
       ),
       platformAdministrators.changeMembershipRole(
         platformUser.id,
         organization.id,
         secondAdministrator.id,
-        OrganizationRole.STUDENT,
+        OrganizationRole.USER,
       ),
     ]);
     expect(demotions.some((result) => result.status === "fulfilled")).toBe(
@@ -1512,93 +1181,30 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
   });
 });
 
-describe("APP-05 PostgreSQL resource ownership", () => {
-  it("lists only resources from an accessible individual or group owner context", async () => {
-    const organization = await persistence.createOrganization({
-      name: "AI Academy",
-      slug: "ai-academy",
-    });
-    const member = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    const otherMember = await persistence.createUser({
-      name: "Grace Hopper",
-      rut: "12.345.679-3",
-    });
-    await prisma.organizationMembership.createMany({
-      data: [
-        {
-          userId: member.id,
-          organizationId: organization.id,
-          role: OrganizationRole.ADMIN,
-        },
-        {
-          userId: otherMember.id,
-          organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
-        },
-      ],
-    });
-    const groups = createGroupService(prisma);
-    const group = await groups.createGroup(member.id, organization.id, {
-      name: "Advanced topics",
-    });
-    await prisma.resourceReference.createMany({
-      data: [
-        {
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: member.id,
-          createdByUserId: member.id,
-          type: "ml-experiment",
-          label: "Personal experiment",
-        },
-        {
-          organizationId: organization.id,
-          ownerType: "GROUP",
-          ownerId: group.id,
-          createdByUserId: member.id,
-          type: "ml-model",
-          label: "Group model",
-        },
-      ],
-    });
-    const resources = createResourceService(prisma);
-
-    await expect(
-      resources.listResources(member.id, {
-        organizationId: organization.id,
-        ownerType: "user",
-        ownerId: member.id,
-      }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        label: "Personal experiment",
-        ownerType: "user",
-      }),
-    ]);
-    await expect(
-      resources.listResources(member.id, {
-        organizationId: organization.id,
-        ownerType: "group",
-        ownerId: group.id,
-      }),
-    ).resolves.toEqual([
-      expect.objectContaining({ label: "Group model", ownerType: "group" }),
-    ]);
-    await expect(
-      resources.listResources(member.id, {
-        organizationId: organization.id,
-        ownerType: "user",
-        ownerId: otherMember.id,
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-  });
-});
+function invoiceFixture(
+  organizationId: string,
+  groupId: string,
+  createdByUserId: string,
+  businessId: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    businessId,
+    organizationId,
+    groupId,
+    supplierName: "Proveedor local",
+    amountPesos: 12500,
+    currency: "CLP" as const,
+    issuedOn: new Date("2026-10-25T00:00:00.000Z"),
+    dueOn: new Date("2026-11-25T00:00:00.000Z"),
+    businessStatus: "PENDING" as const,
+    createdByUserId,
+    ...extra,
+  };
+}
 
 describe("APP-06 PostgreSQL invoice domain", () => {
-  it("filters owner-scoped invoices and atomically snapshots a permitted decision audit", async () => {
+  it("reads group invoices, hides deleted ones and denies foreign contexts", async () => {
     const organization = await persistence.createOrganization({
       name: "AI Academy",
       slug: "ai-academy",
@@ -1616,468 +1222,119 @@ describe("APP-06 PostgreSQL invoice domain", () => {
         {
           userId: actor.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           userId: otherUser.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
-    await prisma.invoice.createMany({
+    const group = await prisma.group.create({
+      data: { organizationId: organization.id, name: "Facturas" },
+    });
+    const otherGroup = await prisma.group.create({
+      data: { organizationId: organization.id, name: "Otro" },
+    });
+    await prisma.groupMembership.createMany({
       data: [
         {
-          invoiceId: "INV-001",
+          groupId: group.id,
+          userId: actor.id,
           organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "Acme Ltd.",
-          invoiceAmountCents: 500_000,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 365,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "medium",
         },
         {
-          invoiceId: "INV-002",
+          groupId: otherGroup.id,
+          userId: otherUser.id,
           organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: otherUser.id,
-          createdByUserId: otherUser.id,
-          vendorName: "Other vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-        {
-          invoiceId: "INV-003",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "High amount vendor",
-          invoiceAmountCents: 500_001,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-        {
-          invoiceId: "INV-004",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "No purchase order vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: false,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-        {
-          invoiceId: "INV-005",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "No three-way match vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: false,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-        {
-          invoiceId: "INV-006",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "Risk ignored vendor",
-          invoiceAmountCents: 500_000,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 0,
-          previousIncidents12m: 99,
-          bankAccountRecentlyChanged: true,
-          amountVsVendorMedian: 99,
-          countryRisk: "high",
         },
       ],
+    });
+    const visible = await prisma.invoice.create({
+      data: invoiceFixture(organization.id, group.id, actor.id, "FAC-001", {
+        supplierName: "Acme Ltd.",
+      }),
+    });
+    const foreign = await prisma.invoice.create({
+      data: invoiceFixture(
+        organization.id,
+        otherGroup.id,
+        otherUser.id,
+        "FAC-002",
+      ),
+    });
+    await prisma.invoice.create({
+      data: invoiceFixture(organization.id, group.id, actor.id, "FAC-003", {
+        deletedAt: new Date(),
+        deletedByUserId: actor.id,
+      }),
     });
     const invoices = createInvoiceService(prisma);
     const context = {
       organizationId: organization.id,
-      ownerType: "user" as const,
-      ownerId: actor.id,
+      ownerType: "group" as const,
+      ownerId: group.id,
     };
 
     await expect(
-      invoices.listInvoices(actor.id, context, { q: "acme", limit: 50 }),
+      invoices.listInvoices(actor.id, context, { q: "", limit: 50 }),
     ).resolves.toMatchObject({
-      invoices: [{ invoiceId: "INV-001" }],
+      invoices: [
+        {
+          id: visible.id,
+          businessId: "FAC-001",
+          amountPesos: 12500,
+          issuedOn: "2026-10-25",
+          dueOn: "2026-11-25",
+          businessStatus: "PENDING",
+          processingStatus: "NOT_REQUESTED",
+        },
+      ],
       nextCursor: null,
     });
-    const decided = await invoices.decideInvoice(actor, context, "INV-001", {
-      mode: "RULE_V1",
-    });
-    await prisma.user.update({
-      where: { id: actor.id },
-      data: { name: "Ada Updated", rut: "123456785" },
-    });
-
-    expect(decided).toMatchObject({
-      invoice: { status: "AUTO_PROCESSED" },
-      auditEvent: {
-        ruleVersion: "invoice-rules-v1",
-        actor: { name: "Ada Lovelace", rut: "123456785" },
-      },
-    });
     await expect(
-      invoices.getInvoice(actor.id, context, "INV-001"),
-    ).resolves.toMatchObject({
-      auditEvents: [{ actor: { name: "Ada Lovelace", rut: "123456785" } }],
-    });
+      invoices.listInvoices(actor.id, context, { q: "acme", limit: 50 }),
+    ).resolves.toMatchObject({ invoices: [{ businessId: "FAC-001" }] });
+    const detail = await invoices.getInvoice(actor.id, context, visible.id);
+    expect(detail).toMatchObject({ invoice: { id: visible.id } });
+    expect(Object.keys(detail.invoice).sort()).toEqual([
+      "amountPesos",
+      "businessId",
+      "businessStatus",
+      "createdAt",
+      "createdByUserId",
+      "currency",
+      "dueOn",
+      "groupId",
+      "id",
+      "issuedOn",
+      "organizationId",
+      "processingStatus",
+      "supplierName",
+    ]);
     await expect(
-      invoices.decideInvoice(actor, context, "INV-001", { mode: "RULE_V1" }),
-    ).rejects.toMatchObject({ status: 409 });
-    await expect(
-      invoices.decideInvoice(actor, context, "INV-003", { mode: "RULE_V1" }),
-    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
-    await expect(
-      invoices.decideInvoice(actor, context, "INV-004", { mode: "RULE_V1" }),
-    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
-    await expect(
-      invoices.decideInvoice(actor, context, "INV-005", { mode: "RULE_V1" }),
-    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
-    await expect(
-      invoices.decideInvoice(actor, context, "INV-006", { mode: "RULE_V1" }),
-    ).resolves.toMatchObject({ invoice: { status: "AUTO_PROCESSED" } });
-    await expect(
-      invoices.getInvoice(actor.id, context, "INV-002"),
+      invoices.getInvoice(actor.id, context, foreign.id),
     ).rejects.toMatchObject({ status: 404 });
     await expect(
       invoices.listInvoices(
         actor.id,
-        {
-          organizationId: organization.id,
-          ownerType: "user",
-          ownerId: otherUser.id,
-        },
+        { ...context, ownerId: otherGroup.id },
         { q: "", limit: 50 },
       ),
     ).rejects.toMatchObject({ status: 404 });
-  });
-
-  it("applies a versioned probability policy with an equality threshold and snapshots local demonstration input", async () => {
-    const organization = await persistence.createOrganization({
-      name: "Policy Academy",
-      slug: "policy-academy",
-    });
-    const actor = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    await prisma.organizationMembership.create({
-      data: {
-        userId: actor.id,
-        organizationId: organization.id,
-        role: OrganizationRole.STUDENT,
-      },
-    });
-    const context = {
+    // P0 has no personal invoices.
+    const personal = {
       organizationId: organization.id,
       ownerType: "user" as const,
       ownerId: actor.id,
     };
-    await prisma.invoice.createMany({
-      data: [
-        {
-          invoiceId: "INV-POLICY-EQUAL",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "Policy vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-          policyProbability: 0.8,
-          policyProbabilitySource: "LOCAL_DEMONSTRATION",
-        },
-        {
-          invoiceId: "INV-POLICY-MISSING",
-          organizationId: organization.id,
-          ownerType: "USER",
-          ownerId: actor.id,
-          createdByUserId: actor.id,
-          vendorName: "Missing probability vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 99,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-      ],
-    });
-    const policies = createBusinessPolicyService(prisma);
-    const invoices = createInvoiceService(prisma, {
-      async predict(invoice) {
-        if (invoice.previousIncidents12m === 99) {
-          throw new Error("provider unavailable");
-        }
-        return {
-          modelId: "invoice-review",
-          modelVersion: "12",
-          runId: "run-123",
-          probability: 0.8,
-        };
-      },
-    });
-    await policies.createPolicy(actor.id, context, {
-      version: "ml-policy-v1",
-      manualReviewThreshold: 0.8,
-    });
-
     await expect(
-      invoices.decideInvoice(actor, context, "INV-POLICY-EQUAL", {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-      }),
-    ).resolves.toMatchObject({
-      invoice: { status: "MANUAL_REVIEW" },
-      auditEvent: {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-        manualReviewThreshold: 0.8,
-        policyProbability: 0.8,
-        policyProbabilitySource: "MODEL_API",
-        modelId: "invoice-review",
-        modelVersion: "12",
-        modelRunId: "run-123",
-        recommendation: "MANUAL_REVIEW",
-      },
-    });
-    await policies.updatePolicy(actor.id, context, "ml-policy-v1", {
-      manualReviewThreshold: 0.9,
-    });
-    await prisma.invoice.create({
-      data: {
-        invoiceId: "INV-POLICY-FUTURE",
-        organizationId: organization.id,
-        ownerType: "USER",
-        ownerId: actor.id,
-        createdByUserId: actor.id,
-        vendorName: "Updated policy vendor",
-        invoiceAmountCents: 1,
-        hasPurchaseOrder: true,
-        threeWayMatch: true,
-        vendorTenureDays: 1,
-        previousIncidents12m: 0,
-        bankAccountRecentlyChanged: false,
-        amountVsVendorMedian: 1,
-        countryRisk: "low",
-        policyProbability: 0.8,
-        policyProbabilitySource: "LOCAL_DEMONSTRATION",
-      },
-    });
+      invoices.listInvoices(actor.id, personal, { q: "", limit: 50 }),
+    ).resolves.toEqual({ invoices: [], nextCursor: null });
     await expect(
-      invoices.decideInvoice(actor, context, "INV-POLICY-FUTURE", {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-      }),
-    ).resolves.toMatchObject({ invoice: { status: "AUTO_PROCESSED" } });
-    await expect(
-      invoices.decideInvoice(actor, context, "INV-POLICY-MISSING", {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-      }),
-    ).resolves.toMatchObject({
-      invoice: { status: "MANUAL_REVIEW" },
-      auditEvent: {
-        policyProbability: null,
-        policyProbabilitySource: "MODEL_API_FALLBACK",
-        modelId: null,
-        modelVersion: null,
-        modelRunId: null,
-        recommendation: "MANUAL_REVIEW",
-      },
-    });
-    await expect(
-      prisma.invoice.findFirstOrThrow({
-        where: { invoiceId: "INV-POLICY-MISSING" },
-      }),
-    ).resolves.toMatchObject({ status: "MANUAL_REVIEW" });
-    await expect(prisma.decisionEvent.count()).resolves.toBe(3);
-  });
-
-  it("persists model ID mismatch fallback without foreign metadata and accepts a matching model ID", async () => {
-    const organization = await persistence.createOrganization({
-      name: "Model identity academy",
-      slug: "model-identity-academy",
-    });
-    const actor = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    await prisma.organizationMembership.create({
-      data: {
-        userId: actor.id,
-        organizationId: organization.id,
-        role: OrganizationRole.STUDENT,
-      },
-    });
-    const context = {
-      organizationId: organization.id,
-      ownerType: "user" as const,
-      ownerId: actor.id,
-    };
-    await prisma.invoice.createMany({
-      data: ["INV-MISMATCH", "INV-MATCH"].map((invoiceId) => ({
-        invoiceId,
-        organizationId: organization.id,
-        ownerType: "USER" as const,
-        ownerId: actor.id,
-        createdByUserId: actor.id,
-        vendorName: "Model identity vendor",
-        invoiceAmountCents: invoiceId === "INV-MISMATCH" ? 1 : 2,
-        hasPurchaseOrder: true,
-        threeWayMatch: true,
-        vendorTenureDays: 1,
-        previousIncidents12m: 0,
-        bankAccountRecentlyChanged: false,
-        amountVsVendorMedian: 1,
-        countryRisk: "low",
-      })),
-    });
-    await createBusinessPolicyService(prisma).createPolicy(actor.id, context, {
-      version: "model-identity-v1",
-      manualReviewThreshold: 0.8,
-    });
-    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-      const invoiceAmount = JSON.parse(init.body as string) as {
-        invoice_amount_cents: number;
-      };
-      return new Response(
-        JSON.stringify({
-          model_id:
-            invoiceAmount.invoice_amount_cents === 1
-              ? "other-model"
-              : "invoice-review",
-          model_version: "7",
-          run_id: "provider-run",
-          probability: 0.1,
-        }),
-        { status: 200 },
-      );
-    });
-    const invoices = createInvoiceService(
-      prisma,
-      createModelApiClient({
-        baseUrl: "http://model-api.test",
-        modelId: "invoice-review",
-        fetch,
-      }),
-    );
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const mismatch = await invoices.decideInvoice(
-        actor,
-        context,
-        "INV-MISMATCH",
-        {
-          mode: "PROBABILITY_POLICY",
-          policyVersion: "model-identity-v1",
-        },
-      );
-      expect(mismatch).toMatchObject({
-        invoice: { status: "MANUAL_REVIEW" },
-        auditEvent: {
-          decision: "MANUAL_REVIEW",
-          recommendation: "MANUAL_REVIEW",
-          policyProbabilitySource: "MODEL_API_FALLBACK",
-          policyProbability: null,
-          modelId: null,
-          modelVersion: null,
-          modelRunId: null,
-        },
-      });
-      const storedMismatch = await prisma.invoice.findFirstOrThrow({
-        where: { invoiceId: "INV-MISMATCH" },
-        include: { decisionEvents: true },
-      });
-      expect(storedMismatch.status).toBe("MANUAL_REVIEW");
-      expect(storedMismatch.decisionEvents).toHaveLength(1);
-      expect(storedMismatch.decisionEvents[0]).toMatchObject({
-        decision: "MANUAL_REVIEW",
-        recommendation: "MANUAL_REVIEW",
-        policyProbabilitySource: "MODEL_API_FALLBACK",
-        policyProbability: null,
-        modelId: null,
-        modelVersion: null,
-        modelRunId: null,
-      });
-
-      const matched = await invoices.decideInvoice(
-        actor,
-        context,
-        "INV-MATCH",
-        {
-          mode: "PROBABILITY_POLICY",
-          policyVersion: "model-identity-v1",
-        },
-      );
-      expect(matched.invoice.status).toBe("AUTO_PROCESSED");
-      const storedMatch = await prisma.invoice.findFirstOrThrow({
-        where: { invoiceId: "INV-MATCH" },
-        include: { decisionEvents: true },
-      });
-      expect(storedMatch.status).toBe("AUTO_PROCESSED");
-      expect(storedMatch.decisionEvents).toHaveLength(1);
-      expect(storedMatch.decisionEvents[0]).toMatchObject({
-        policyProbabilitySource: "MODEL_API",
-        modelId: "invoice-review",
-        modelVersion: "7",
-        modelRunId: "provider-run",
-      });
-      expect(storedMatch.decisionEvents[0]?.policyProbability?.toNumber()).toBe(
-        0.1,
-      );
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(errorLog).toHaveBeenCalledWith("Model API inference failed", {
-        invoiceId: "INV-MISMATCH",
-      });
-    } finally {
-      errorLog.mockRestore();
-    }
+      invoices.getInvoice(actor.id, personal, visible.id),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("isolates personal and group policy administration while allowing authorized policy reads", async () => {
@@ -2111,12 +1368,12 @@ describe("APP-06 PostgreSQL invoice domain", () => {
         {
           userId: otherOwner.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           userId: groupStudent.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
@@ -2214,56 +1471,7 @@ describe("APP-06 PostgreSQL invoice domain", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("sets up two idempotent local demonstration invoices with opposite policy outcomes", async () => {
-    const seeded = await seedLocalDemonstration(prisma);
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id: seeded.userId },
-      select: { id: true, name: true, rut: true },
-    });
-    const context = {
-      organizationId: seeded.organizationId,
-      ownerType: "user" as const,
-      ownerId: user.id,
-    };
-    const invoices = createInvoiceService(prisma, {
-      async predict(invoice) {
-        return {
-          modelId: "invoice-review",
-          modelVersion: "test",
-          runId: "local-demonstration",
-          probability: invoice.invoiceAmountCents === 100_000 ? 0.8 : 0.2,
-        };
-      },
-    });
-
-    await expect(
-      invoices.decideInvoice(user, context, "DEMO-RULE-AUTO-POLICY-MANUAL", {
-        mode: "RULE_V1",
-      }),
-    ).resolves.toMatchObject({ invoice: { status: "AUTO_PROCESSED" } });
-    await seedLocalDemonstration(prisma);
-    await expect(
-      invoices.decideInvoice(user, context, "DEMO-RULE-AUTO-POLICY-MANUAL", {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-      }),
-    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
-    await seedLocalDemonstration(prisma);
-    await expect(
-      invoices.decideInvoice(user, context, "DEMO-RULE-MANUAL-POLICY-AUTO", {
-        mode: "RULE_V1",
-      }),
-    ).resolves.toMatchObject({ invoice: { status: "MANUAL_REVIEW" } });
-    await seedLocalDemonstration(prisma);
-    await expect(
-      invoices.decideInvoice(user, context, "DEMO-RULE-MANUAL-POLICY-AUTO", {
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "ml-policy-v1",
-      }),
-    ).resolves.toMatchObject({ invoice: { status: "AUTO_PROCESSED" } });
-  });
-
-  it("authorizes group owners and traverses stable cursor pages", async () => {
+  it("authorizes group members and traverses stable cursor pages", async () => {
     const organization = await persistence.createOrganization({
       name: "Cursor Academy",
       slug: "cursor-academy",
@@ -2281,12 +1489,12 @@ describe("APP-06 PostgreSQL invoice domain", () => {
         {
           userId: member.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
         {
           userId: nonMember.id,
           organizationId: organization.id,
-          role: OrganizationRole.STUDENT,
+          role: OrganizationRole.USER,
         },
       ],
     });
@@ -2301,41 +1509,15 @@ describe("APP-06 PostgreSQL invoice domain", () => {
       },
     });
     await prisma.invoice.createMany({
-      data: [
-        {
-          invoiceId: "INV-GROUP",
-          organizationId: organization.id,
-          ownerType: "GROUP",
-          ownerId: group.id,
-          createdByUserId: member.id,
-          vendorName: "Group vendor",
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-        },
-        ...[1, 2, 3].map((number) => ({
-          invoiceId: `INV-CURSOR-${number}`,
-          organizationId: organization.id,
-          ownerType: "USER" as const,
-          ownerId: member.id,
-          createdByUserId: member.id,
-          vendorName: `Cursor vendor ${number}`,
-          invoiceAmountCents: 1,
-          hasPurchaseOrder: true,
-          threeWayMatch: true,
-          vendorTenureDays: 1,
-          previousIncidents12m: 0,
-          bankAccountRecentlyChanged: false,
-          amountVsVendorMedian: 1,
-          countryRisk: "low",
-          createdAt: new Date(`2026-09-21T00:00:0${number}.000Z`),
-        })),
-      ],
+      data: [1, 2, 3].map((number) =>
+        invoiceFixture(
+          organization.id,
+          group.id,
+          member.id,
+          `FAC-CURSOR-${number}`,
+          { createdAt: new Date(`2026-09-21T00:00:0${number}.000Z`) },
+        ),
+      ),
     });
     const invoices = createInvoiceService(prisma);
     const groupContext = {
@@ -2345,52 +1527,32 @@ describe("APP-06 PostgreSQL invoice domain", () => {
     };
 
     await expect(
-      invoices.listInvoices(member.id, groupContext, { q: "", limit: 50 }),
-    ).resolves.toMatchObject({ invoices: [{ invoiceId: "INV-GROUP" }] });
-    await expect(
       invoices.listInvoices(nonMember.id, groupContext, { q: "", limit: 50 }),
     ).rejects.toMatchObject({ status: 404 });
 
-    const individualContext = {
-      organizationId: organization.id,
-      ownerType: "user" as const,
-      ownerId: member.id,
-    };
-    const firstPage = await invoices.listInvoices(
-      member.id,
-      individualContext,
-      {
-        q: "Cursor vendor",
-        limit: 1,
-      },
-    );
-    const secondPage = await invoices.listInvoices(
-      member.id,
-      individualContext,
-      {
-        q: "Cursor vendor",
-        cursor: firstPage.nextCursor ?? undefined,
-        limit: 1,
-      },
-    );
-    const thirdPage = await invoices.listInvoices(
-      member.id,
-      individualContext,
-      {
-        q: "Cursor vendor",
-        cursor: secondPage.nextCursor ?? undefined,
-        limit: 1,
-      },
-    );
+    const firstPage = await invoices.listInvoices(member.id, groupContext, {
+      q: "",
+      limit: 1,
+    });
+    const secondPage = await invoices.listInvoices(member.id, groupContext, {
+      q: "",
+      cursor: firstPage.nextCursor ?? undefined,
+      limit: 1,
+    });
+    const thirdPage = await invoices.listInvoices(member.id, groupContext, {
+      q: "",
+      cursor: secondPage.nextCursor ?? undefined,
+      limit: 1,
+    });
 
     expect(firstPage).toMatchObject({
-      invoices: [{ invoiceId: "INV-CURSOR-3" }],
+      invoices: [{ businessId: "FAC-CURSOR-3" }],
     });
     expect(secondPage).toMatchObject({
-      invoices: [{ invoiceId: "INV-CURSOR-2" }],
+      invoices: [{ businessId: "FAC-CURSOR-2" }],
     });
     expect(thirdPage).toMatchObject({
-      invoices: [{ invoiceId: "INV-CURSOR-1" }],
+      invoices: [{ businessId: "FAC-CURSOR-1" }],
       nextCursor: null,
     });
   });

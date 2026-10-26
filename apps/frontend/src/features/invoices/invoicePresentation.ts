@@ -1,17 +1,10 @@
 export function invoiceLabel(value: string | null | undefined) {
   const labels: Record<string, string> = {
     PENDING: "Pendiente",
-    AUTO_PROCESSED: "Procesada automáticamente",
-    AUTO_PROCESS: "Procesamiento automático",
-    MANUAL_REVIEW: "Revisión manual",
-    RULE_V1: "Regla v1",
-    PROBABILITY_POLICY: "Política por probabilidad",
-    LOCAL_DEMONSTRATION: "Demostración local",
-    MODEL_API: "Modelo mediante servidor",
-    MODEL_API_FALLBACK: "Respaldo: revisión manual",
-    low: "Bajo",
-    medium: "Medio",
-    high: "Alto",
+    APPROVED: "Aprobada",
+    REJECTED: "Rechazada",
+    CANCELLED: "Cancelada",
+    NOT_REQUESTED: "Sin procesamiento",
   };
   if (!value) return "Sin datos";
   return Object.hasOwn(labels, value)
@@ -19,21 +12,18 @@ export function invoiceLabel(value: string | null | undefined) {
     : `Valor no reconocido (${value})`;
 }
 
-export function invoiceMoney(cents: number) {
+// Amounts are whole CLP pesos; never divide or add decimals.
+export function invoiceMoney(pesos: number) {
   return new Intl.NumberFormat("es-CL", {
     style: "currency",
     currency: "CLP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(cents / 100);
+    maximumFractionDigits: 0,
+  }).format(pesos);
 }
 
-export function invoiceNumber(value: number | null | undefined) {
-  return value == null
-    ? "Sin datos"
-    : new Intl.NumberFormat("es-CL", { maximumFractionDigits: 20 }).format(
-        value,
-      );
+// Civil dates (YYYY-MM-DD) are shown as given, without time-zone conversion.
+export function invoiceCivilDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "Fecha no disponible";
 }
 
 export function invoiceDate(value: string) {

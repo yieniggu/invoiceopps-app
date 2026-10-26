@@ -9,10 +9,11 @@ import {
 
 import { AuthScreen } from "./features/auth/AuthScreen";
 import { ProtectedSessionProvider } from "./features/auth/ProtectedSession";
-import { InvoiceDecisionsProvider } from "./features/invoices/InvoiceDecisions";
-import { ResourceContext } from "./features/resources/ResourceContext";
 import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
+import { LogOut } from "lucide-react";
+
 import { AppShell, type Destination } from "./features/navigation/AppShell";
+import { SessionSkeleton } from "./features/session/SessionSkeleton";
 import { ProfileScreen, type Profile } from "./features/profile/ProfileScreen";
 import {
   OrganizationsScreen,
@@ -26,7 +27,6 @@ import {
 import { DashboardScreen } from "./features/dashboard/DashboardScreen";
 import { PoliciesScreen } from "./features/policies/PoliciesScreen";
 import { PolicyMutationsProvider } from "./features/policies/PolicyMutationsContext";
-import { EvidenceScreen } from "./features/evidence/EvidenceScreen";
 import { AdministrationScreen } from "./features/admin/AdministrationScreen";
 import { useGroupOperations } from "./features/groups/groupOperations";
 import {
@@ -37,7 +37,6 @@ import {
 import {
   WorkspaceBoundary,
   WorkspaceProvider,
-  WorkspaceSummary,
 } from "./features/workspace/WorkspaceContext";
 
 type ProfileState =
@@ -134,7 +133,7 @@ export function App() {
         : state.kind === "anonymous"
           ? "Iniciar sesión"
           : state.kind === "loading"
-            ? "Cargando sesión"
+            ? "Preparando tu espacio de trabajo"
             : "Sesión no disponible";
     document.title = `${title} · InvoiceOps`;
   }, [state.kind, destination]);
@@ -511,13 +510,7 @@ export function App() {
   };
 
   if (state.kind === "loading") {
-    return (
-      <main className="shell" aria-labelledby="session-loading-title">
-        <p className="eyebrow">InvoiceOps</p>
-        <h1 id="session-loading-title">Cargando sesión</h1>
-        <p role="status">Cargando sesión...</p>
-      </main>
-    );
+    return <SessionSkeleton />;
   }
 
   if (state.kind === "anonymous") {
@@ -571,8 +564,13 @@ export function App() {
           <button type="submit">Cambiar contraseña</button>
         </form>
         {message ? <p role="alert">{message}</p> : null}
-        <button type="button" onClick={() => void logout()}>
-          Cerrar sesión
+        <button
+          type="button"
+          className="button-with-icon"
+          onClick={() => void logout()}
+        >
+          <LogOut aria-hidden="true" focusable="false" size={18} />
+          Salir
         </button>
       </main>
     );
@@ -661,145 +659,122 @@ export function App() {
       destination={destination}
       onNavigate={setDestination}
       canAdministrate={canAdministrate(profile)}
+      onLogout={() => void logout()}
+      isLoggingOut={isLoggingOut}
     >
       <ProtectedSessionProvider onUnauthorized={onUnauthorized}>
-        <InvoiceDecisionsProvider key={profile.id}>
-          <PolicyMutationsProvider key={profile.id}>
-            <WorkspaceProvider
-              key={`${session.current.epoch}:${profile.id}`}
-              profile={profile}
-              groups={
-                groupsState.kind === "loaded" ? groupsState.groups : undefined
-              }
-            >
-              <section aria-label="Sesión" className="session-toolbar">
-                {!isLoggingOut ? <WorkspaceSummary /> : null}
-                <button
-                  type="button"
-                  onClick={() => void logout()}
-                  disabled={isLoggingOut}
-                >
-                  {isLoggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
-                </button>
-                {logoutError ? <p role="alert">{logoutError}</p> : null}
-              </section>
-              {!isLoggingOut ? (
-                <>
-                  {destination === "Administración" ? (
-                    <AdministrationScreen
-                      profile={profile}
-                      discovery={platformOrganizationsState}
-                      controller={administration}
-                      onGroups={() => setDestination("Mis grupos")}
-                      onRetry={() => void retryAdministrationDiscovery()}
-                      onExecute={(intent) =>
-                        void administration.execute(
-                          intent,
-                          refreshAdministration,
-                          administrationSessionCurrent,
-                          onUnauthorized,
-                        )
-                      }
-                      onRetryRead={(key) =>
-                        void administration.retryRead(
-                          key,
-                          refreshAdministration,
-                          administrationSessionCurrent,
-                        )
-                      }
-                    />
-                  ) : null}
-                  {destination === "Panel principal" ? (
-                    <DashboardScreen
-                      profile={profile}
-                      contextState={groupsState.kind}
-                      onNavigate={setDestination}
-                      onRetry={() => void reloadGroups()}
-                    />
-                  ) : null}
-                  {destination === "Mi perfil" ? (
-                    <ProfileScreen
-                      profile={profile}
-                      email={email}
-                      username={username}
-                      isSaving={isSaving}
-                      message={message}
-                      onEmailChange={setEmail}
-                      onUsernameChange={setUsername}
-                      onSubmit={saveProfile}
-                    />
-                  ) : null}
-                  {destination === "Organizaciones" ? (
-                    <OrganizationsScreen
-                      profile={profile}
-                      discovery={platformOrganizationsState}
-                      contextState={groupsState.kind}
-                      onRetry={() => void reloadGroups()}
-                    />
-                  ) : null}
-                  {destination === "Mis grupos" ? (
-                    <GroupsScreen
-                      profile={profile}
-                      state={groupsState}
-                      discovery={platformOrganizationsState}
-                      pending={isMutatingGroup}
-                      blocked={groupOperations.blocked}
-                      operations={groupOperations.operations}
-                      readRevision={groupReadRevision}
-                      sessionEpoch={session.current.epoch}
-                      onUnauthorized={onUnauthorized}
-                      operation={groupOperation}
-                      error={groupError}
-                      message={groupMessage}
-                      onRetry={() => void reloadGroups()}
-                      onMutate={(...args) => void mutateGroup(...args)}
-                    />
-                  ) : null}
-                  {destination === "Recursos" ||
-                  destination === "Facturas" ||
-                  destination === "Evidencia y lotes" ||
-                  destination === "Políticas" ? (
-                    groupsState.kind === "loaded" ? (
-                      <WorkspaceBoundary>
-                        {destination === "Evidencia y lotes" ? (
-                          <EvidenceScreen />
-                        ) : destination === "Políticas" ? (
-                          <PoliciesScreen profile={profile} />
-                        ) : destination === "Recursos" ? (
-                          <ResourceContext
-                            profile={profile}
-                            groups={groupsState.groups}
-                          />
-                        ) : (
-                          <InvoiceWorkspace
-                            profile={profile}
-                            groups={groupsState.groups}
-                          />
-                        )}
-                      </WorkspaceBoundary>
-                    ) : groupsState.kind === "error" ? (
-                      <>
-                        <p role="alert">
-                          No fue posible cargar el contexto de trabajo.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => void reloadGroups()}
-                        >
-                          Reintentar contexto
-                        </button>
-                      </>
-                    ) : (
-                      <p role="status">Cargando contexto de trabajo...</p>
-                    )
-                  ) : null}
-                </>
-              ) : (
-                <p role="status">Cerrando sesión...</p>
-              )}
-            </WorkspaceProvider>
-          </PolicyMutationsProvider>
-        </InvoiceDecisionsProvider>
+        <PolicyMutationsProvider key={profile.id}>
+          <WorkspaceProvider
+            key={`${session.current.epoch}:${profile.id}`}
+            profile={profile}
+            groups={
+              groupsState.kind === "loaded" ? groupsState.groups : undefined
+            }
+          >
+            {logoutError ? <p role="alert">{logoutError}</p> : null}
+            {!isLoggingOut ? (
+              <>
+                {destination === "Administración" ? (
+                  <AdministrationScreen
+                    profile={profile}
+                    discovery={platformOrganizationsState}
+                    controller={administration}
+                    onGroups={() => setDestination("Mis grupos")}
+                    onRetry={() => void retryAdministrationDiscovery()}
+                    onExecute={(intent) =>
+                      void administration.execute(
+                        intent,
+                        refreshAdministration,
+                        administrationSessionCurrent,
+                        onUnauthorized,
+                      )
+                    }
+                    onRetryRead={(key) =>
+                      void administration.retryRead(
+                        key,
+                        refreshAdministration,
+                        administrationSessionCurrent,
+                      )
+                    }
+                  />
+                ) : null}
+                {destination === "Panel principal" ? (
+                  <DashboardScreen
+                    profile={profile}
+                    contextState={groupsState.kind}
+                    onNavigate={setDestination}
+                    onRetry={() => void reloadGroups()}
+                  />
+                ) : null}
+                {destination === "Mi perfil" ? (
+                  <ProfileScreen
+                    profile={profile}
+                    email={email}
+                    username={username}
+                    isSaving={isSaving}
+                    message={message}
+                    onEmailChange={setEmail}
+                    onUsernameChange={setUsername}
+                    onSubmit={saveProfile}
+                  />
+                ) : null}
+                {destination === "Organizaciones" ? (
+                  <OrganizationsScreen
+                    profile={profile}
+                    discovery={platformOrganizationsState}
+                    contextState={groupsState.kind}
+                    onRetry={() => void reloadGroups()}
+                  />
+                ) : null}
+                {destination === "Mis grupos" ? (
+                  <GroupsScreen
+                    profile={profile}
+                    state={groupsState}
+                    discovery={platformOrganizationsState}
+                    pending={isMutatingGroup}
+                    blocked={groupOperations.blocked}
+                    operations={groupOperations.operations}
+                    readRevision={groupReadRevision}
+                    sessionEpoch={session.current.epoch}
+                    onUnauthorized={onUnauthorized}
+                    operation={groupOperation}
+                    error={groupError}
+                    message={groupMessage}
+                    onRetry={() => void reloadGroups()}
+                    onMutate={(...args) => void mutateGroup(...args)}
+                  />
+                ) : null}
+                {destination === "Facturas" || destination === "Políticas" ? (
+                  groupsState.kind === "loaded" ? (
+                    <WorkspaceBoundary>
+                      {destination === "Políticas" ? (
+                        <PoliciesScreen profile={profile} />
+                      ) : (
+                        <InvoiceWorkspace
+                          profile={profile}
+                          groups={groupsState.groups}
+                        />
+                      )}
+                    </WorkspaceBoundary>
+                  ) : groupsState.kind === "error" ? (
+                    <>
+                      <p role="alert">
+                        No fue posible cargar el contexto de trabajo.
+                      </p>
+                      <button type="button" onClick={() => void reloadGroups()}>
+                        Reintentar contexto
+                      </button>
+                    </>
+                  ) : (
+                    <p role="status">Cargando contexto de trabajo...</p>
+                  )
+                ) : null}
+              </>
+            ) : (
+              <p role="status">Saliendo...</p>
+            )}
+          </WorkspaceProvider>
+        </PolicyMutationsProvider>
       </ProtectedSessionProvider>
     </AppShell>
   );

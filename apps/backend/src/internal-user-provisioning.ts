@@ -1,5 +1,5 @@
 import type { PrismaClient } from "./generated/prisma/client.js";
-import { normalizeRut } from "./identity.js";
+import { parseRut } from "./rut.js";
 import { hashPassword } from "./auth.js";
 
 /** Internal seed/test provisioner. It is intentionally never registered as HTTP. */
@@ -10,7 +10,7 @@ export async function provisionInternalUser(
   return prisma.user.create({
     data: {
       name: input.name.trim(),
-      rut: normalizeRut(input.rut),
+      rut: parseRut(input.rut),
       passwordHash: await hashPassword(input.password),
     },
     select: { id: true, name: true, rut: true },

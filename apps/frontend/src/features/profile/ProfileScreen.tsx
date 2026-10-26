@@ -1,4 +1,5 @@
 import type { FormEvent } from "react";
+import { fromApiRut } from "../../lib/rut";
 
 export type Profile = {
   id: string;
@@ -17,8 +18,8 @@ export type Profile = {
 export function roleLabel(role: string) {
   return role === "ADMIN"
     ? "Administrador"
-    : role === "STUDENT"
-      ? "Estudiante"
+    : role === "USER"
+      ? "Usuario"
       : "Rol no disponible";
 }
 
@@ -55,7 +56,7 @@ export function ProfileScreen({
           </div>
           <div>
             <dt>RUT</dt>
-            <dd>{profile.rut}</dd>
+            <dd>{fromApiRut(profile.rut)}</dd>
           </div>
         </dl>
         {profile.isPlatformAdministrator ? (

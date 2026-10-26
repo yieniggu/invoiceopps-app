@@ -2,7 +2,8 @@ import {
   OrganizationRole,
   type PrismaClient,
 } from "./generated/prisma/client.js";
-import { normalizeRut, normalizeSlug } from "./identity.js";
+import { normalizeSlug } from "./identity.js";
+import { parseRut } from "./rut.js";
 
 export function createOrganizationPersistence(prisma: PrismaClient) {
   return {
@@ -15,7 +16,7 @@ export function createOrganizationPersistence(prisma: PrismaClient) {
       return prisma.user.create({
         data: {
           name: input.name,
-          rut: normalizeRut(input.rut),
+          rut: parseRut(input.rut),
           email: input.email,
           username: input.username,
         },

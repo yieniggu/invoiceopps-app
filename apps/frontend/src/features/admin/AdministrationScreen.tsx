@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { RutField } from "../../components/RutField";
+import { isValidRut, toApiRut } from "../../lib/rut";
 import { roleLabel, type Profile } from "../profile/ProfileScreen";
 import {
   PlatformDiscoveryStatus,
@@ -116,7 +118,7 @@ export function AdministrationScreen({
                 !organization ||
                 !uuid.test(organization.id) ||
                 !uuid.test(userId) ||
-                !["ADMIN", "STUDENT"].includes(draft.role)
+                !["ADMIN", "USER"].includes(draft.role)
               ) {
                 setError(
                   "Selecciona una organización e ingresa un UUID de usuario válido y un rol permitido.",
@@ -201,7 +203,7 @@ export function AdministrationScreen({
                     })
                   }
                 >
-                  <option value="STUDENT">Estudiante</option>
+                  <option value="USER">Usuario</option>
                   <option value="ADMIN">Administrador de organización</option>
                 </select>
               </label>
@@ -318,10 +320,20 @@ export function AdministrationScreen({
 function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
   const [message, setMessage] = useState<string>();
   const [temporaryPassword, setTemporaryPassword] = useState<string>();
+  const [userRut, setUserRut] = useState("");
+  const [rutSubmitted, setRutSubmitted] = useState(false);
+  const rutInput = useRef<HTMLInputElement>(null);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const action = String(form.get("action"));
+    if (action !== "organization") {
+      setRutSubmitted(true);
+      if (!isValidRut(userRut)) {
+        rutInput.current?.focus();
+        return;
+      }
+    }
     const payload =
       action === "organization"
         ? {
@@ -330,9 +342,9 @@ function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
           }
         : {
             name: String(form.get("userName") ?? ""),
-            rut: String(form.get("rut") ?? ""),
+            rut: toApiRut(userRut),
             organizationId: String(form.get("organizationId") ?? ""),
-            role: String(form.get("role") ?? "STUDENT"),
+            role: String(form.get("role") ?? "USER"),
           };
     const response = await fetch(
       action === "organization" ? "/platform/organizations" : "/platform/users",
@@ -365,6 +377,8 @@ function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
         : "Usuario provisionado. Guarda la contraseña temporal ahora: no volverá a mostrarse.",
     );
     event.currentTarget.reset();
+    setUserRut("");
+    setRutSubmitted(false);
     onCreated();
   };
   return (
@@ -387,14 +401,22 @@ function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
         <fieldset>
           <legend>Usuario</legend>
           <input name="userName" aria-label="Nombre de usuario" required />
-          <input name="rut" aria-label="RUT de usuario" required />
+          <RutField
+            name="rut"
+            ariaLabel="RUT de usuario"
+            value={userRut}
+            onChange={setUserRut}
+            submitted={rutSubmitted}
+            inputRef={rutInput}
+            required
+          />
           <input
             name="organizationId"
             aria-label="UUID de organización para usuario"
             required
           />
           <select name="role" aria-label="Rol inicial">
-            <option value="STUDENT">Estudiante</option>
+            <option value="USER">Usuario</option>
             <option value="ADMIN">Administrador de organización</option>
           </select>
           <button name="action" value="user" type="submit">

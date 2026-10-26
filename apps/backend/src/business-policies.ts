@@ -4,7 +4,7 @@ import {
   type PrismaClient,
 } from "./generated/prisma/client.js";
 import { AuthError } from "./auth.js";
-import type { ResourceContext } from "./resources.js";
+import type { ResourceContext } from "./resource-context.js";
 
 export type BusinessPolicy = {
   version: string;

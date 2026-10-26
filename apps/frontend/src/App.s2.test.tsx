@@ -19,13 +19,13 @@ const organizations = ["A", "B"].map((id) => ({
 const profile = {
   id: "person",
   name: "Ada",
-  rut: "123456785",
+  rut: "12345678-5",
   email: "ada@example.test",
   username: "ada",
   isPlatformAdministrator: false,
   memberships: organizations.map((organization) => ({
     organization,
-    role: "STUDENT",
+    role: "USER",
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -33,7 +33,7 @@ const groups = organizations.map((organization, index) => ({
   name: `Equipo ${index}`,
   description: "Investigación aplicada",
   organization,
-  members: [{ id: "person", name: "Ada", rut: "123456785" }],
+  members: [{ id: "person", name: "Ada", rut: "12345678-5" }],
 }));
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -78,18 +78,8 @@ function http(current = profile, membershipGroups = groups) {
           ],
         });
       if (path.startsWith("/organizations/")) return mutation();
-      if (path.startsWith("/resources?")) return json({ resources: [] });
       if (path.startsWith("/invoices?"))
         return json({ invoices: [], nextCursor: null });
-      if (path.startsWith("/mlflow/resources?"))
-        return json({
-          experiment: null,
-          runs: [],
-          registeredModel: null,
-          versions: [],
-          truncated: false,
-          fetchedAt: "2026-10-21",
-        });
       throw new Error(`Unexpected request: ${path}`);
     });
   return { patch, mutation, readGroups, fetchMock };
@@ -116,7 +106,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     expect(
       screen.getByRole("heading", { name: "Tu espacio de trabajo" }),
     ).toBeTruthy();
-    expect(screen.getByText("Bienvenido, Ada")).toBeTruthy();
+    expect(screen.getByText(/Bienvenido, Ada/)).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: "Ver mis organizaciones" }),
     );
@@ -128,7 +118,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
-        /^\/(invoices|resources)\?/.test(path.toString()),
+        /^\/invoices\?/.test(path.toString()),
       ),
     ).toBe(false);
   });
@@ -176,33 +166,30 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     );
   });
 
-  it("selects only the current user's individual context from an actual organization and propagates it to both workspaces", async () => {
+  it("selects only the current user's individual context from an actual organization and propagates it to the invoice workspace", async () => {
     const api = http();
     await start("Organizaciones");
     const use = await screen.findByRole("button", { name: "Usar Academia B" });
     fireEvent.click(use);
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toBe(
-      "Academia B · Trabajo individual",
+    navigate("Panel principal");
+    expect(
+      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
+    ).toContain("Academia BModalidadTrabajo individual");
+    navigate("Facturas");
+    await waitFor(() =>
+      expect(
+        api.fetchMock.mock.calls.some(([path]) =>
+          path
+            .toString()
+            .startsWith(
+              "/invoices?organizationId=org-B&ownerType=user&ownerId=person",
+            ),
+        ),
+      ).toBe(true),
     );
-    for (const name of ["Recursos", "Facturas"]) {
-      navigate(name);
-      await waitFor(() =>
-        expect(
-          api.fetchMock.mock.calls.some(([path]) =>
-            path
-              .toString()
-              .startsWith(
-                name === "Recursos"
-                  ? "/resources?organizationId=org-B&ownerType=user&ownerId=person"
-                  : "/invoices?organizationId=org-B&ownerType=user&ownerId=person",
-              ),
-          ),
-        ).toBe(true),
-      );
-    }
     expect(
       api.fetchMock.mock.calls
-        .filter(([path]) => /^\/(resources|invoices)\?/.test(path.toString()))
+        .filter(([path]) => /^\/invoices\?/.test(path.toString()))
         .every(([path]) => path.toString().includes("organizationId=org-B")),
     ).toBe(true);
   });
@@ -214,10 +201,10 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       await screen.findByRole("button", { name: "Trabajar con Equipo 1" }),
     );
     navigate("Panel principal");
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toBe(
-      "Academia B · Grupo: Equipo 1",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Abrir facturas" }));
+    expect(
+      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
+    ).toContain("Academia BModalidadGrupo: Equipo 1");
+    fireEvent.click(screen.getByRole("button", { name: "Ir a facturas" }));
     await screen.findByText("No hay facturas para este propietario.");
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
@@ -263,11 +250,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ).toBeTruthy();
     navigate("Panel principal");
     expect(
-      screen.getByText("No tienes un contexto de trabajo activo."),
+      screen.getByText("Elige una organización o grupo para empezar."),
     ).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
-        /^\/(invoices|resources)\?/.test(path.toString()),
+        /^\/invoices\?/.test(path.toString()),
       ),
     ).toBe(false);
   });
@@ -432,7 +419,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     const api = http({ ...profile, memberships: [] });
     await start();
     expect(
-      screen.getByText("No tienes un contexto de trabajo activo."),
+      screen.getByText("Elige una organización o grupo para empezar."),
     ).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: "Ver mis organizaciones" }),
@@ -491,7 +478,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       "Validando tu espacio de trabajo...",
     );
     expect(
-      screen.queryByText("No tienes un contexto de trabajo activo."),
+      screen.queryByText("Elige una organización o grupo para empezar."),
     ).toBeNull();
     await act(async () => read.resolve(json({}, 500)));
     expect(screen.getByRole("alert").textContent).toBe(
@@ -519,9 +506,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Usar Academia B" }));
     navigate("Panel principal");
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toBe(
-      "Academia B · Trabajo individual",
-    );
+    expect(
+      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
+    ).toContain("Academia BModalidadTrabajo individual");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -583,8 +570,5 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     expect(
       screen.getByRole("button", { name: `Guardar grupo ${longName}` }),
     ).toBeTruthy();
-    expect(
-      getComputedStyle(screen.getByRole("region", { name: "Sesión" })).flexWrap,
-    ).toBe("wrap");
   });
 });

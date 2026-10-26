@@ -10,10 +10,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 // Profile and group tests exercise destinations through the real shell.
-// MLflow is tested in its own feature suite.
-vi.mock("./features/resources/MlflowResources", () => ({
-  MlflowResources: () => null,
-}));
 
 afterEach(() => {
   cleanup();
@@ -34,7 +30,7 @@ describe("APP-03 profile", () => {
             profile: {
               id: "user-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: "ada@example.test",
               username: "ada",
               memberships: [
@@ -44,7 +40,7 @@ describe("APP-03 profile", () => {
                     name: "AI Academy",
                     slug: "ai-academy",
                   },
-                  role: "STUDENT",
+                  role: "USER",
                 },
               ],
             },
@@ -64,7 +60,7 @@ describe("APP-03 profile", () => {
             profile: {
               id: "user-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: "ada.updated@example.test",
               username: "ada-updated",
               memberships: [],
@@ -76,12 +72,14 @@ describe("APP-03 profile", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("status").textContent).toContain("Cargando sesión");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Preparando tu espacio de trabajo",
+    );
     await navigate("Mi perfil");
     expect(
       await screen.findByRole("heading", { name: "Mi perfil" }),
     ).toBeTruthy();
-    expect(await screen.findByText("123456785")).toBeTruthy();
+    expect(await screen.findByText("12.345.678-5")).toBeTruthy();
     expect(
       (
         screen.getByRole("textbox", {
@@ -98,7 +96,7 @@ describe("APP-03 profile", () => {
     ).toBe("ada");
     await navigate("Organizaciones");
     expect(screen.getByText("AI Academy")).toBeTruthy();
-    expect(screen.getByText("(Estudiante)")).toBeTruthy();
+    expect(screen.getByText("(Usuario)")).toBeTruthy();
     await navigate("Mi perfil");
 
     fireEvent.change(
@@ -146,7 +144,7 @@ describe("APP-03 profile", () => {
             profile: {
               id: "user-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: null,
               username: null,
               memberships: [],
@@ -182,7 +180,7 @@ describe("APP-03 profile", () => {
             profile: {
               id: "user-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: null,
               username: null,
               memberships: [],
@@ -217,7 +215,7 @@ describe("APP-03 profile", () => {
             profile: {
               id: "user-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: "ada@example.test",
               username: "ada",
               memberships: [],
@@ -231,13 +229,14 @@ describe("APP-03 profile", () => {
     render(<App />);
 
     const logoutButton = await screen.findByRole("button", {
-      name: "Cerrar sesión",
+      name: "Salir",
     });
     fireEvent.click(logoutButton);
 
-    expect(
-      screen.getByRole("button", { name: "Cerrando sesión..." }),
-    ).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Saliendo..." })).toHaveProperty(
+      "disabled",
+      true,
+    );
 
     completeLogout?.();
 
@@ -258,7 +257,7 @@ describe("APP-03 profile", () => {
           JSON.stringify({
             profile: {
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: "ada@example.test",
               username: "ada",
               memberships: [],
@@ -271,23 +270,22 @@ describe("APP-03 profile", () => {
 
     render(<App />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Cerrar sesión" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Salir" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
       "No fue posible cerrar la sesión. Intenta nuevamente.",
     );
     await navigate("Mi perfil");
     expect(screen.getByText("Ada Lovelace")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Cerrar sesión" }),
-    ).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Salir" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   });
 });
 
 describe("APP-04 organization groups", () => {
-  it("keeps globally discovered groups out of resource and invoice contexts for an administrator without local memberships", async () => {
+  it("keeps globally discovered groups out of the invoice context for an administrator without local memberships", async () => {
     let resolveDiscovery: ((response: Response) => void) | undefined;
     const discovery = new Promise<Response>((resolve) => {
       resolveDiscovery = resolve;
@@ -300,7 +298,7 @@ describe("APP-04 organization groups", () => {
             profile: {
               id: "platform-admin-1",
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: null,
               username: null,
               isPlatformAdministrator: true,
@@ -353,20 +351,6 @@ describe("APP-04 organization groups", () => {
     expect(
       screen.getByRole("button", { name: "Crear grupo en AI Academy" }),
     ).toBeTruthy();
-    await navigate("Recursos");
-    expect(
-      await screen.findByText(
-        "No tienes organizaciones para consultar recursos.",
-      ),
-    ).toBeTruthy();
-    expect(
-      fetchMock.mock.calls.some(
-        ([path]) =>
-          typeof path === "string" &&
-          (path.startsWith("/resources") || path.startsWith("/invoices")),
-      ),
-    ).toBe(false);
-
     await navigate("Facturas");
 
     expect(
@@ -376,9 +360,7 @@ describe("APP-04 organization groups", () => {
     ).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(
-        ([path]) =>
-          typeof path === "string" &&
-          (path.startsWith("/resources") || path.startsWith("/invoices")),
+        ([path]) => typeof path === "string" && path.startsWith("/invoices"),
       ),
     ).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith("/platform/organizations", {
@@ -400,7 +382,7 @@ describe("APP-04 organization groups", () => {
                 profile: {
                   id: "platform-admin-1",
                   name: "Ada Lovelace",
-                  rut: "123456785",
+                  rut: "12345678-5",
                   email: null,
                   username: null,
                   isPlatformAdministrator: true,
@@ -448,15 +430,6 @@ describe("APP-04 organization groups", () => {
           );
         }
 
-        if (url.startsWith("/resources?")) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ resources: [] }), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            }),
-          );
-        }
-
         return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
       });
 
@@ -473,9 +446,6 @@ describe("APP-04 organization groups", () => {
       credentials: "same-origin",
     });
     expect(screen.queryByText("No fue posible cargar los grupos.")).toBeNull();
-    expect(
-      screen.queryByText("No fue posible cargar los recursos."),
-    ).toBeNull();
   });
 
   it("shows group members to an organization member and administrative controls only to admins", async () => {
@@ -485,7 +455,7 @@ describe("APP-04 organization groups", () => {
           JSON.stringify({
             profile: {
               name: "Ada Lovelace",
-              rut: "123456785",
+              rut: "12345678-5",
               email: null,
               username: null,
               memberships: [
@@ -516,7 +486,7 @@ describe("APP-04 organization groups", () => {
                   {
                     id: "student-1",
                     name: "Grace Hopper",
-                    rut: "123456793",
+                    rut: "12345679-3",
                   },
                 ],
               },
@@ -524,12 +494,6 @@ describe("APP-04 organization groups", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ resources: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
       );
 
     render(<App />);
@@ -559,7 +523,7 @@ describe("APP-04 organization groups", () => {
             profile: {
               id: "student-1",
               name: "Grace Hopper",
-              rut: "123456793",
+              rut: "12345679-3",
               email: null,
               username: null,
               memberships: [
@@ -569,7 +533,7 @@ describe("APP-04 organization groups", () => {
                     name: "AI Academy",
                     slug: "ai-academy",
                   },
-                  role: "STUDENT",
+                  role: "USER",
                 },
               ],
             },
@@ -579,12 +543,6 @@ describe("APP-04 organization groups", () => {
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ groups: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ resources: [] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),

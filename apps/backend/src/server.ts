@@ -1,86 +1,40 @@
 import { createApp } from "./app.js";
 import { createAuthService } from "./auth.js";
+import {
+  authRateLimitConfigFromEnv,
+  createAuthRateLimiterFromConfig,
+} from "./auth-rate-limit.js";
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
 import { createGroupService } from "./groups.js";
 import { createInvoiceService } from "./invoices.js";
-import { createModelApiClient } from "./model-api-client.js";
-import { createResourceService } from "./resources.js";
 import { createPlatformAdministratorService } from "./platform-administrator.js";
-import { createMlflowReadClient } from "./mlflow-read-client.js";
-import { createMlflowResourceService } from "./mlflow-resources.js";
-import { fileURLToPath } from "node:url";
-import { createMlflowAdminClient } from "./mlflow-admin-client.js";
-import {
-  createAcademicSnapshotReader,
-  createMlflowProvisionService,
-} from "./mlflow-provision.js";
-import { loadProvisionSecrets } from "./mlflow-provision-secrets.js";
-import { createEvidenceReadService } from "./evidence-read.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const modelApiUrl = process.env.MODEL_API_URL;
-const modelApiModelId = process.env.MODEL_API_MODEL_ID;
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL must be configured");
 }
-const port = Number(process.env.PORT ?? 3000);
+// Local default avoids 3000; containers set PORT explicitly.
+const port = Number(process.env.PORT || 4380);
 const database = createDatabase(databaseUrl);
-const mlflowConfig = [
-  process.env.MLFLOW_READ_URL,
-  process.env.MLFLOW_UI_URL,
-  process.env.MLFLOW_READ_USERNAME,
-  process.env.MLFLOW_READ_PASSWORD,
-];
-const mlflowClient = mlflowConfig.every(Boolean)
-  ? createMlflowReadClient({
-      readUrl: mlflowConfig[0]!,
-      uiUrl: mlflowConfig[1]!,
-      username: mlflowConfig[2]!,
-      password: mlflowConfig[3]!,
-    })
-  : undefined;
-// Privileged provisioning is explicit, local-only and independent of the reader.
-const provisionEnabled =
-  process.env.MLFLOW_PROVISION_MODE === "local-development";
-const provisionClient = provisionEnabled
-  ? createMlflowAdminClient({
-      mode: process.env.MLFLOW_PROVISION_MODE!,
-      nodeEnv: process.env.NODE_ENV ?? "",
-      baseUrl: process.env.MLFLOW_PROVISION_URL ?? "",
-      username: process.env.MLFLOW_PROVISION_USERNAME ?? "",
-      password: process.env.MLFLOW_PROVISION_PASSWORD ?? "",
-    })
-  : undefined;
-const provisionRepoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const authRateLimitConfig = authRateLimitConfigFromEnv({
+  AUTH_RATE_LIMIT_DISABLED: process.env.AUTH_RATE_LIMIT_DISABLED,
+  AUTH_RATE_LIMIT_MAX_ATTEMPTS: process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+  AUTH_RATE_LIMIT_WINDOW_MS: process.env.AUTH_RATE_LIMIT_WINDOW_MS,
+  NODE_ENV: process.env.NODE_ENV,
+});
+if (authRateLimitConfig.disabled) {
+  console.warn(
+    "Auth rate limiting is DISABLED (AUTH_RATE_LIMIT_DISABLED=true)",
+  );
+}
 const app = createApp(database, createAuthService(database.prisma), {
+  authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
   groups: createGroupService(database.prisma),
-  invoices: createInvoiceService(
-    database.prisma,
-    modelApiUrl && modelApiModelId
-      ? createModelApiClient({ baseUrl: modelApiUrl, modelId: modelApiModelId })
-      : undefined,
-  ),
+  invoices: createInvoiceService(database.prisma),
   businessPolicies: createBusinessPolicyService(database.prisma),
-  resources: createResourceService(database.prisma),
-  evidenceRead: createEvidenceReadService(database.prisma),
-  mlflowResources: createMlflowResourceService(
-    database.prisma,
-    mlflowClient,
-    mlflowClient?.uiOrigin,
-  ),
   platformAdministrators: createPlatformAdministratorService(database.prisma),
-  mlflowProvision: createMlflowProvisionService({
-    client: provisionClient,
-    snapshot: createAcademicSnapshotReader(database.prisma),
-    credentials: (usernames) =>
-      loadProvisionSecrets(
-        process.env.MLFLOW_PROVISION_SECRETS_FILE ?? "",
-        provisionRepoRoot,
-        usernames,
-      ),
-  }),
 });
 
 app.listen(port, () => {

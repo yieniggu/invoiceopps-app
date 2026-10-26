@@ -1,6 +1,5 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
-  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,18 +15,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import pg from "pg";
 
-export const suites = [
-  "test/evidence-persistence.integration.test.ts",
-  "test/organization-persistence.integration.test.ts",
-  "test/evidence-batches.integration.test.ts",
-  "test/evidence-anchor-reservations.integration.test.ts",
-  "test/evidence-anchor-transactions.integration.test.ts",
-  "test/evidence-anchor-reconciliation.integration.test.ts",
-  "test/evidence-anchor-cli.integration.test.ts",
-  "test/evidence-read.integration.test.ts",
-];
+export const suites = ["test/organization-persistence.integration.test.ts"];
 
 const migrations = resolve("prisma/migrations");
+const baselineMigration = "20261026000000_initial_recovery_p0";
 const schema = resolve("prisma/schema.prisma");
 const image = "postgres:17-alpine";
 const labelKey = "invoiceops.integration.owner";
@@ -52,15 +43,8 @@ function command(binary, args, options = {}, spawn = spawnSync) {
           : Number.isSafeInteger(result.status)
             ? `exit-${result.status}`
             : "process-failed";
-    const diagnostic = `${result.stdout || ""}\n${result.stderr || ""}`;
-    const smoke =
-      options.stage === "owned Anvil smoke"
-        ? diagnostic.match(
-            /SMOKE_FAILURE step=[a-z0-9-]+ cause=(?:child-timeout|child-spawn-error|child-exit-nonzero|assertion-failed|child-process-failed) status=(?:-?\d+|none) signal=(?:SIG[A-Z]+|none) spawn_code=(?:E[A-Z]+|none) cli_phase=(?:input|database|execute|cleanup|none) cli_operation=(?:anchor|reconcile|command|none) cli_reason=(?:usage|authentication|configuration|database|data|operation|cleanup|none) phase=[a-z0-9-]+ method=(?:eth_[A-Za-z0-9]+|unknown)/,
-          )?.[0]
-        : undefined;
     throw new Error(
-      `${options.stage ?? binary} failed or timed out; cause=${cause}; phase=${phase}${smoke ? `; ${smoke}` : ""}`,
+      `${options.stage ?? binary} failed or timed out; cause=${cause}; phase=${phase}`,
     );
   }
   return result.stdout.trim();
@@ -123,184 +107,19 @@ async function migrate(directory, url, environment, stage, spawn) {
   const config = join(directory, "prisma.config.ts");
   writeFileSync(
     config,
-    `export default { schema: ${JSON.stringify(schema)}, migrations: { path: ${JSON.stringify(directory === environment.fullDirectory ? migrations : join(directory, "migrations"))} }, datasource: { url: process.env.DATABASE_URL } };\n`,
+    `export default { schema: ${JSON.stringify(schema)}, migrations: { path: ${JSON.stringify(migrations)} }, datasource: { url: process.env.DATABASE_URL } };\n`,
     { mode: 0o600 },
   );
   command(
     "pnpm",
     ["exec", "prisma", "migrate", "deploy", "--config", config],
     {
-      env: { ...environment.child, DATABASE_URL: url },
+      env: { ...environment, DATABASE_URL: url },
       timeout: 180_000,
       stage,
     },
     spawn,
   );
-}
-
-async function seedLegacy(client) {
-  const expected = {
-    User: ["id", "name", "rut"],
-    Organization: ["id", "name", "slug", "updatedAt"],
-    Invoice: [
-      "id",
-      "invoiceId",
-      "organizationId",
-      "ownerType",
-      "ownerId",
-      "createdByUserId",
-      "vendorName",
-      "invoiceAmountCents",
-      "hasPurchaseOrder",
-      "threeWayMatch",
-      "vendorTenureDays",
-      "previousIncidents12m",
-      "bankAccountRecentlyChanged",
-      "amountVsVendorMedian",
-      "countryRisk",
-      "updatedAt",
-    ],
-    DecisionEvent: [
-      "id",
-      "invoiceId",
-      "actorUserId",
-      "actorName",
-      "actorRut",
-      "correlationId",
-      "decision",
-      "mode",
-      "ruleVersion",
-    ],
-  };
-  const columns = await client.query(
-    `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ANY($1)`,
-    [Object.keys(expected)],
-  );
-  for (const [table, required] of Object.entries(expected)) {
-    const actual = columns.rows
-      .filter((row) => row.table_name === table)
-      .map((row) => row.column_name);
-    if (
-      required.some((column) => !actual.includes(column)) ||
-      (table === "User" && actual.includes("updatedAt")) ||
-      (table === "DecisionEvent" && actual.includes("updatedAt"))
-    ) {
-      throw new Error(`Legacy fixture schema preflight failed for ${table}`);
-    }
-  }
-  const [organizationId, userId, invoiceId, eventId, correlationId] =
-    Array.from({ length: 5 }, () => randomUUID());
-  await client.query("BEGIN");
-  try {
-    await client.query(
-      'INSERT INTO "Organization" ("id", "name", "slug", "updatedAt") VALUES ($1, $2, $3, CURRENT_TIMESTAMP)',
-      [
-        organizationId,
-        "Legacy evidence organization",
-        `legacy-${organizationId}`,
-      ],
-    );
-    await client.query(
-      'INSERT INTO "User" ("id", "name", "rut") VALUES ($1, $2, $3)',
-      [userId, "Legacy evidence actor", `legacy${userId.replaceAll("-", "")}`],
-    );
-    await client.query(
-      `INSERT INTO "Invoice" ("id", "invoiceId", "organizationId", "ownerType", "ownerId", "createdByUserId", "vendorName", "invoiceAmountCents", "hasPurchaseOrder", "threeWayMatch", "vendorTenureDays", "previousIncidents12m", "bankAccountRecentlyChanged", "amountVsVendorMedian", "countryRisk", "updatedAt") VALUES ($1, $2, $3, 'USER', $4, $4, $5, 1, true, true, 1, 0, false, 1, 'low', CURRENT_TIMESTAMP)`,
-      [
-        invoiceId,
-        `LEGACY-${invoiceId}`,
-        organizationId,
-        userId,
-        "Legacy vendor",
-      ],
-    );
-    await client.query(
-      `INSERT INTO "DecisionEvent" ("id", "invoiceId", "actorUserId", "actorName", "actorRut", "correlationId", "decision", "mode", "ruleVersion") VALUES ($1, $2, $3, $4, $5, $6, 'MANUAL_REVIEW', 'RULE_V1', 'invoice-rules-v1')`,
-      [
-        eventId,
-        invoiceId,
-        userId,
-        "Legacy evidence actor",
-        `legacy${userId.replaceAll("-", "")}`,
-        correlationId,
-      ],
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
-  return eventId;
-}
-
-async function verifyAuditConstraintForwardCorrection(client, eventId) {
-  await client.query(`ALTER TABLE "DecisionEvent"
-    DROP CONSTRAINT "DecisionEvent_model_inference_snapshot_check",
-    ADD CONSTRAINT "DecisionEvent_model_inference_snapshot_check" CHECK (
-      ("policyProbabilitySource" = 'MODEL_API' AND "modelId" IS NOT NULL AND "modelVersion" IS NOT NULL AND "modelRunId" IS NOT NULL AND "policyProbability" IS NOT NULL AND "recommendation" IS NOT NULL)
-      OR
-      ("policyProbabilitySource" = 'MODEL_API_FALLBACK' AND "modelId" IS NULL AND "modelVersion" IS NULL AND "modelRunId" IS NULL AND "policyProbability" IS NULL AND "recommendation" = 'MANUAL_REVIEW')
-      OR
-      ("policyProbabilitySource" IS NULL AND "modelId" IS NULL AND "modelVersion" IS NULL AND "modelRunId" IS NULL AND "policyProbability" IS NULL AND "recommendation" IS NULL)
-      OR
-      ("policyProbabilitySource" = 'LOCAL_DEMONSTRATION')
-    )`);
-
-  const verifyUpdate = async (values, shouldReject, description) => {
-    await client.query("BEGIN");
-    let failure;
-    try {
-      const result = await client.query(
-        `UPDATE "DecisionEvent"
-         SET "policyProbabilitySource" = $2, "modelId" = $3, "modelVersion" = $4,
-             "modelRunId" = $5, "policyProbability" = $6, "recommendation" = $7
-         WHERE "id" = $1`,
-        [eventId, ...values],
-      );
-      if (result.rowCount !== 1) {
-        throw new Error("Audit guard fixture row was not updated");
-      }
-    } catch (error) {
-      failure = error;
-    }
-    await client.query("ROLLBACK");
-
-    if (shouldReject) {
-      if (failure?.code !== "23514") {
-        throw new Error(
-          `Corrected audit constraint did not reject ${description}`,
-        );
-      }
-    } else if (failure) {
-      throw new Error(
-        `Observed legacy audit constraint did not permit ${description}`,
-      );
-    }
-  };
-
-  await verifyUpdate(
-    [null, "legacy-model", null, null, null, null],
-    false,
-    "a NULL-source partial snapshot before correction",
-  );
-  await verifyUpdate(
-    ["LOCAL_DEMONSTRATION", "legacy-model", null, null, null, null],
-    false,
-    "a LOCAL_DEMONSTRATION snapshot with model metadata before correction",
-  );
-
-  return async () => {
-    await verifyUpdate(
-      [null, "legacy-model", null, null, null, null],
-      true,
-      "a NULL-source partial snapshot after correction",
-    );
-    await verifyUpdate(
-      ["LOCAL_DEMONSTRATION", "legacy-model", null, null, null, null],
-      true,
-      "a LOCAL_DEMONSTRATION snapshot with model metadata after correction",
-    );
-  };
 }
 
 function cleanupOwnedContainer(name, nonce, id, dockerEnv, spawn, log) {
@@ -324,30 +143,17 @@ export async function runIntegrationGate({
   spawn = spawnSync,
   Client = pg.Client,
   log = console.info,
-  ownedAnvil = null,
 } = {}) {
   if (
     argv.length !== 2 ||
-    [
-      "DATABASE_URL",
-      "TEST_DATABASE_URL",
-      "APP10_TEST_NAMESPACE",
-      "APP10_LEGACY_EVENT_ID",
-    ].some((key) => env[key])
+    ["DATABASE_URL", "TEST_DATABASE_URL", "APP10_TEST_NAMESPACE"].some(
+      (key) => env[key],
+    )
   ) {
     throw new Error(
       "Integration gate rejects arguments and preconfigured database targets",
     );
   }
-  if (
-    ownedAnvil !== null &&
-    (!Number.isSafeInteger(ownedAnvil.pid) ||
-      ownedAnvil.pid <= 0 ||
-      !Number.isSafeInteger(ownedAnvil.port) ||
-      ownedAnvil.port <= 0 ||
-      ownedAnvil.port > 65535)
-  )
-    throw new Error("Invalid owned Anvil identity");
   const nonce = randomBytes(5).toString("hex");
   const name = `invoiceops-evi-${nonce}`;
   const password = randomBytes(32).toString("hex");
@@ -462,97 +268,25 @@ export async function runIntegrationGate({
       }
     }
     try {
-      const oldDirectory = join(temp, "baseline");
-      mkdirSync(oldDirectory);
-      const oldMigrations = join(oldDirectory, "migrations");
-      mkdirSync(oldMigrations);
-      for (const entry of readdirSync(migrations)) {
-        if (
-          entry === "migration_lock.toml" ||
-          (/^\d{14}_/.test(entry) &&
-            entry < "20261008060000_add_evidence_persistence")
-        ) {
-          cpSync(join(migrations, entry), join(oldMigrations, entry), {
-            recursive: true,
-          });
-        }
-      }
-      const names = readdirSync(oldMigrations)
+      const names = readdirSync(migrations)
         .filter((entry) => /^\d{14}_/.test(entry))
         .sort();
-      if (names.length !== 8)
-        throw new Error("Expected exactly eight immutable baseline migrations");
-      const expectedBaseline = expectedMigrationChecksums(migrations, names);
-      const copied = expectedMigrationChecksums(oldMigrations, names);
-      if (
-        copied.some(
-          (row, index) => row.checksum !== expectedBaseline[index].checksum,
-        )
-      )
-        throw new Error("Baseline migration copy differs from source");
-      const environment = { child, fullDirectory: join(temp, "full") };
-      mkdirSync(environment.fullDirectory);
-      log("stage: baseline-migrations");
-      await migrate(
-        oldDirectory,
-        url,
-        environment,
-        "baseline migrations",
-        spawn,
-      );
+      if (names[0] !== baselineMigration)
+        throw new Error(`Expected ${baselineMigration} as the first migration`);
+      const expectedLedger = expectedMigrationChecksums(migrations, names);
+      log("stage: consolidated-migration");
+      await migrate(temp, url, child, "consolidated migration", spawn);
       const applied = await client.query(
         'SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY migration_name',
       );
-      assertMigrationLedger(applied.rows, expectedBaseline);
-      log("stage: seed-legacy-transaction");
-      const legacyId = await seedLegacy(client);
-      log("stage: migrations-9-14");
-      const verifyCorrectedAuditConstraint =
-        await verifyAuditConstraintForwardCorrection(client, legacyId);
-      await migrate(
-        environment.fullDirectory,
-        url,
-        environment,
-        "Evidence and audit-guard migrations",
-        spawn,
-      );
-      const after = await client.query(
-        'SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY migration_name',
-      );
-      const evidenceName = "20261008060000_add_evidence_persistence";
-      assertMigrationLedger(after.rows, [
-        ...expectedBaseline,
-        ...expectedMigrationChecksums(migrations, [
-          evidenceName,
-          "20261011000000_add_evidence_anchor_reservations",
-          "20261011010000_add_evidence_prepared_transactions",
-          "20261011020000_add_evidence_anchor_observations",
-          "20261013000000_correct_model_inference_snapshot_guard",
-          "20261025170000_closed_access_provisioning",
-        ]),
-      ]);
-      await verifyCorrectedAuditConstraint();
-      const legacy = await client.query(
-        'SELECT count(*)::int AS total FROM "EvidenceRecord" WHERE "decisionEventId" = $1',
-        [legacyId],
-      );
-      if (legacy.rows[0].total !== 0)
-        throw new Error("Migration unexpectedly backfilled legacy Evidence");
+      assertMigrationLedger(applied.rows, expectedLedger);
       const testEnv = {
         ...child,
         TEST_DATABASE_URL: url,
         APP10_TEST_NAMESPACE: nonce,
-        APP10_LEGACY_EVENT_ID: legacyId,
       };
       for (const [label, suite, expected] of [
-        ["SQL", suites[0], 10],
-        ["organization", suites[1], 35],
-        ["batch", suites[2], 7],
-        ["reservation", suites[3], 6],
-        ["transaction", suites[4], 4],
-        ["reconciliation", suites[5], 2],
-        ["CLI authorization", suites[6], 4],
-        ["evidence read", suites[7], 7],
+        ["organization", suites[0], 26],
       ]) {
         const output = command(
           "pnpm",
@@ -579,36 +313,6 @@ export async function runIntegrationGate({
             `${label} suite did not pass all ${expected} expected cases`,
           );
         log(`stage: ${label} ${expected} passed`);
-      }
-      if (ownedAnvil !== null) {
-        const output = command(
-          "pnpm",
-          [
-            "exec",
-            "vitest",
-            "run",
-            "test/evidence-anchor-anvil.integration.test.ts",
-            "--testTimeout",
-            "60000",
-            "--hookTimeout",
-            "120000",
-          ],
-          {
-            env: {
-              ...testEnv,
-              APP11_OWN_ANVIL_PID: String(ownedAnvil.pid),
-              APP11_OWN_ANVIL_PORT: String(ownedAnvil.port),
-            },
-            timeout: 180_000,
-            stage: "owned Anvil smoke",
-          },
-          spawn,
-        );
-        if (!/Tests\s+1 passed \(1\)/.test(output))
-          throw new Error(
-            "Owned Anvil smoke did not pass its one expected case",
-          );
-        log("stage: owned Anvil smoke 1 passed");
       }
     } finally {
       await client.end();

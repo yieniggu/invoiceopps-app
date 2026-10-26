@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { once } from "node:events";
 import { createServer, type ProxyOptions, type ViteDevServer } from "vite";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import config from "./vite.config";
 
 const route = "/platform/organizations";
+const expectedTarget = `http://127.0.0.1:${process.env.PORT || "4380"}`;
 function discoveryRule(): [string, ProxyOptions] {
   const rules = Object.entries(config.server?.proxy ?? {});
   const match = rules.find(([key]) =>
@@ -34,7 +35,7 @@ describe("CR-002 exact discovery transport", () => {
       "/business-policies",
     ])
       expect(pattern.test(path)).toBe(false);
-    expect(options.target).toBe("http://localhost:3000");
+    expect(options.target).toBe(expectedTarget);
     expect(options.changeOrigin).toBe(false);
     expect(options.xfwd).toBe(true);
     expect(options.rewrite).toBeUndefined();
@@ -299,7 +300,7 @@ describe("APP12 S4 exact policy transport", () => {
     if (!rule || typeof rule[1] === "string")
       throw new Error("Expected explicit policy rule");
     expect(rule[1]).toMatchObject({
-      target: "http://localhost:3000",
+      target: expectedTarget,
       changeOrigin: false,
       xfwd: true,
     });
@@ -342,5 +343,46 @@ describe("APP12 S4 exact policy transport", () => {
       "/administration",
     ])
       expect(new RegExp(rule[0]).test(path)).toBe(false);
+  });
+});
+
+describe("Vite proxy keeps the browser Host for the cookie Origin check", () => {
+  it("never rewrites Host on any backend rule", () => {
+    const proxy = config.server?.proxy ?? {};
+    const rules = Object.entries(proxy);
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [key, rule] of rules) {
+      // The string shorthand implies changeOrigin: true in Vite.
+      expect(typeof rule, key).not.toBe("string");
+      if (typeof rule !== "string") expect(rule.changeOrigin, key).toBe(false);
+    }
+  });
+});
+
+describe("backend proxy target follows PORT", () => {
+  async function targetWith(port: string | undefined) {
+    vi.resetModules();
+    if (port === undefined) delete process.env.PORT;
+    else process.env.PORT = port;
+    try {
+      const fresh = (await import("./vite.config")).default;
+      const proxy = fresh.server?.proxy ?? {};
+      const rule = proxy["/auth"];
+      return typeof rule === "string" ? rule : rule?.target;
+    } finally {
+      vi.resetModules();
+    }
+  }
+
+  it("defaults to 4380 when PORT is unset or empty and honors PORT otherwise", async () => {
+    const original = process.env.PORT;
+    try {
+      expect(await targetWith(undefined)).toBe("http://127.0.0.1:4380");
+      expect(await targetWith("4999")).toBe("http://127.0.0.1:4999");
+      expect(await targetWith("")).toBe("http://127.0.0.1:4380");
+    } finally {
+      if (original === undefined) delete process.env.PORT;
+      else process.env.PORT = original;
+    }
   });
 });

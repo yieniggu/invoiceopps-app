@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Profile } from "../profile/ProfileScreen";
 import type { PlatformOrganization } from "../organizations/OrganizationsScreen";
 
-export type MembershipRole = "ADMIN" | "STUDENT";
+export type MembershipRole = "ADMIN" | "USER";
 export type MembershipMethod = "POST" | "PATCH" | "DELETE";
 export type AdministrationIntent = {
   organizationId: string;
@@ -49,7 +49,7 @@ export function useAdministrationOperations() {
   const [draft, setDraft] = useState({
     organizationId: "",
     userId: "",
-    role: "STUDENT" as MembershipRole,
+    role: "USER" as MembershipRole,
     method: "POST" as MembershipMethod,
   });
   useEffect(() => {
@@ -67,7 +67,7 @@ export function useAdministrationOperations() {
     setDraft({
       organizationId: "",
       userId: "",
-      role: "STUDENT",
+      role: "USER",
       method: "POST",
     });
     notify();
@@ -106,7 +106,7 @@ export function useAdministrationOperations() {
     if (
       !uuid.test(intent.organizationId) ||
       !uuid.test(intent.userId) ||
-      !["ADMIN", "STUDENT"].includes(intent.role) ||
+      !["ADMIN", "USER"].includes(intent.role) ||
       !["POST", "PATCH", "DELETE"].includes(intent.method)
     )
       return;

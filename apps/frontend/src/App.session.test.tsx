@@ -9,10 +9,6 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-vi.mock("./features/resources/MlflowResources", () => ({
-  MlflowResources: () => null,
-}));
-
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -32,7 +28,7 @@ function profile(id: string, admin = false) {
   return {
     id,
     name: `Person ${id}`,
-    rut: "123456785",
+    rut: "12345678-5",
     email: `${id}@example.test`,
     username: id,
     isPlatformAdministrator: admin,
@@ -97,7 +93,6 @@ function http(admin = false) {
       if (path === "/groups") return groups();
       if (path === "/platform/organizations") return discovery();
       if (path.startsWith("/organizations/")) return mutation();
-      if (path.startsWith("/resources?")) return json({ resources: [] });
       if (path.startsWith("/invoices?"))
         return json({ invoices: [], nextCursor: null });
       throw new Error(`Unexpected request: ${path}`);
@@ -112,7 +107,7 @@ async function start() {
   return view;
 }
 async function signOut() {
-  fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+  fireEvent.click(screen.getByRole("button", { name: "Salir" }));
   await screen.findByRole("button", { name: "Iniciar sesión" });
 }
 async function signInB() {
@@ -178,16 +173,14 @@ describe("CR007 App-owned protected reads", () => {
         await waitFor(() =>
           expect(read).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2),
         );
-        expect(
-          screen.getByRole("button", { name: "Cerrar sesión" }),
-        ).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Salir" })).toBeTruthy();
         const groupReads = api.groups.mock.calls.length;
         await act(async () => pending.resolve(json({}, 401)));
         expect(
           await screen.findByRole("button", { name: "Iniciar sesión" }),
         ).toBeTruthy();
         expect(screen.queryByRole("navigation")).toBeNull();
-        expect(screen.queryByLabelText("Contexto de trabajo")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Salir" })).toBeNull();
         expect(api.groups).toHaveBeenCalledTimes(groupReads);
         expect(api.logout).not.toHaveBeenCalled();
       });
@@ -281,9 +274,7 @@ describe("CR007 App-owned protected reads", () => {
             ? "No fue posible cargar las organizaciones."
             : "No fue posible cargar los grupos.",
         );
-        expect(
-          screen.getByRole("button", { name: "Cerrar sesión" }),
-        ).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Salir" })).toBeTruthy();
         fireEvent.click(retry);
         await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
         await screen.findByText(
@@ -321,13 +312,13 @@ describe("CR-001 mounted session isolation", () => {
   });
 
   it.each([200, 401, 500, "network"] as const)(
-    "preserves B and its resource/invoice context after late PATCH A %s",
+    "preserves B and its invoice context after late PATCH A %s",
     async (status) => {
       const api = http();
       const pending = deferred();
       api.patch.mockReturnValueOnce(pending.promise);
       await start();
-      navigate("Recursos");
+      navigate("Facturas");
       fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
         target: { value: "org-A:group:group-A" },
       });
@@ -348,9 +339,8 @@ describe("CR-001 mounted session isolation", () => {
         else pending.resolve(json({ profile: profile("A") }, status));
       });
       expectB();
-      navigate("Recursos");
-      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
       navigate("Facturas");
+      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls.some(([path]) =>
@@ -360,16 +350,16 @@ describe("CR-001 mounted session isolation", () => {
       );
       const protectedPaths = api.fetchMock.mock.calls
         .slice(boundary)
-        .filter(([path]) => /^\/(resources|invoices)\?/.test(path.toString()))
+        .filter(([path]) => /^\/invoices\?/.test(path.toString()))
         .map(([path]) => new URL(path.toString(), "http://test.invalid"));
       expect(
         protectedPaths.some((url) => url.searchParams.get("ownerId") === "B"),
       ).toBe(true);
       expect(new Set(protectedPaths.map((url) => url.pathname))).toEqual(
-        new Set(["/resources", "/invoices"]),
+        new Set(["/invoices"]),
       );
       for (const [path] of api.fetchMock.mock.calls.slice(boundary)) {
-        if (/^\/(resources|invoices)\?/.test(path.toString())) {
+        if (/^\/invoices\?/.test(path.toString())) {
           const url = new URL(path.toString(), "http://test.invalid");
           expect(url.searchParams.get("ownerId")).toBe("B");
           expect(url.searchParams.get("organizationId")).toBe("org-B");
@@ -423,7 +413,7 @@ describe("CR-001 mounted session isolation", () => {
       navigate("Mis grupos");
       expect(screen.getByText("Group B")).toBeTruthy();
       expect(screen.queryByText("Group A")).toBeNull();
-      navigate("Recursos");
+      navigate("Facturas");
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
       expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
     },
@@ -505,7 +495,7 @@ describe("CR-001 mounted session isolation", () => {
     api.logout.mockReturnValueOnce(logout.promise);
     await start();
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await act(async () =>
       pending.resolve(
         json({ profile: { ...profile("A"), name: "Stale update" } }),

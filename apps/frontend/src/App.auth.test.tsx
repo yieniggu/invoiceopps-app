@@ -10,12 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-// Keep the external resource feature isolated, as in the existing App suite.
-vi.mock("./features/resources/MlflowResources", () => ({
-  MlflowResources: () => null,
-}));
-
-const user = { id: "user-1", name: "Ada Lovelace", rut: "123456785" };
+const user = { id: "user-1", name: "Ada Lovelace", rut: "12345678-5" };
 const password = "test-password-123";
 const loginName = /iniciar sesión|ingresar/i;
 const signupName = /crear cuenta|registrar(?:se|me)?/i;
@@ -32,7 +27,7 @@ const profile = {
         name: "AI Academy",
         slug: "ai-academy",
       },
-      role: "STUDENT",
+      role: "USER",
     },
   ],
 };
@@ -76,9 +71,6 @@ function mockAuthHttp() {
       if (url === "/groups") {
         return jsonResponse({ groups: [] });
       }
-      if (url.startsWith("/resources?")) {
-        return jsonResponse({ resources: [] });
-      }
       throw new Error(
         `Unexpected fetch request: ${init?.method ?? "GET"} ${url}`,
       );
@@ -120,7 +112,7 @@ function expectNoProtectedResourceRequests(
   expect(
     fetchMock.mock.calls.some(([input]) => {
       const url = input instanceof Request ? input.url : input.toString();
-      return /^\/(?:groups|resources|invoices|mlflow\/resources|platform\/organizations|organizations)(?:[/?]|$)/.test(
+      return /^\/(?:groups|invoices|platform\/organizations|organizations)(?:[/?]|$)/.test(
         url,
       );
     }),
@@ -166,10 +158,8 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
       expect(await screen.findByText(profile.name)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Organizaciones" }));
       expect(await screen.findByText("AI Academy")).toBeTruthy();
-      expect(screen.getByText(/estudiante/i)).toBeTruthy();
-      expect(
-        screen.getByRole("button", { name: /cerrar sesión/i }),
-      ).toBeTruthy();
+      expect(screen.getByText(/usuario/i)).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^salir$/i })).toBeTruthy();
       expectJsonPost(fetchMock, "/auth/login", { rut: user.rut, password });
       expect(fetchMock).toHaveBeenCalledWith("/profile", {
         credentials: "same-origin",
@@ -194,7 +184,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     expect(
       fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
     ).toBe(false);
-    expect(screen.queryByRole("button", { name: /cerrar sesión/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^salir$/i })).toBeNull();
     expect(screen.queryByText(profile.name)).toBeNull();
   });
 

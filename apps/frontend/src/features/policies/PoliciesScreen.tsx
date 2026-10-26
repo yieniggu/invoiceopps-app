@@ -297,8 +297,8 @@ function PolicyContext({
         80. Usa punto decimal; la coma no se admite.
       </p>
       <p>
-        Consulta una versión aquí y escríbela en Facturas → Evaluación ML dentro
-        del mismo contexto. No se selecciona ni aplica automáticamente.
+        Consulta una versión aquí. No se selecciona ni aplica automáticamente a
+        las facturas.
       </p>
       {message ? <p role="status">{message}</p> : null}
       {error ? <p role="alert">{error}</p> : null}

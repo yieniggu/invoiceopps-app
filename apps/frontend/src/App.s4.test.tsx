@@ -20,11 +20,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const policy = { version: "risk/v1 ?#é", manualReviewThreshold: 0.8 };
-function http(role = "STUDENT", platform = false) {
+function http(role = "USER", platform = false) {
   const profile = {
     id: "user",
     name: "Persona",
-    rut: "123456785",
+    rut: "12345678-5",
     email: null,
     username: null,
     isPlatformAdministrator: platform,
@@ -86,7 +86,7 @@ async function start(dashboard = false) {
   render(<App />);
   fireEvent.click(
     await screen.findByRole("button", {
-      name: dashboard ? "Abrir políticas" : /^Políticas$/,
+      name: dashboard ? "Ir a políticas" : /^Políticas$/,
     }),
   );
 }
@@ -283,7 +283,7 @@ describe("APP12 S4 session-owned policy writes", () => {
     await editThreshold("1");
     submitEdit();
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
-    navigate("Cerrar sesión");
+    navigate("Salir");
     await screen.findByText(
       "No fue posible cerrar la sesión. Intenta nuevamente.",
     );
@@ -292,9 +292,10 @@ describe("APP12 S4 session-owned policy writes", () => {
       await act(async () => submitEdit());
       expect(api.logout).toHaveBeenCalledTimes(1);
       expect(api.write).toHaveBeenCalledTimes(1);
-      expect(
-        screen.getByRole("button", { name: "Cerrar sesión" }),
-      ).toHaveProperty("disabled", false);
+      expect(screen.getByRole("button", { name: "Salir" })).toHaveProperty(
+        "disabled",
+        false,
+      );
       expect(
         screen.getByRole("button", { name: "Guardando política..." }),
       ).toHaveProperty("disabled", true);
@@ -326,7 +327,7 @@ describe("APP12 S4 session-owned policy writes", () => {
       await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
       if (outcome === "body")
         await waitFor(() => expect(parse).toHaveBeenCalled());
-      navigate("Cerrar sesión");
+      navigate("Salir");
       await screen.findByRole("button", { name: "Iniciar sesión" });
       fireEvent.change(screen.getByLabelText("RUT"), {
         target: { value: "123456785" },
@@ -641,7 +642,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
   it.each([false, true])(
     "keeps group member read-only despite platform flag %s",
     async (platform) => {
-      http("STUDENT", platform);
+      http("USER", platform);
       await start();
       await loaded();
       group();
@@ -657,7 +658,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     await loaded();
     group();
     await loaded();
-    api.profile.memberships[0].role = "STUDENT";
+    api.profile.memberships[0].role = "USER";
     fireEvent.click(
       screen.getByRole("button", { name: "Actualizar políticas" }),
     );
@@ -705,7 +706,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     group();
     await loaded();
     draft();
-    api.profile.memberships[0].role = "STUDENT";
+    api.profile.memberships[0].role = "USER";
     submit();
     await screen.findByRole("alert");
     expect(screen.queryByRole("form")).toBeNull();
@@ -789,7 +790,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     const api = http();
     api.profile.memberships.push({
       organization: { id: "org-B", name: "Academia B", slug: "b" },
-      role: "STUDENT",
+      role: "USER",
     });
     await start();
     await loaded();

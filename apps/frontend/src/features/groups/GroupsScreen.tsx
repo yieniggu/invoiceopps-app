@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { fromApiRut } from "../../lib/rut";
 import {
   groupMemberTarget,
   type GroupIntent,
@@ -120,7 +121,7 @@ function GroupCard({
             return (
               <li key={member.id}>
                 <span>
-                  {member.name} ({member.rut})
+                  {member.name} ({fromApiRut(member.rut)})
                 </span>
                 {isAdmin ? (
                   <button
@@ -317,7 +318,7 @@ export function GroupsScreen({
         <h2 id="groups-title">Grupos de mis membresías</h2>
         <p>
           Los grupos a los que perteneces permiten compartir el contexto de
-          Recursos y Facturas.
+          Facturas.
         </p>
         {state.kind === "idle" || state.kind === "loading" ? (
           <p role="status">Cargando grupos...</p>

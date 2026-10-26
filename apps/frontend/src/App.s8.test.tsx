@@ -13,28 +13,21 @@ import type { InvoiceDetail } from "./features/invoices/InvoiceWorkspace";
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const organization = { id: id(1), name: "Academia S8", slug: "academy-s8" };
-const recordId = id(4);
-const batchId = id(5);
-const hash = "0x" + "ab".repeat(32);
 const createdAt = "2026-10-21T00:00:00Z";
 const invoice: InvoiceDetail = {
-  invoiceId: "S8-INVOICE",
-  vendorName: "Proveedor S8",
-  invoiceAmountCents: 10000,
-  hasPurchaseOrder: true,
-  threeWayMatch: true,
-  status: "PENDING",
-  policyProbability: null,
-  policyProbabilitySource: null,
+  id: "S8-INVOICE",
+  businessId: "S8-INVOICE",
+  organizationId: "organization-1",
+  groupId: "group-1",
+  currency: "CLP",
+  issuedOn: "2026-10-25",
+  dueOn: "2026-11-25",
+  processingStatus: "NOT_REQUESTED",
+  createdByUserId: "user-1",
+  supplierName: "Proveedor S8",
+  amountPesos: 10000,
+  businessStatus: "PENDING",
   createdAt,
-  updatedAt: createdAt,
-  riskContext: {
-    vendorTenureDays: 365,
-    previousIncidents12m: 0,
-    bankAccountRecentlyChanged: false,
-    amountVsVendorMedian: 1,
-    countryRisk: "low",
-  },
 };
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status });
@@ -44,11 +37,11 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
   const profile: Profile = {
     id: id(2),
     name: "Persona S8",
-    rut: "123456785",
+    rut: "12345678-5",
     email: null,
     username: null,
     isPlatformAdministrator: platform,
-    memberships: member ? [{ organization, role: "STUDENT" }] : [],
+    memberships: member ? [{ organization, role: "USER" }] : [],
   };
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
@@ -98,93 +91,7 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
       if (url.pathname === "/invoices" && method === "GET")
         return json({ invoices: [invoice], nextCursor: null });
       if (url.pathname === "/invoices/S8-INVOICE" && method === "GET")
-        return json({ invoice, auditEvents: [] });
-      if (url.pathname === "/invoices/S8-INVOICE/decision" && method === "POST")
-        return json({
-          invoice: { ...invoice, status: "MANUAL_REVIEW" },
-          auditEvent: {
-            decision: "MANUAL_REVIEW",
-            ruleVersion: "invoice-rules-v1",
-            mode: "PROBABILITY_POLICY",
-            policyVersion: "s8-policy",
-            manualReviewThreshold: 0.8,
-            policyProbability: null,
-            policyProbabilitySource: "MODEL_API_FALLBACK",
-            modelId: null,
-            modelVersion: null,
-            modelRunId: null,
-            recommendation: "MANUAL_REVIEW",
-            actor: { name: profile.name, rut: profile.rut },
-            correlationId: id(6),
-            createdAt,
-          },
-        });
-      if (url.pathname === "/resources") return json({ resources: [] });
-      if (url.pathname === "/mlflow/resources")
-        return json({
-          experiment: { id: "experiment-s8", name: "group/s8/invoice-risk" },
-          runs: [{ runId: "run-s8" }],
-          registeredModel: { name: "group-s8-invoice-review" },
-          versions: [{ version: "01", runId: "run-s8" }],
-          truncated: false,
-          fetchedAt: createdAt,
-        });
-      if (url.pathname === "/evidence-records")
-        return json({
-          items: [
-            {
-              id: recordId,
-              decisionEventId: id(6),
-              invoiceRecordId: id(7),
-              createdAt,
-              evidenceVersion: "invoice-evidence-v2",
-              canonicalVersion: "invoice-evidence-canonical-v2",
-              leafHash: hash,
-              integrity: "not-checked",
-            },
-          ],
-          nextCursor: null,
-        });
-      if (url.pathname === "/evidence-batches")
-        return json({
-          items: [
-            {
-              id: batchId,
-              createdAt,
-              rootHash: hash,
-              leafCount: 1,
-              policyVersion: "invoice-merkle-v2",
-              integrity: "not-checked",
-            },
-          ],
-          nextCursor: null,
-        });
-      if (url.pathname === `/evidence-batches/${batchId}`)
-        return json({
-          batch: {
-            id: batchId,
-            createdAt,
-            rootHash: hash,
-            leafCount: 1,
-            policyVersion: "invoice-merkle-v2",
-            integrity: "server-verified",
-            items: [{ recordId, leafIndex: 0 }],
-          },
-        });
-      if (url.pathname === `/evidence-batches/${batchId}/proofs/${recordId}`)
-        return json({
-          proof: {
-            batchId,
-            recordId,
-            leafHash: hash,
-            rootHash: hash,
-            leafIndex: 0,
-            leafCount: 1,
-            policyVersion: "invoice-merkle-v2",
-            proof: [],
-            integrity: "server-verified",
-          },
-        });
+        return json({ invoice });
       throw new Error(`Unexpected S8 boundary: ${method} ${url.pathname}`);
     });
   return fetchMock;
@@ -234,15 +141,13 @@ describe("APP12 S8 global acceptance characterization", () => {
     ["Mis grupos", "Grupos de mis membresías"],
     ["Facturas", "Facturas"],
     ["Políticas", "Políticas de negocio versionadas"],
-    ["Recursos", "Recursos de MLflow"],
-    ["Evidencia y lotes", "Consulta de evidencia"],
     ["Administración", "Membresías organizacionales"],
   ])(
     "mounts the real %s surface with Spanish landmarks and valid accessible references",
     async (destination, heading) => {
       const requests = http();
       render(<App />);
-      await screen.findByText("Bienvenido, Persona S8");
+      await screen.findByText(/Bienvenido, Persona S8/);
       expect(
         requests.mock.calls.every(([input]) =>
           ["/profile", "/groups", "/platform/organizations"].includes(
@@ -252,12 +157,23 @@ describe("APP12 S8 global acceptance characterization", () => {
       ).toBe(true);
       await navigate(destination);
       await screen.findByRole("heading", {
-        level: destination === "Recursos" ? 3 : 2,
+        level: 2,
         name: heading,
       });
-      expect(
-        screen.getByLabelText("Contexto de trabajo").textContent,
-      ).toContain("Academia S8 · Trabajo individual");
+      if (destination === "Panel principal") {
+        const card = screen.getByRole("region", {
+          name: "Tu espacio de trabajo",
+        });
+        expect(card.textContent).toContain("Academia S8");
+        expect(card.textContent).toContain("Trabajo individual");
+      } else {
+        // Context details belong to the dashboard, not to a global banner.
+        expect(
+          screen.queryByRole("region", { name: "Tu espacio de trabajo" }),
+        ).toBeNull();
+        expect(screen.queryByText("Contexto de trabajo")).toBeNull();
+        expect(screen.queryByLabelText("Contexto de trabajo")).toBeNull();
+      }
       semantics();
       if (destination === "Mi perfil") {
         fireEvent.change(screen.getByLabelText("Nombre de usuario"), {
@@ -271,12 +187,6 @@ describe("APP12 S8 global acceptance characterization", () => {
           requests.mock.calls.find(([, init]) => init?.method === "PATCH")?.[1]
             ?.body,
         ).toBe(JSON.stringify({ email: "", username: "persona-s8" }));
-      }
-      if (destination === "Recursos") {
-        await screen.findByText("Versión 01");
-        expect(
-          screen.getByText(/La API actual no expone aliases/),
-        ).toBeTruthy();
       }
     },
   );
@@ -292,7 +202,7 @@ describe("APP12 S8 global acceptance characterization", () => {
     });
     expect(screen.queryByRole("button", { name: "Crear cuenta" })).toBeNull();
     fireEvent.submit(screen.getByRole("form", { name: "Iniciar sesión" }));
-    await screen.findByText("Bienvenido, Persona S8");
+    await screen.findByText(/Bienvenido, Persona S8/);
     expect(
       requests.mock.calls.filter(([input]) => input === "/profile"),
     ).toHaveLength(2);
@@ -307,7 +217,7 @@ describe("APP12 S8 global acceptance characterization", () => {
     semantics();
   });
 
-  it("carries a selected group from policies to detail/evaluation and preserves the server fallback audit without client inference", async () => {
+  it("carries a selected group from policies to the invoice detail", async () => {
     const requests = http();
     render(<App />);
     await navigate("Mis grupos");
@@ -326,42 +236,12 @@ describe("APP12 S8 global acceptance characterization", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Ver S8-INVOICE" }),
     );
-    await screen.findByRole("heading", { name: "Contexto de riesgo" });
+    await screen.findByRole("heading", { name: "S8-INVOICE" });
     semantics();
-    fireEvent.click(screen.getByRole("button", { name: "Evaluación ML" }));
-    fireEvent.change(screen.getByLabelText("Versión de política"), {
-      target: { value: "s8-policy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Aplicar política" }));
-    const result = await screen.findByRole("region", {
-      name: "Resultado de evaluación",
-    });
+    await navigate("Panel principal");
     expect(
-      within(result).getByText(/No se recibió una predicción utilizable/),
-    ).toBeTruthy();
-    expect(within(result).getByText("Sin datos de modelo")).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: "Aplicar política" }),
-    ).toBeNull();
-    const write = requests.mock.calls.find(
-      ([, init]) => init?.method === "POST",
-    );
-    expect(write?.[1]?.body).toBe(
-      JSON.stringify({
-        mode: "PROBABILITY_POLICY",
-        policyVersion: "s8-policy",
-      }),
-    );
-    expect(String(write?.[0])).toBe(
-      `/invoices/S8-INVOICE/decision?organizationId=${organization.id}&ownerType=group&ownerId=${id(3)}`,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Detalle de factura" }));
-    expect(
-      screen.getByRole("region", { name: "Auditoría de facturas" }).textContent,
-    ).toContain(id(6));
-    expect(screen.getByLabelText("Contexto de trabajo").textContent).toContain(
-      "Grupo: Equipo S8",
-    );
+      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
+    ).toContain("Grupo: Equipo S8");
     expect(
       requests.mock.calls.every(
         ([input, init]) =>
@@ -371,68 +251,23 @@ describe("APP12 S8 global acceptance characterization", () => {
     semantics();
   });
 
-  it("opens a native proof only on demand after navigating with group ownership and never offers an anchor write", async () => {
-    const requests = http();
-    render(<App />);
-    await navigate("Mis grupos");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Trabajar con Equipo S8" }),
-    );
-    await navigate("Evidencia y lotes");
-    await screen.findByRole("button", { name: `Ver registro ${recordId}` });
-    fireEvent.click(screen.getByRole("button", { name: "Lotes" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: `Ver lote ${batchId}` }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: `Consultar prueba de ${recordId}`,
-      }),
-    );
-    const proof = await screen.findByRole("region", { name: "Prueba Merkle" });
-    await within(proof).findByText("Lote de una hoja: no requiere hermanos.");
-    expect(
-      within(proof).getByText(
-        /no realizó una verificación criptográfica independiente/,
-      ),
-    ).toBeTruthy();
-    expect(
-      within(proof).getByText(/un recibo no equivale a finalidad/),
-    ).toBeTruthy();
-    const reads = requests.mock.calls.filter(([input]) =>
-      String(input).startsWith("/evidence-"),
-    );
-    expect(reads).toHaveLength(4);
-    for (const [input, init] of reads) {
-      const query = new URL(String(input), "http://test.invalid").searchParams;
-      expect(query.get("ownerType")).toBe("group");
-      expect(query.get("ownerId")).toBe(id(3));
-      expect(init?.method ?? "GET").toBe("GET");
-    }
-    semantics();
-  });
-
   it.each([false, true])(
     "does not turn platform discovery (%s) into domain access or regular student administration",
     async (platform) => {
       const requests = http({ platform, member: false });
       render(<App />);
-      await screen.findByText("Bienvenido, Persona S8");
+      await screen.findByText(/Bienvenido, Persona S8/);
       expect(
-        screen.getByLabelText("Contexto de trabajo").textContent,
-      ).toContain("Contexto no disponible");
-      for (const destination of [
-        "Facturas",
-        "Políticas",
-        "Recursos",
-        "Evidencia y lotes",
-      ]) {
+        screen.getByRole("region", { name: "Tu espacio de trabajo" })
+          .textContent,
+      ).toContain("Elige una organización o grupo para empezar.");
+      for (const destination of ["Facturas", "Políticas"]) {
         await navigate(destination);
         expect(screen.queryByLabelText("Propietario")).toBeNull();
       }
       expect(
         requests.mock.calls.some(([input]) =>
-          /invoices|resources|business-policies|evidence-/.test(String(input)),
+          /invoices|business-policies/.test(String(input)),
         ),
       ).toBe(false);
       expect(

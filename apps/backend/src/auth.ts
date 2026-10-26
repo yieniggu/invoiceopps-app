@@ -6,7 +6,7 @@ import {
   PlatformAdministrativeAuditEventType,
   type PrismaClient,
 } from "./generated/prisma/client.js";
-import { normalizeRut } from "./identity.js";
+import { formatRut, parseRut } from "./rut.js";
 
 const scryptAsync = promisify(scrypt);
 const PASSWORD_KEY_LENGTH = 64;
@@ -66,7 +66,7 @@ function parseLogin(input: { rut: unknown; password: unknown }) {
   }
 
   try {
-    return { password: input.password, rut: normalizeRut(input.rut) };
+    return { password: input.password, rut: parseRut(input.rut) };
   } catch {
     throw new AuthError(401, "Invalid credentials");
   }
@@ -156,6 +156,7 @@ export function createAuthService(
 
     return {
       ...session.user,
+      rut: formatRut(session.user.rut),
       isPlatformAdministrator: session.user.platformAdministrator !== null,
     };
   }
@@ -215,7 +216,7 @@ export function createAuthService(
 
       return {
         sessionToken,
-        user: { id: user.id, name: user.name, rut: user.rut },
+        user: { id: user.id, name: user.name, rut: formatRut(user.rut) },
       };
     },
     logout,

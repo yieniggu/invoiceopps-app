@@ -6,7 +6,7 @@ import {
 } from "./generated/prisma/client.js";
 import { AuthError } from "./auth.js";
 import { hashPassword } from "./auth.js";
-import { normalizeRut } from "./identity.js";
+import { formatRut, parseRut } from "./rut.js";
 import { randomBytes } from "node:crypto";
 import type { GroupResponse } from "./groups.js";
 
@@ -244,7 +244,10 @@ export function createPlatformAdministratorService(
             name: group.name,
             description: group.description,
             organization: { id: organization.id, name: organization.name },
-            members: group.memberships.map(({ user }) => user),
+            members: group.memberships.map(({ user }) => ({
+              ...user,
+              rut: formatRut(user.rut),
+            })),
           })),
         }));
       });
@@ -277,7 +280,7 @@ export function createPlatformAdministratorService(
       const passwordHash = await hashPassword(temporaryPassword);
       let rut: string;
       try {
-        rut = normalizeRut(input.rut);
+        rut = parseRut(input.rut);
       } catch {
         throw new AuthError(400, "Invalid user provision");
       }
@@ -319,7 +322,7 @@ export function createPlatformAdministratorService(
             user: {
               userId: user.id,
               name: user.name,
-              rut: user.rut,
+              rut: formatRut(user.rut),
               organizationId: organization.id,
               role: input.role,
             },

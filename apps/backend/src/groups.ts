@@ -3,6 +3,7 @@ import {
   type Prisma,
   type PrismaClient,
 } from "./generated/prisma/client.js";
+import { formatRut } from "./rut.js";
 import { AuthError } from "./auth.js";
 
 export interface GroupService {
@@ -117,7 +118,10 @@ function toGroupResponse(group: {
     name: group.name,
     description: group.description,
     organization: group.organization,
-    members: group.memberships.map(({ user }) => user),
+    members: group.memberships.map(({ user }) => ({
+      ...user,
+      rut: formatRut(user.rut),
+    })),
   };
 }
 
