@@ -1,5 +1,11 @@
 # InvoiceOps App
 
+> **Bootstrap transversal:** consulte el
+> [runbook central de Stack](../invoiceops-stack/LOCAL_INFRASTRUCTURE_RUNBOOK.md)
+> antes de iniciar un entorno local limpio. Este README es propietario de App,
+> Prisma, Evidence y reconcile; sus recetas de componente no sustituyen la
+> validación integrada ni habilitan operaciones remotas (`NOT_VERIFIED`).
+
 ## Remediación FULLAPP12 — CR009, CR010 y CR011
 
 **CR009, CR010 y CR011: RESOLVED_LOCAL_VERIFIED (2026-10-22).** Cierre acotado de
@@ -108,7 +114,7 @@ PostgreSQL **17.11** con Prisma y las 13 migraciones existentes, en recursos pro
 aislados. Auth, autorización y servicios de dominio fueron nativos; solo Model API
 y el lector MLflow externos se sustituyeron. Nginx usó la configuración exacta del
 repositorio y los assets congelados. Hubo **65/65 observaciones de layout en dos
-tramos**, cubriendo doce grupos de superficies más signup, y un suplemento dirigido
+tramos**, cubriendo doce grupos de superficies de acceso y trabajo, y un suplemento dirigido
 **4/4 PASS**; no fue una única ejecución global sin fallos. Los tres fallos de
 assertions del arnés anterior se conservan junto con su explicación y prueba posterior.
 
@@ -127,9 +133,10 @@ lector de pantalla real ni compatibilidad funcional completa del backend V1.
 
 ### Recorrido de trabajo
 
-1. Usa **Crear cuenta** con nombre, RUT y contraseña de al menos 12 caracteres;
-   después **Iniciar sesión**. Registrar una cuenta no inicia sesión ni concede
-   una organización. La sesión usa una cookie; no copies tokens al navegador.
+1. Inicia sesión con las credenciales entregadas por un administrador global.
+   No existe registro público. Una cuenta provisionada recibe una contraseña
+   temporal y debe cambiarla antes de acceder a la aplicación. La sesión usa una
+   cookie; no copies tokens al navegador.
 2. En **Mi perfil**, consulta identidad y membresías y guarda correo electrónico
    o nombre de usuario. Nombre, RUT y roles no se editan allí.
 3. En **Organizaciones**, elige una membresía vigente; en **Mis grupos**, usa
@@ -156,12 +163,11 @@ lector de pantalla real ni compatibilidad funcional completa del backend V1.
    no es criptografía independiente del navegador ni acredita finalidad.
 9. **Administración** aparece solo para administradores de organización o
    plataforma. El primero gestiona grupos desde Mis grupos; solo plataforma
-   gestiona membresías organizacionales con UUID de usuario existente y
-   confirmación explícita. No hay directorio, búsqueda de usuarios, CRUD de
-   organizaciones/usuarios, bootstrap ni transferencia de administrador global.
+   crea organizaciones, provisiona usuarios con rol inicial y gestiona
+   membresías. La contraseña temporal se muestra una sola vez y no se registra.
    Descubrir una organización administrable no concede acceso a su trabajo.
 
-Son las doce superficies del ticket: acceso (login y signup como variantes),
+Son las doce superficies del ticket: acceso mediante login,
 perfil, organizaciones, grupos, panel, facturas, detalle, políticas, evaluación,
 recursos, evidencia/lotes y administración. No son doce destinos universales:
 detalle/evaluación se abren dentro de Facturas y Administración depende del rol.
@@ -702,14 +708,13 @@ datos.
 
 ### Autenticación
 
-El backend expone `POST /auth/signup`, `POST /auth/login` y `POST /auth/logout`. El modo se define
-con `AUTH_MODE=open` (valor por defecto) o `AUTH_MODE=allowlist`. En el modo
-restringido, un operador debe registrar el RUT normalizado y la organización en
-`AuthorizedUserOrganization` antes del registro; un RUT puede estar autorizado
-para varias organizaciones y recibirá una membership `STUDENT` en cada una.
+El backend expone `POST /auth/login`, `POST /auth/change-password` y
+`POST /auth/logout`. No existe registro público ni configuración `AUTH_MODE` o
+allowlist. El administrador global provisiona identidades y membresías mediante
+la administración autenticada; el script `local-demonstration` conserva su
+semilla interna de desarrollo sin habilitar registro público.
 
-`signup` recibe `name`, `rut` y `password`. `login` sólo recibe `rut` y
-`password`, responde con una cookie `httpOnly`, `SameSite=Lax` y `Secure` en
+`login` sólo recibe `rut` y `password`, responde con una cookie `httpOnly`, `SameSite=Lax` y `Secure` en
 producción, y nunca devuelve un token en JSON. Las sesiones se almacenan en
 PostgreSQL como hashes; los endpoints protegidos validan la sesión y
 autorización en el servidor.
