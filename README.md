@@ -127,14 +127,24 @@ arranque no ejecutan cambios de esquema automáticamente.
 
 ### Límite de intentos de login
 
-`POST /auth/login` limita 5 intentos por IP cada 15 minutos (en memoria; se
-reinicia con el backend). Para desarrollo se puede ajustar con
+`POST /api/v1/auth/login` limita los intentos **fallidos** en memoria (se
+reinicia con el backend) con dos claves: la IP del cliente (5 por ventana fija
+de 15 minutos) y el RUT normalizado (5 intentos y luego un bloqueo progresivo de
+1 minuto que se duplica hasta la ventana; un login correcto lo reinicia). Basta
+que una de las dos claves esté bloqueada para recibir `429`. Cada intento se
+reserva antes de verificar la contraseña. Para desarrollo se puede ajustar con
 `AUTH_RATE_LIMIT_DISABLED`, `AUTH_RATE_LIMIT_MAX_ATTEMPTS` y
 `AUTH_RATE_LIMIT_WINDOW_MS`, por ejemplo `AUTH_RATE_LIMIT_DISABLED=true pnpm dev`.
-Desactivarlo está prohibido con `NODE_ENV=production`. Solo el valor literal
-`true` (sin distinguir mayúsculas) desactiva el límite; otros valores se ignoran.
+Desactivarlo está prohibido con `NODE_ENV=production`. `AUTH_RATE_LIMIT_DISABLED`
+acepta `true`, `false` o vacío (sin distinguir mayúsculas ni espacios); cualquier
+otro valor detiene el arranque con un error. `AUTH_TRUST_PROXY_HOPS` (entero no
+negativo; vacío o sin definir = no confiar en ningún proxy; un valor inválido
+detiene el arranque) indica cuántos proxies inversos confiables preceden al
+backend para que `request.ip` sea el cliente real y no el proxy.
 Las variables se aplican al proceso del backend (`pnpm dev`, ruta A); el overlay
-de Docker no las reenvía. Detalle en [`LOCAL_RUN.md`](LOCAL_RUN.md).
+de Docker no las reenvía; el `docker-compose.yml` base solo fija
+`AUTH_TRUST_PROXY_HOPS=1` (nginx es el único proxy) y publica el backend solo en
+loopback. Detalle en [`LOCAL_RUN.md`](LOCAL_RUN.md).
 
 ## URLs y checks
 
@@ -187,8 +197,12 @@ PostgreSQL cases.
 
 ### Autenticación
 
-El backend expone `POST /auth/login`, `POST /auth/change-password` y
-`POST /auth/logout`. No existe registro público ni configuración `AUTH_MODE` o
+Todas las rutas funcionales viven bajo `/api/v1` (`/health/*` y
+`/openapi.json` quedan en la raíz). El backend expone
+`POST /api/v1/auth/login`, `POST /api/v1/auth/change-password` y
+`POST /api/v1/auth/logout`. Los errores usan el sobre
+`{"error":{"code","message","fields?"}}`. `GET /openapi.json` publica el
+documento OpenAPI 3.1 generado desde los esquemas Zod. No existe registro público ni configuración `AUTH_MODE` o
 allowlist. El administrador global provisiona identidades y membresías mediante
 la administración autenticada; sin habilitar registro público.
 
@@ -201,29 +215,75 @@ autorización en el servidor.
 hash, responde `204` y borra la cookie con los mismos atributos. No devuelve
 tokens ni revoca otras sesiones activas del usuario.
 
-Solo `POST /auth/login` limita los intentos por dirección IP mediante memoria
-local (`logout` y `change-password` no tienen límite): admite cinco intentos por
-ventana de 15 minutos y responde `429` con un mensaje seguro al excederla. El límite es por proceso y
-no se comparte entre réplicas; para producción distribuida se requiere un
-limitador compartido. La aplicación no habilita `trust proxy`, por lo que detrás
-de un proxy inverso los clientes pueden compartir la IP del proxy hasta que la
-configuración de despliegue establezca una confianza de proxy correcta.
+`change-password` exige una contraseña nueva distinta de la actual (`400
+PASSWORD_REUSE`). En una sola transacción actualiza el hash, quita el cambio
+obligatorio, elimina todas las sesiones del usuario, crea una sesión nueva (cookie
+`Set-Cookie` rotada), revoca sus API tokens y registra auditoría. Login y cambio de
+contraseña se serializan por usuario con un bloqueo de fila (`SELECT … FOR
+UPDATE`), de modo que un login iniciado antes del cambio no deja sesión con la
+credencial anterior. Con `mustChangePassword` el perfil, el cambio de contraseña y
+el logout (y el `PATCH /api/v1/profile` heredado) son las únicas rutas
+permitidas; el resto responde `403 ONBOARDING_REQUIRED`. La sesión de un usuario
+con contraseña temporal caduca como máximo cuando caduca la temporal. Una petición
+con `Authorization` y cookie de sesión responde `400 AMBIGUOUS_AUTH`; `Authorization`
+sola responde `401` (los Bearer llegan con RP0-16). El perfil incluye `contexts`:
+grupos de organizaciones habilitadas con ambas membresías y sus capacidades.
+
+Solo `POST /api/v1/auth/login` limita los intentos mediante memoria local
+(`logout` y `change-password` no tienen límite). Política: cuenta únicamente
+credenciales **fallidas**, con dos claves (IP del cliente y RUT normalizado; ambas
+deben permitir). La clave de IP usa cinco fallos por ventana fija de 15 minutos;
+la del RUT bloquea de forma progresiva (al quinto fallo 1 minuto, luego 2, 4, 8…
+hasta la ventana) y se reinicia con un login correcto, de modo que un tercero
+no puede dejar fuera a una cuenta durante 15 minutos con una sola ráfaga. El
+intento se reserva de forma síncrona antes de verificar la contraseña (y se
+devuelve si el login es correcto o falla por un error del servidor), por lo que
+las peticiones paralelas no superan el máximo. Al excederlo responde `429` con un
+mensaje seguro. El límite es por proceso y no se comparte entre réplicas; para
+producción distribuida se requiere un limitador compartido. La memoria está
+acotada (10 000 claves): las claves inactivas se descartan primero y nunca una
+clave bloqueada salvo que todas lo estén.
+
+Por defecto la aplicación no confía en ningún proxy (`request.ip` es la dirección
+del socket, `X-Forwarded-For` se ignora). Detrás de un proxy inverso define
+`AUTH_TRUST_PROXY_HOPS` con el número exacto de proxies que controlas (nginx del
+frontend = `1`; el `docker-compose.yml` base ya lo fija); un valor mayor al real
+permite falsificar la IP y uno menor deja a todos los clientes con la IP del
+proxy. No lo definas si el backend es accesible sin pasar por el proxy.
+**Riesgo residual (Docker local):** el backend sigue publicado en
+`127.0.0.1:<puerto>` porque `/health/*` solo existe allí; un proceso local que
+llame directamente a ese puerto puede falsificar `X-Forwarded-For` y esquivar la
+clave de IP (la clave por RUT, con bloqueo progresivo, sigue aplicando). Acepta
+este riesgo solo en una máquina de desarrollo de confianza y no publiques ese
+puerto en otras interfaces.
+Los eventos de autenticación se registran como una línea JSON
+(`auth.login_failed`, `auth.rate_limited`, `auth.password_changed`,
+`http.unhandled_error`) con campos acotados: nunca RUT, contraseñas, cookies,
+tokens ni mensajes de error.
 
 Los intentos de login de RUT inexistente o de cuentas sin `passwordHash` realizan
 la misma verificación `scrypt` contra un hash ficticio válido y reciben la misma
-respuesta genérica `401` que una contraseña incorrecta.
+respuesta genérica `401` que una contraseña incorrecta. Un RUT con formato
+inválido se rechaza sin ejecutar `scrypt`, por lo que difiere el tiempo de
+respuesta (RV-085, riesgo aceptado; revisar si cambia el modelo de amenaza).
 
 La aplicación incluye consulta de facturas (listado y detalle) y policies de
 negocio versionadas.
 
 ### Perfil
 
-`GET /profile` resuelve el perfil de la sesión cookie actual y devuelve nombre,
-RUT, email, username y memberships con organización y rol. `PATCH /profile`
+`GET /api/v1/auth/profile` resuelve el perfil de la sesión cookie actual y devuelve nombre,
+RUT, email, username, `mustChangePassword` y memberships con organización y rol.
+`PATCH /api/v1/profile`
 acepta exclusivamente `email` y `username`; nombre, RUT, password, roles y
 memberships no son modificables desde este endpoint. La interfaz consulta el
 perfil al iniciar, muestra la carga, una sesión expirada o anónima, y permite
 actualizar los dos datos editables sin exponer ni persistir tokens.
+
+Un `PATCH /api/v1/profile` inválido responde `400 VALIDATION_ERROR` con el mapa
+`fields` (campo → mensaje) de forma intencional: es el único endpoint heredado que
+lo incluye; los demás endpoints heredados responden solo `code` y `message` hasta
+que su ticket los documente.
 
 ### Organization groups
 
@@ -232,9 +292,9 @@ multiple groups in the same organization, while the database prevents duplicate
 group-user pairs and enforces that every group member has an
 `OrganizationMembership` in that group organization.
 
-Authenticated users can call `GET /groups` to list only their groups and every
+Authenticated users can call `GET /api/v1/groups` to list only their groups and every
 group member in deterministic organization, group, and member order. Group
-management is scoped under `/organizations/:organizationId/groups`; only a
+management is scoped under `/api/v1/organizations/:organizationId/groups`; only a
 current `ADMIN` of that organization can create, update, or delete a group, or
 add and remove members. The server validates the current session and resource
 organization for every request, returning safe authorization responses for
@@ -245,21 +305,26 @@ Un administrador de plataforma puede administrar grupos de cualquier
 organización, incluso sin una membership local. Esta capacidad se aplica en el
 servidor y no depende de permisos entregados por el cliente.
 
-El primer administrador de plataforma se establece fuera de HTTP mediante el
-CLI local, con una confirmación explícita:
+El primer administrador de plataforma se crea fuera de HTTP con
+`pnpm recovery:bootstrap`: pide nombre, RUT y contraseña temporal (dos veces, sin
+eco, solo por terminal interactiva) y, en una transacción, crea el usuario con
+cambio obligatorio y la designación única. Repetirlo con el mismo RUT no cambia
+nada; con otro RUT se rechaza. `--existing-user` designa a un usuario que ya
+tiene credencial. Solo corre contra una `DATABASE_URL` local.
+
+El CLI de transferencia sigue disponible, con una confirmación explícita:
 
 ```bash
-pnpm --filter @invoiceops/backend platform-administrator bootstrap "<userId>" --confirm-bootstrap
+pnpm --filter @invoiceops/backend platform-administrator transfer "<userId>" --confirm-transfer
 ```
 
-El CLI también admite la transferencia explícita con `transfer "<userId>"
---confirm-transfer`. No expone una ruta HTTP de bootstrap ni incluye secretos o
-valores operacionales en sus argumentos.
+No expone una ruta HTTP de bootstrap ni incluye secretos o valores
+operacionales en sus argumentos.
 
 Cookie-authenticated mutations use an Origin same-origin check in central
 middleware. Requests carrying the session cookie must include an `Origin` that
 exactly matches the request origin; cross-origin requests receive `403` before
-the mutation handler. Vite and Nginx proxy `/groups` and `/organizations/` on
+the mutation handler. Vite and Nginx proxy `/api/` and `/openapi.json` on
 the same browser origin as the application.
 
 ### Policies de negocio versionadas
@@ -267,5 +332,5 @@ the same browser origin as the application.
 Las policies son owner-scoped por organización y contienen `version` y
 `manualReviewThreshold` entre 0 y 1. Las individuales sólo las administra su
 propietario; las grupales sólo un `ADMIN` de la organización. Se consultan,
-crean y actualizan mediante `GET`, `POST` y `PATCH /business-policies` en el
+crean y actualizan mediante `GET`, `POST` y `PATCH /api/v1/business-policies` en el
 mismo contexto `organizationId`, `ownerType` y `ownerId` de las facturas.

@@ -16,12 +16,10 @@ Hay dos rutas que comparten la misma base de datos:
 En ambas, PostgreSQL corre en Docker bajo el proyecto Compose `invoiceops-dev`,
 publicado solo en loopback.
 
-> Estado provisional: la app aún no tiene un comando para crear el primer
-> usuario con contraseña. El paso 4 usa el provisioner interno hasta que
-> RP0-03 entregue `pnpm recovery:bootstrap`. Desde RP0-01 el esquema es una
-> única migración consolidada en la base de desarrollo `invoiceops`;
-> una base creada con las migraciones históricas no es compatible y debe
-> recrearse con el reset del paso 3.
+> Desde RP0-01 el esquema es una única migración consolidada en la base de
+> desarrollo `invoiceops`; una base creada con las migraciones históricas no es
+> compatible y debe recrearse con el reset del paso 3. El primer administrador
+> se crea con `pnpm recovery:bootstrap` (paso 4).
 
 ## Requisitos
 
@@ -105,45 +103,27 @@ backend.
 
 ## 4. Primer usuario y administrador de plataforma
 
-Crea un usuario con contraseña. `read -s` evita que la contraseña quede en el
-historial o en la lista de procesos como argumento. El RUT debe ser válido
-(`11111111-1` lo es).
+Con `DATABASE_URL` cargada (paso 1) y la base recién reseteada:
 
-```zsh
-read -rs "NEW_PASSWORD?Contraseña del primer usuario: "; echo
-export NEW_PASSWORD
-USER_ID=$(pnpm --filter @invoiceops/backend exec tsx -e '
-(async () => {
-  const { createDatabase } = await import("./src/database.ts");
-  const { provisionInternalUser } = await import("./src/internal-user-provisioning.ts");
-  const db = createDatabase(process.env.DATABASE_URL);
-  try {
-    const user = await provisionInternalUser(db.prisma, {
-      name: "Administrador local",
-      rut: "11111111-1",
-      password: process.env.NEW_PASSWORD,
-    });
-    console.log(user.id);
-  } finally {
-    await db.prisma.$disconnect();
-  }
-})();' | tail -n 1)
-unset NEW_PASSWORD
-echo "userId: $USER_ID"
+```sh
+pnpm recovery:bootstrap
 ```
 
-Los bloques usan sintaxis zsh. En bash, reemplaza la primera línea por
-`read -rsp "Contraseña del primer usuario: " NEW_PASSWORD; echo`.
+El comando pide nombre, RUT (válido, por ejemplo `11111111-1`) y la contraseña
+temporal dos veces, sin eco; nunca la acepta por argumentos ni por variables de
+entorno y exige una terminal interactiva. En una sola transacción crea el
+usuario (contraseña temporal de 24 horas, cambio obligatorio en el primer
+ingreso) y la designación única de administrador de plataforma. Solo corre
+contra una `DATABASE_URL` local (loopback o socket unix).
 
-El comando imprime el `userId`, que queda en `USER_ID`. Si está vacío, detente:
-el alta falló. Desígnalo administrador de plataforma (una sola vez por base):
-
-```zsh
-if [ -n "$USER_ID" ]; then pnpm --filter @invoiceops/backend platform-administrator bootstrap "$USER_ID" --confirm-bootstrap; else echo "Detente: no se obtuvo USER_ID" >&2; fi
-```
-
-Si el RUT ya existe, el alta falla por unicidad: usa ese usuario o reinicia la
-base. El usuario no queda con cambio de contraseña obligatorio.
+- Repetirlo con el mismo RUT responde «already initialized» (la salida del comando está en inglés) y no cambia nada.
+- Con otro RUT se rechaza: no transfiere autoridad.
+- `pnpm recovery:bootstrap --existing-user` designa a un usuario existente por
+  RUT, solo si ya tiene una credencial utilizable (no pide contraseña): una
+  contraseña temporal vencida o sin vencimiento no cuenta como utilizable.
+- Si cierras la entrada (Ctrl-D) o interrumpes (Ctrl-C) durante un prompt, el
+  comando termina con código 1 y un mensaje; no deja nada a medias.
+- `pnpm recovery:bootstrap --help` documenta las opciones.
 
 ## 5A. Arrancar con pnpm (desarrollo)
 
@@ -153,30 +133,51 @@ Con `DATABASE_URL` cargada (paso 1):
 pnpm dev
 ```
 
-- Frontend: http://127.0.0.1:5380 (Vite reenvía `/auth`, `/profile`, `/groups`,
-  `/invoices`, `/organizations`, `/business-policies` y `/platform` al backend).
+- Frontend: http://127.0.0.1:5380 (Vite reenvía `/api/` y `/openapi.json` al backend; `/health/*`
+  queda solo en el backend).
 - Backend: http://127.0.0.1:4380/health/ready
 
 ### Límite de intentos de login (desarrollo)
 
-El backend limita `POST /auth/login` por IP (por defecto 5 intentos cada 15
-minutos, en memoria). Variables opcionales, leídas una sola vez al arrancar:
+El backend limita `POST /api/v1/auth/login` en memoria, solo por credenciales
+**fallidas**: por IP (5 intentos cada 15 minutos, ventana fija) y por RUT (5
+intentos y luego un bloqueo **progresivo**: 1 minuto, 2, 4, 8… hasta la ventana;
+un login correcto reinicia el nivel). El intento se reserva antes de verificar
+la contraseña, así que ráfagas paralelas tampoco superan el máximo. Variables
+opcionales, leídas una sola vez al arrancar:
 
 - `AUTH_RATE_LIMIT_DISABLED=true`: desactiva el límite (solo desarrollo; el
   backend se niega a arrancar con `NODE_ENV=production`).
 - `AUTH_RATE_LIMIT_MAX_ATTEMPTS`: entero positivo de intentos por ventana.
 - `AUTH_RATE_LIMIT_WINDOW_MS`: entero positivo, duración de la ventana en ms.
+- `AUTH_TRUST_PROXY_HOPS`: entero no negativo, cuántos proxies inversos
+  confiables hay delante del backend (ver abajo). Vacío o sin definir: no se
+  confía en ningún proxy.
 
 ```sh
 AUTH_RATE_LIMIT_DISABLED=true pnpm dev
 ```
 
-Valores inválidos de `MAX_ATTEMPTS` y `WINDOW_MS` detienen el arranque con un
-error claro. En `AUTH_RATE_LIMIT_DISABLED` solo el valor literal `true` (sin
-distinguir mayúsculas) desactiva el límite; cualquier otro valor se ignora y el
-límite sigue activo. Estas variables se leen en el proceso del backend (`pnpm dev`,
-ruta A); el overlay de Docker (ruta B) no las reenvía al contenedor. El limitador
-vive en memoria: se reinicia al reiniciar el backend.
+Valores inválidos de `MAX_ATTEMPTS`, `WINDOW_MS` y `AUTH_TRUST_PROXY_HOPS`
+detienen el arranque con un error claro. `AUTH_RATE_LIMIT_DISABLED` acepta
+`true`, `false` o vacío (sin distinguir mayúsculas ni espacios); cualquier otro
+valor detiene el arranque. Estas variables se leen en el proceso del backend
+(`pnpm dev`, ruta A). En la ruta B (Docker) el `docker-compose.yml` base solo
+fija `AUTH_TRUST_PROXY_HOPS=1`; las demás variables no se reenvían al
+contenedor. El limitador vive en memoria: se
+reinicia al reiniciar el backend.
+
+**Detrás de un proxy (`AUTH_TRUST_PROXY_HOPS`).** Con `pnpm dev` el proxy de
+Vite también reenvía `X-Forwarded-For`, pero el backend lo ignora por defecto y
+ve la IP del proxy: todos los clientes comparten la clave de IP. En la ruta B
+(nginx del frontend → backend) el compose base fija `AUTH_TRUST_PROXY_HOPS=1`
+porque nginx es el único proxy. El puerto del backend se publica solo en
+loopback (lo necesitan `/health/*` y los checks de esta guía), pero un proceso
+local que lo llame directamente puede falsificar `X-Forwarded-For` y esquivar la
+clave de IP; la clave por RUT sigue aplicando. Es un riesgo residual aceptado
+solo para desarrollo local. Pon el número exacto de proxies que controlas: un valor mayor al real
+permite falsificar la IP con `X-Forwarded-For`, y uno menor deja la IP del
+proxy. No lo uses si el backend es alcanzable sin pasar por el proxy.
 
 `pnpm dev` arranca backend y frontend en paralelo. Para separarlos, usa
 `pnpm --filter @invoiceops/backend dev` y `pnpm --filter @invoiceops/frontend dev`
@@ -270,12 +271,12 @@ Después repite los pasos 3 y 4.
 
 ## Problemas frecuentes
 
-| Síntoma                                  | Causa probable                                         | Solución                                                                                                     |
-| ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL must be configured`        | No cargaste el paso 1 en esa terminal                  | Repite el bloque `set -a` y `export DATABASE_URL`                                                            |
-| `port is already allocated`              | Otro servicio usa el puerto                            | Cambia `LOCAL_*_PORT` en `.env`                                                                              |
-| Login devuelve 401                       | RUT o contraseña distintos, o usuario sin contraseña   | Revisa el paso 4                                                                                             |
-| Mutaciones devuelven 403 `Forbidden`     | El navegador no envía un `Origin` igual al host        | Entra por la URL del frontend, no por el backend directo                                                     |
-| `/health/ready` falla                    | Base detenida o sin crear con el reset                 | Repite el paso 3                                                                                             |
-| Login devuelve 429 `Demasiados intentos` | Superaste el límite de intentos por IP (5 cada 15 min) | Espera 15 min, reinicia el backend, o usa `AUTH_RATE_LIMIT_DISABLED=true pnpm dev` (solo desarrollo, ruta A) |
-| `Recovery reset refused`                 | Falló una guarda (host, nombre o confirmación)         | Revisa `DATABASE_URL` y `--confirm-reset=<nombre>`                                                           |
+| Síntoma                                     | Causa probable                                                                                             | Solución                                                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL must be configured`           | No cargaste el paso 1 en esa terminal                                                                      | Repite el bloque `set -a` y `export DATABASE_URL`                                                                               |
+| `port is already allocated`                 | Otro servicio usa el puerto                                                                                | Cambia `LOCAL_*_PORT` en `.env`                                                                                                 |
+| Login devuelve 401                          | RUT o contraseña distintos, usuario sin contraseña o contraseña temporal vencida (24 h)                    | Revisa el paso 4; si la temporal venció, repite el reset y el bootstrap                                                         |
+| Mutaciones devuelven 403 `FORBIDDEN_ORIGIN` | El navegador no envía un `Origin` igual al host                                                            | Entra por la URL del frontend, no por el backend directo                                                                        |
+| `/health/ready` falla                       | Base detenida o sin crear con el reset                                                                     | Repite el paso 3                                                                                                                |
+| Login devuelve 429 `RATE_LIMITED`           | Superaste el límite de intentos fallidos por IP (5 cada 15 min) o por RUT (bloqueo progresivo desde 1 min) | Espera el bloqueo (hasta 15 min), reinicia el backend, o usa `AUTH_RATE_LIMIT_DISABLED=true pnpm dev` (solo desarrollo, ruta A) |
+| `Recovery reset refused`                    | Falló una guarda (host, nombre o confirmación)                                                             | Revisa `DATABASE_URL` y `--confirm-reset=<nombre>`                                                                              |
