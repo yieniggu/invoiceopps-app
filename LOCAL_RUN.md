@@ -200,15 +200,16 @@ desde el host.
 
 ## 6. Comprobaciones
 
-| Qué            | Cómo                                                              | Resultado esperado                            |
-| -------------- | ----------------------------------------------------------------- | --------------------------------------------- |
-| Backend vivo   | `curl -fsS <backend>/health/live`                                 | `{"status":"ok"}`                             |
-| Base accesible | `curl -fsS <backend>/health/ready`                                | HTTP 200                                      |
-| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña | Se abre la app                                |
-| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma  | Aparece **Administración**                    |
-| Administración | Crea una organización y aprovisiona un usuario                    | Ambos aparecen tras refrescar                 |
-| Grupos         | Crea un grupo en esa organización y agrega integrantes            | El grupo aparece en **Mis grupos**            |
-| Facturas       | Abre **Facturas**                                                 | Bandeja vacía: el alta llega en RP0-09/RP0-14 |
+| Qué            | Cómo                                                                 | Resultado esperado                             |
+| -------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
+| Backend vivo   | `curl -fsS <backend>/health/live`                                    | `{"status":"ok"}`                              |
+| Base accesible | `curl -fsS <backend>/health/ready`                                   | HTTP 200                                       |
+| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña    | Se abre la app                                 |
+| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma     | **Organizaciones** ofrece «Crear organización» |
+| Organizaciones | En `/organizaciones/nueva`, crea una con el RUT de su primer ADMIN   | Aparece en **Organizaciones** tras refrescar   |
+| Usuarios       | Como ADMIN, en `/organizaciones/:id` crea un usuario (rol `USER`)    | Contraseña temporal visible una sola vez       |
+| Grupos         | En **Grupos** crea un grupo; en su detalle marca permisos y miembros | El grupo y sus permisos persisten al recargar  |
+| Facturas       | Abre **Facturas**                                                    | Bandeja vacía: el alta llega en RP0-09/RP0-14  |
 
 ## Tests
 
@@ -216,6 +217,7 @@ desde el host.
 pnpm lint && pnpm typecheck && pnpm test:unit && pnpm build
 env -u DATABASE_URL -u TEST_DATABASE_URL pnpm test:integration   # PostgreSQL efímero propio
 pnpm test:recovery:unit # guardas del reset y arranque sin ML/blockchain
+pnpm test:recovery:ui   # onboarding, organizaciones, grupos, usuarios y membresías (frontend)
 ```
 
 `pnpm test:integration` no usa la base de esta guía y se niega a correr si `DATABASE_URL` o `TEST_DATABASE_URL` están definidas en la shell; por eso se ejecuta con `env -u`.

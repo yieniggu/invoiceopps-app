@@ -25,10 +25,11 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    cookie; no copies tokens al navegador.
 2. En **Mi perfil**, consulta identidad y membresías y guarda correo electrónico
    o nombre de usuario. Nombre, RUT y roles no se editan allí.
-3. En **Organizaciones**, elige una membresía vigente; en **Mis grupos**, usa
-   **Trabajar con…** para seleccionar un grupo al que perteneces. El resumen de
-   organización/propietario permanece visible al navegar. Si el acceso se revoca,
-   no se elige otro propietario automáticamente.
+3. En **Organizaciones** (`/organizaciones`), abre una organización vigente; en
+   **Grupos** (`/grupos`), usa **Trabajar con…** para seleccionar un grupo al
+   que perteneces. El resumen de organización/propietario permanece visible al
+   navegar. Si el acceso se revoca, no se elige otro propietario
+   automáticamente.
 4. Desde **Panel principal**, abre el trabajo deseado. El panel muestra contexto
    y accesos, no totales financieros o métricas que la API no ofrece.
 5. En **Facturas**, busca por ID/proveedor y carga más resultados explícitamente.
@@ -36,15 +37,25 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
 6. En **Políticas**, consulta versiones/umbrales del mismo propietario. El dueño
    individual puede crear/editar; las políticas grupales requieren ADMIN de esa
    organización.
-7. **Administración** aparece solo para administradores de organización o
-   plataforma. El primero gestiona grupos desde Mis grupos; solo plataforma
-   crea organizaciones, provisiona usuarios con rol inicial y gestiona
-   membresías. La contraseña temporal se muestra una sola vez y no se registra.
-   Descubrir una organización administrable no concede acceso a su trabajo.
+7. No existe una pantalla «Administración»: la gestión vive en las pantallas de
+   organizaciones y grupos. En `/organizaciones/nueva` («Crear organización»,
+   solo el administrador de plataforma) se indica de forma explícita el RUT del
+   primer ADMIN de la organización (la plataforma no recibe acceso a facturas ni
+   a grupos). Cada ADMIN de organización abre `/organizaciones/:id`, donde crea
+   y asigna usuarios con rol inicial y gestiona las membresías de la
+   organización; crea grupos en `/organizaciones/:id/grupos/nuevo` y, en el
+   detalle del grupo (`/organizaciones/:id/grupos/:groupId`), gestiona sus
+   cuatro permisos de facturas (leer, crear, eliminar propias, eliminar de
+   otros; todos desactivados al crear) y sus miembros. La contraseña temporal
+   se muestra una sola vez, con `Cache-Control: no-store`, y no se registra.
+   Descubrir una organización administrable no concede acceso a su trabajo. Las
+   rutas `/platform/*` del frontend y `/api/v1/platform/users` se retiraron
+   (RP0-05 a RP0-08): la administración vive bajo `/api/v1/organizations`.
 
 Las superficies vigentes son: acceso mediante login, perfil, organizaciones,
-grupos, panel, facturas, detalle, políticas y administración. No son destinos
-universales: el detalle se abre dentro de Facturas y Administración depende del rol.
+grupos, panel, facturas, detalle y políticas. No son destinos universales: el
+detalle se abre dentro de Facturas y la gestión de personas y grupos depende del
+rol (ADMIN de la organización).
 
 ### Estados, incertidumbre y límites
 
@@ -118,7 +129,9 @@ pnpm recovery:local:reset -- --confirm-reset=invoiceops
 ```
 
 Consulta [`LOCAL_RUN.md`](LOCAL_RUN.md) para el procedimiento local completo y los
-comandos `pnpm test:recovery:unit` / `pnpm test:recovery:postgres`.
+comandos `pnpm test:recovery:unit` / `pnpm test:recovery:postgres`. Las pruebas de la
+interfaz de recuperación (onboarding, organizaciones, grupos, usuarios y membresías)
+se ejecutan con `pnpm test:recovery:ui`.
 
 Crea `.env`, levanta PostgreSQL y el backend/frontend siguiendo
 [`LOCAL_RUN.md`](LOCAL_RUN.md). No se duplican aquí los pasos ni la tabla de
@@ -295,15 +308,15 @@ group-user pairs and enforces that every group member has an
 Authenticated users can call `GET /api/v1/groups` to list only their groups and every
 group member in deterministic organization, group, and member order. Group
 management is scoped under `/api/v1/organizations/:organizationId/groups`; only a
-current `ADMIN` of that organization can create, update, or delete a group, or
-add and remove members. The server validates the current session and resource
+current `ADMIN` of that organization can create or update a group (including its four
+invoice permission flags) and add or remove members. The server validates the current session and resource
 organization for every request, returning safe authorization responses for
-absent sessions, non-members, and users with the USER role. The ADMIN who creates a group is
-added as its first member so the group remains visible and manageable.
+absent sessions, non-members, and users with the USER role.
 
-Un administrador de plataforma puede administrar grupos de cualquier
-organización, incluso sin una membership local. Esta capacidad se aplica en el
-servidor y no depende de permisos entregados por el cliente.
+El administrador de plataforma no tiene acceso implícito a grupos, memberships
+ni facturas: sin una membership en la organización recibe `404`, igual que
+cualquier persona ajena. Esta regla se aplica en el servidor y no depende de
+permisos entregados por el cliente.
 
 El primer administrador de plataforma se crea fuera de HTTP con
 `pnpm recovery:bootstrap`: pide nombre, RUT y contraseña temporal (dos veces, sin
