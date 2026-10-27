@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { ThemeToggle } from "../../components/ThemeToggle";
 import { paths } from "./paths";
 
 interface Destination {
@@ -231,6 +232,9 @@ export function AppShell({
         </div>
         <nav id="app-sidebar-nav" aria-label="Navegación principal">
           <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
+          <div className="sidebar-theme">
+            <ThemeToggle />
+          </div>
           <ul className="nav-group nav-group-bottom">
             {renderItem(profileDestination)}
             <li>

@@ -1,17 +1,26 @@
 :root {
+  color-scheme: light;
   --focus-ring: #9b4b00;
   --color-text: #16243a;
   --color-text-muted: #4a5a72;
   --color-bg: #f6f8fc;
   --color-surface: #fff;
+  --color-surface-muted: #f1f5f9;
+  /* Decorative dividers (cards, sidebar, tables): the content carries meaning. */
   --color-border: #d7dfed;
+  /* Borders of controls (inputs, toggles): at least 3:1 against surfaces. */
+  --color-border-strong: #7589a8;
   --color-primary: #345cc4;
   --color-primary-strong: #243b6b;
   --color-primary-soft: #eef2fa;
   --color-primary-tint: #e6ecf8;
-  --color-skeleton: #dfe5f0;
   --color-on-primary: #fff;
+  --color-danger: #a12828;
+  --color-on-danger: #fff;
+  --color-error: #b3261e;
+  --color-skeleton: #dfe5f0;
   --color-overlay: rgb(22 36 58 / 0.5);
+  --color-scrim: rgb(15 23 42 / 0.55);
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --sidebar-width: 15rem;
@@ -20,6 +29,30 @@
   color: var(--color-text);
   background: var(--color-bg);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Set on <html> by the inline script in index.html and by useTheme. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --focus-ring: #ffb26b;
+  --color-text: #e6ebf5;
+  --color-text-muted: #a8b5cc;
+  --color-bg: #0f1729;
+  --color-surface: #172036;
+  --color-surface-muted: #1e2a44;
+  --color-border: #2c3a56;
+  --color-border-strong: #6f83a6;
+  --color-primary: #8aa9f5;
+  --color-primary-strong: #bcd0ff;
+  --color-primary-soft: #1a2a4d;
+  --color-primary-tint: #223562;
+  --color-on-primary: #0f1729;
+  --color-danger: #ff8f87;
+  --color-on-danger: #1f0a09;
+  --color-error: #ff9e97;
+  --color-skeleton: #26334f;
+  --color-overlay: rgb(0 0 0 / 0.6);
+  --color-scrim: rgb(0 0 0 / 0.65);
 }
 
 * {
@@ -42,7 +75,7 @@ body {
 
 .eyebrow {
   margin: 0;
-  color: #345cc4;
+  color: var(--color-primary);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -76,9 +109,9 @@ form {
   display: grid;
   gap: 0.75rem;
   padding: 1.25rem;
-  border: 1px solid #d7dfed;
+  border: 1px solid var(--color-border);
   border-radius: 0.75rem;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 dl {
@@ -109,8 +142,14 @@ button {
   font: inherit;
 }
 
+input,
+select {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
 input {
-  border: 1px solid #9daec8;
+  border: 1px solid var(--color-border-strong);
   padding: 0.5rem 0.75rem;
 }
 
@@ -118,8 +157,8 @@ button {
   width: fit-content;
   border: 0;
   padding: 0.5rem 1rem;
-  background: #345cc4;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   font-weight: 700;
   cursor: pointer;
 }
@@ -172,8 +211,8 @@ button:focus-visible {
 }
 
 .app-shell .secondary-button {
-  background: #e6ecf8;
-  color: #16243a;
+  background: var(--color-primary-tint);
+  color: var(--color-text);
 }
 
 .app-shell :where(.card-list, .membership-list, .member-list) {
@@ -187,7 +226,7 @@ button:focus-visible {
   display: grid;
   gap: 0.75rem;
   padding: 1rem;
-  border: 1px solid #d7dfed;
+  border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   min-width: 0;
 }
@@ -206,8 +245,8 @@ button:focus-visible {
   width: fit-content;
   padding: 0.25rem 0.5rem;
   border-radius: 0.375rem;
-  background: #eef2fa;
-  color: #243b6b;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
   font-size: 0.875rem;
 }
 
@@ -221,11 +260,12 @@ button:focus-visible {
 }
 
 .app-shell .danger-button {
-  background: #a12828;
+  background: var(--color-danger);
+  color: var(--color-on-danger);
 }
 
 .app-shell [aria-pressed="true"] {
-  border: 2px solid #345cc4;
+  border: 2px solid var(--color-primary);
   text-decoration: underline;
   text-underline-offset: 0.2em;
 }
@@ -742,13 +782,13 @@ a:focus-visible {
   margin: 0;
   /* Reserved line: the live region exists before any error so nothing shifts. */
   min-height: 1.25rem;
-  color: #b3261e;
+  color: var(--color-error);
   font-size: 0.875rem;
 }
 
 .field-hint {
   margin: 0;
-  color: #5b6472;
+  color: var(--color-text-muted);
   font-size: 0.8125rem;
 }
 
@@ -759,7 +799,7 @@ a:focus-visible {
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: rgb(15 23 42 / 0.55);
+  background: var(--color-scrim);
 }
 
 .dialog-panel {
@@ -768,15 +808,15 @@ a:focus-visible {
   overflow: auto;
   padding: 1.25rem;
   border-radius: 0.75rem;
-  background: #fff;
-  color: #101828;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .secret-value {
   display: block;
   padding: 0.75rem;
   border-radius: 0.5rem;
-  background: #f1f5f9;
+  background: var(--color-surface-muted);
   font-family: ui-monospace, monospace;
   overflow-wrap: anywhere;
   user-select: all;
@@ -787,7 +827,7 @@ a:focus-visible {
   gap: 0.5rem;
   margin: 0;
   padding: 0.75rem;
-  border: 1px solid #d0d5dd;
+  border: 1px solid var(--color-border);
   border-radius: 0.5rem;
 }
 
@@ -903,4 +943,65 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+/* Theme toggle: segmented icon buttons, shared by the sidebar and auth screens. */
+.theme-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.25rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.theme-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 2.75rem;
+  border: 2px solid transparent;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.theme-toggle button:hover {
+  background: var(--color-primary-soft);
+}
+
+.theme-toggle button[aria-pressed="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-tint);
+  color: var(--color-primary-strong);
+  text-decoration: none;
+}
+
+.theme-toggle button:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.shell-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sidebar-theme {
+  display: flex;
+  margin-top: auto;
+  justify-content: center;
+}
+
+.sidebar-theme + .nav-group-bottom {
+  margin-top: 0;
+}
+
+/* The collapsed rail is 4rem wide: stack the three options. */
+@media (min-width: 769px) {
+  .is-collapsed .theme-toggle {
+    flex-direction: column;
+  }
 }

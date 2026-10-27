@@ -299,14 +299,14 @@ export function InvoiceWorkspace({
     return (
       <section
         aria-labelledby="invoice-detail-title"
-        className="workspace-content space-y-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4"
+        className="workspace-content space-y-4 rounded-lg border border-(--color-border) bg-(--color-surface-muted) p-4"
       >
         <button
           type="button"
           onClick={() => {
             setDetailId(undefined);
           }}
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+          className="rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 text-sm font-semibold text-(--color-text)"
         >
           Volver a facturas
         </button>
@@ -334,11 +334,11 @@ export function InvoiceWorkspace({
   return (
     <section
       aria-labelledby="invoices-title"
-      className="workspace-content space-y-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4"
+      className="workspace-content space-y-4 rounded-lg border border-(--color-border) bg-(--color-surface-muted) p-4"
     >
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 id="invoices-title">Facturas</h2>
-        <p className="text-sm font-medium text-slate-600">
+        <p className="text-sm font-medium text-(--color-text-muted)">
           {selectedContext?.organizationName} ·{" "}
           {selectedContext?.ownerType === "user"
             ? "Trabajo individual"
@@ -349,7 +349,7 @@ export function InvoiceWorkspace({
         Propietario
         <select
           ref={ownerSelectorRef}
-          className="w-full rounded border border-slate-300 bg-white p-2 text-slate-900 sm:max-w-md"
+          className="w-full rounded border border-(--color-border-strong) bg-(--color-surface) p-2 text-(--color-text) sm:max-w-md"
           value={selectedValue}
           onChange={(event) => {
             setSelectedValue(event.target.value);
@@ -379,7 +379,7 @@ export function InvoiceWorkspace({
         <label className="grid flex-1 gap-1 font-semibold">
           Buscar por ID o proveedor
           <input
-            className="rounded border border-slate-300 p-2"
+            className="rounded border border-(--color-border-strong) p-2"
             value={query}
             maxLength={120}
             onChange={(event) => setQuery(event.target.value)}
@@ -387,7 +387,7 @@ export function InvoiceWorkspace({
         </label>
         <button
           type="submit"
-          className="rounded-md bg-slate-900 px-3 py-2 font-semibold text-white sm:self-end"
+          className="rounded-md bg-(--color-primary) px-3 py-2 font-semibold text-(--color-on-primary) sm:self-end"
         >
           Buscar
         </button>
@@ -422,7 +422,7 @@ export function InvoiceWorkspace({
           >
             <table className="invoice-table text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-300">
+                <tr className="border-b border-(--color-border-strong)">
                   <th>ID comercial</th>
                   <th>Proveedor</th>
                   <th>Monto (CLP)</th>
@@ -437,7 +437,10 @@ export function InvoiceWorkspace({
               </thead>
               <tbody>
                 {listState.invoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-b border-slate-200">
+                  <tr
+                    key={invoice.id}
+                    className="border-b border-(--color-border)"
+                  >
                     <td>{invoice.businessId}</td>
                     <td>{invoice.supplierName}</td>
                     <td>{money(invoice.amountPesos)}</td>
@@ -452,7 +455,7 @@ export function InvoiceWorkspace({
                           setDetailState({ kind: "loading" });
                           setDetailId(invoice.id);
                         }}
-                        className="rounded-md border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-800"
+                        className="rounded-md border border-(--color-border-strong) bg-(--color-surface) px-2 py-1 font-semibold text-(--color-text)"
                       >
                         Ver {invoice.businessId}
                       </button>
@@ -474,7 +477,7 @@ export function InvoiceWorkspace({
               type="button"
               disabled={isLoadingMore}
               onClick={() => void loadMore()}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800"
+              className="rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 font-semibold text-(--color-text)"
             >
               {isLoadingMore ? "Cargando más..." : "Cargar más"}
             </button>
@@ -495,7 +498,7 @@ function InvoiceDetailView({
     <>
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+          <p className="text-sm font-semibold uppercase tracking-wide text-(--color-text-muted)">
             Detalle de factura
           </p>
           <h2 id="invoice-detail-title">{invoice.businessId}</h2>

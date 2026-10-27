@@ -106,6 +106,7 @@ describe("AppShell sidebar", () => {
     expect(
       within(nav)
         .getAllByRole("button")
+        .filter((button) => !button.closest(".theme-toggle"))
         .map((button) => button.textContent),
     ).toEqual(["Salir"]);
     expect(
@@ -274,7 +275,10 @@ describe("AppShell sidebar", () => {
       const { container } = renderShell();
       const trigger = screen.getByRole("button", { name: "Abrir menú" });
       fireEvent.click(trigger);
-      expect(media.queries).toEqual(["(max-width: 768px)"]);
+      // The theme control also listens to the colour-scheme query.
+      expect(
+        media.queries.filter((query) => !query.includes("prefers-color")),
+      ).toEqual(["(max-width: 768px)"]);
       expect(trigger.getAttribute("aria-expanded")).toBe("true");
       act(() =>
         media.listeners.forEach((listener) => listener({ matches: true })),

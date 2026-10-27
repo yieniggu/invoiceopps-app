@@ -1,6 +1,7 @@
 import { LogOut } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { ThemeToggle } from "../../../components/ThemeToggle";
 import { isApiError } from "../api/apiError";
 import { useChangePasswordMutation } from "../hooks/useAuthMutations";
 import { useLogoutMutation } from "../hooks/useAuthMutations";
@@ -107,6 +108,9 @@ export function ChangePasswordScreen() {
 
   return (
     <main className="shell" aria-labelledby="password-change-title">
+      <div className="shell-toolbar">
+        <ThemeToggle showLabels />
+      </div>
       <p className="eyebrow">InvoiceOps</p>
       <h1 id="password-change-title">Cambia tu contraseña temporal</h1>
       <p>

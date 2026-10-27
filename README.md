@@ -73,6 +73,17 @@ rol (ADMIN de la organización).
 - Facturas usa páginas de 50 por defecto, máximo API 100. Los detalles se
   consultan bajo acción explícita.
 
+### Tema claro y oscuro
+
+- Por defecto la interfaz sigue la preferencia del sistema y reacciona si esta
+  cambia. El control **Tema** (Claro / Oscuro / Sistema) guarda la elección en
+  `localStorage` bajo `invoiceops.theme`; «Sistema» borra la clave.
+- La preferencia es del navegador: no depende de la sesión ni del usuario. Si
+  el almacenamiento está bloqueado, la elección solo dura la página.
+- `apps/frontend/index.html` incluye un script en línea que fija `data-theme`
+  antes del primer pintado. Si algún día se añade una CSP, ese script necesitará
+  un hash o nonce (o moverse a un archivo propio).
+
 ## Requisitos
 
 - Node.js 24 o superior.

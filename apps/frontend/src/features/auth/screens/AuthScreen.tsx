@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 
+import { ThemeToggle } from "../../../components/ThemeToggle";
 import { RutField } from "../../../components/RutField";
 import { isValidRut } from "../../../lib/rut";
 import { isApiError } from "../api/apiError";
@@ -74,6 +75,9 @@ export function AuthScreen({
 
   return (
     <main className="shell" aria-labelledby="auth-title">
+      <div className="shell-toolbar">
+        <ThemeToggle showLabels />
+      </div>
       <p className="eyebrow">InvoiceOps</p>
       <h1 id="auth-title">Iniciar sesión</h1>
       <p>
