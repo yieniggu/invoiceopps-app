@@ -83,17 +83,17 @@ function http(admin = false) {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const path = input.toString();
-      if (path === "/profile")
+      if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
         return init?.method === "PATCH" ? patch() : getProfile();
-      if (path === "/auth/logout") return logout();
-      if (path === "/auth/login") {
+      if (path === "/api/v1/auth/logout") return logout();
+      if (path === "/api/v1/auth/login") {
         identity = "B";
         return json({ user: { id: "B" } });
       }
-      if (path === "/groups") return groups();
-      if (path === "/platform/organizations") return discovery();
-      if (path.startsWith("/organizations/")) return mutation();
-      if (path.startsWith("/invoices?"))
+      if (path === "/api/v1/groups") return groups();
+      if (path === "/api/v1/platform/organizations") return discovery();
+      if (path.startsWith("/api/v1/organizations/")) return mutation();
+      if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -344,22 +344,22 @@ describe("CR-001 mounted session isolation", () => {
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls.some(([path]) =>
-            path.toString().startsWith("/invoices?"),
+            path.toString().startsWith("/api/v1/invoices?"),
           ),
         ).toBe(true),
       );
       const protectedPaths = api.fetchMock.mock.calls
         .slice(boundary)
-        .filter(([path]) => /^\/invoices\?/.test(path.toString()))
+        .filter(([path]) => /^\/api\/v1\/invoices\?/.test(path.toString()))
         .map(([path]) => new URL(path.toString(), "http://test.invalid"));
       expect(
         protectedPaths.some((url) => url.searchParams.get("ownerId") === "B"),
       ).toBe(true);
       expect(new Set(protectedPaths.map((url) => url.pathname))).toEqual(
-        new Set(["/invoices"]),
+        new Set(["/api/v1/invoices"]),
       );
       for (const [path] of api.fetchMock.mock.calls.slice(boundary)) {
-        if (/^\/invoices\?/.test(path.toString())) {
+        if (/^\/api\/v1\/invoices\?/.test(path.toString())) {
           const url = new URL(path.toString(), "http://test.invalid");
           expect(url.searchParams.get("ownerId")).toBe("B");
           expect(url.searchParams.get("organizationId")).toBe("org-B");

@@ -18,6 +18,7 @@ import {
   useSharedWorkspace,
   type OwnerContext,
 } from "../workspace/WorkspaceContext";
+import { protectedFetch } from "../auth/protectedFetch";
 
 type ListState =
   | { kind: "loading" }
@@ -133,7 +134,7 @@ function PolicyContext({
 
   const confirmContext = useCallback(
     async (isCurrent: () => boolean, signal?: AbortSignal) => {
-      const response = await fetch("/profile", {
+      const response = await protectedFetch("/api/v1/auth/profile", {
         credentials: "same-origin",
         signal,
       });
@@ -151,7 +152,7 @@ function PolicyContext({
       )
         throw new PolicyError(404);
       if (context.ownerType === "group") {
-        const groupsResponse = await fetch("/groups", {
+        const groupsResponse = await protectedFetch("/api/v1/groups", {
           credentials: "same-origin",
           signal,
         });
@@ -188,10 +189,13 @@ function PolicyContext({
     try {
       const manages = await confirmContext(isCurrent, controller.signal);
       if (!isCurrent() || manages === null) return;
-      const response = await fetch(`/business-policies?${params}`, {
-        credentials: "same-origin",
-        signal: controller.signal,
-      });
+      const response = await protectedFetch(
+        `/api/v1/business-policies?${params}`,
+        {
+          credentials: "same-origin",
+          signal: controller.signal,
+        },
+      );
       if (!isCurrent()) return;
       if (!response.ok) throw new PolicyError(response.status);
       const result = (await response.json()) as { policies: unknown[] };
@@ -261,7 +265,7 @@ function PolicyContext({
     const outcome = await execute(
       key,
       {
-        path: `/business-policies${selected === undefined ? "" : `/${encodeURIComponent(selected)}`}?${params}`,
+        path: `/api/v1/business-policies${selected === undefined ? "" : `/${encodeURIComponent(selected)}`}?${params}`,
         method: selected === undefined ? "POST" : "PATCH",
         policy: { version: targetVersion, manualReviewThreshold: numeric },
       },

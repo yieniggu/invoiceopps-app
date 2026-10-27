@@ -10,6 +10,7 @@ import {
   invoiceDate,
   invoiceHttpMessage,
 } from "./invoicePresentation";
+import { protectedFetch } from "../auth/protectedFetch";
 
 type Profile = {
   id: string;
@@ -119,7 +120,9 @@ export function InvoiceWorkspace({
       ownerId: selectedContext.ownerId,
       q: submittedQuery,
     });
-    void fetch(`/invoices?${params}`, { credentials: "same-origin" })
+    void protectedFetch(`/api/v1/invoices?${params}`, {
+      credentials: "same-origin",
+    })
       .then(async (response) => {
         if (response.status === 401) {
           if (!cancelled) {
@@ -183,7 +186,7 @@ export function InvoiceWorkspace({
         q: submittedQuery,
         cursor,
       });
-      const response = await fetch(`/invoices?${params}`, {
+      const response = await protectedFetch(`/api/v1/invoices?${params}`, {
         credentials: "same-origin",
       });
       if (!isCurrent()) return;
@@ -238,9 +241,12 @@ export function InvoiceWorkspace({
       ownerType: selectedContext.ownerType,
       ownerId: selectedContext.ownerId,
     });
-    void fetch(`/invoices/${encodeURIComponent(detailId)}?${params}`, {
-      credentials: "same-origin",
-    })
+    void protectedFetch(
+      `/api/v1/invoices/${encodeURIComponent(detailId)}?${params}`,
+      {
+        credentials: "same-origin",
+      },
+    )
       .then(async (response) => {
         if (response.status === 401) {
           if (!cancelled) {

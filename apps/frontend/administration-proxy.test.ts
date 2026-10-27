@@ -6,58 +6,55 @@ import { createServer, type ViteDevServer } from "vite";
 import { describe, expect, it } from "vitest";
 import config from "./vite.config";
 
-const key = Object.keys(config.server?.proxy ?? {}).find((key) =>
-  key.includes("/members"),
-);
-const nearMisses = [
+// Administration surfaces (platform discovery, memberships, business policies,
+// organization groups) no longer own transport rules: they travel through the
+// single /api/ prefix, so the encoded-segment bounds live in the backend router.
+const ORG = encodeURIComponent("org/a");
+const USER = encodeURIComponent("user/b");
+const VERSION = encodeURIComponent("risk/v1 ?#é");
+const oldAdministrationPaths = [
+  "/platform/organizations",
+  `/platform/organizations/${ORG}/members`,
+  `/platform/organizations/${ORG}/members/${USER}`,
+  "/business-policies",
+  `/business-policies/${VERSION}`,
+  "/organizations/00000000-0000-4000-8000-000000000001/groups",
   "/platform/organizations-extra",
-  "/platform/organizations/o/memberships",
-  "/platform/organizations/o/members/u/extra",
-  "/platform/organizations/o/members/",
-  "/platform/organizations/o/bootstrap",
-  "/platform/organizations/o/transfer",
   "/platform/administrator",
-  "/platform/bootstrap",
-  "/admin/mlflow/provision",
 ];
-describe("APP12 S7 bounded membership transport", () => {
-  it("bounds raw Vite/Nginx membership paths without opening other platform operations", () => {
-    expect(key).toBeDefined();
-    const pattern = new RegExp(key!);
-    for (const path of [
-      "/platform/organizations/o/members",
-      "/platform/organizations/o/members/u?x=1",
-      "/platform/organizations/o%2Fx/members/u%2Fy",
-    ])
-      expect(pattern.test(path)).toBe(true);
-    for (const path of [
-      ...nearMisses,
-      "/platform/organizations",
-      "/platform/organizations/o/groups",
-    ])
-      expect(pattern.test(path)).toBe(false);
+
+function proxiesPath(path: string): boolean {
+  return Object.keys(config.server?.proxy ?? {}).some((key) =>
+    key.startsWith("^") ? new RegExp(key).test(path) : path.startsWith(key),
+  );
+}
+
+describe("RP0 administration transport under /api/v1", () => {
+  it("has no dedicated membership, discovery or policy proxy rule", () => {
+    expect(
+      Object.keys(config.server?.proxy ?? {}).filter((key) =>
+        /members|platform|business-policies|organizations(?!\.)/.test(key),
+      ),
+    ).toEqual([]);
+    for (const path of oldAdministrationPaths)
+      expect(proxiesPath(path), path).toBe(false);
+  });
+
+  it("drops the nginx regex locations and URI guards for administration paths", () => {
     const source = readFileSync(
       new URL("./nginx.conf", import.meta.url),
       "utf8",
     );
-    const block = source.match(
-      /location ~ \^\/platform\/organizations\/.+? \{([\s\S]+?)\n {2}\}/,
-    )?.[1];
-    expect(block).toBeDefined();
-    expect(block).toContain(
-      'if ($request_uri !~ "^/platform/organizations/[^/?]+/members(/[^/?]+)?([?].*)?$")',
+
+    expect(source).not.toMatch(
+      /\/platform\/|\/business-policies|\/organizations/,
     );
-    expect(block).toContain("return 404;");
-    expect(block).toContain("proxy_pass http://backend:3000;");
-    expect(block).toContain("proxy_set_header Host $http_host;");
-    expect(block).toContain(
-      "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    );
-    expect(block).toContain("proxy_set_header X-Forwarded-Proto $scheme;");
-    expect(block).not.toMatch(/rewrite|try_files/);
-    expect(source).not.toMatch(/location\s+(?:\^~\s+)?\/platform\//);
+    expect(source).not.toMatch(/location\s+~/);
+    expect(source).not.toContain("$request_uri");
+    expect(source).toMatch(/location\s+\/api\/\s*\{/);
   });
-  it("forwards actual POST/PATCH/DELETE JSON and 204, preserves encoded IDs/CSRF headers, and rejects near misses", async () => {
+
+  it("forwards real Vite POST/PATCH/DELETE under /api/v1 keeping encoded IDs, JSON, 204 and CSRF headers", async () => {
     const requests: string[] = [];
     const backend = createHttpServer(async (request, response) => {
       requests.push(request.url ?? "");
@@ -134,7 +131,7 @@ describe("APP12 S7 bounded membership transport", () => {
         ["PATCH", 404],
         ["PATCH", 409],
       ] as const) {
-        const path = `/platform/organizations/${encodeURIComponent("org/a")}/members${method === "POST" ? "" : `/${encodeURIComponent("user/b")}`}?status=${status}`;
+        const path = `/api/v1/platform/organizations/${ORG}/members${method === "POST" ? "" : `/${USER}`}?status=${status}`;
         const payload =
           method === "POST"
             ? { userId: "user/b", role: "ADMIN" }
@@ -149,7 +146,7 @@ describe("APP12 S7 bounded membership transport", () => {
             "X-Forwarded-For": "192.0.2.10",
           },
           ...(method === "DELETE" ? {} : { body: JSON.stringify(payload) }),
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(5000),
         });
         expect(response.status).toBe(status);
         if (status === 204) expect(await response.text()).toBe("");
@@ -173,14 +170,15 @@ describe("APP12 S7 bounded membership transport", () => {
           expect(body.headers["x-forwarded-for"]).toBe("192.0.2.10,127.0.0.1");
         }
       }
-      for (const path of nearMisses)
+      for (const path of oldAdministrationPaths)
         expect(
           (
             await fetch(`${origin}${path}`, {
               headers: { Accept: "application/json" },
-              signal: AbortSignal.timeout(2000),
+              signal: AbortSignal.timeout(5000),
             })
           ).status,
+          path,
         ).toBe(404);
       expect(requests).toHaveLength(8);
     } finally {

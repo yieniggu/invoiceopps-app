@@ -33,7 +33,7 @@ export function normalizeGroupIntent(intent: GroupIntent) {
   // Creating twice in one organization is unsafe without a server receipt, even
   // if the operator changes the name (names are deliberately not unique).
   const member = intent.path.match(
-    /^(\/organizations\/[^/?]+\/groups\/[^/?]+)\/members(?:\/([^/?]+))?$/,
+    /^(\/api\/v1\/organizations\/[^/?]+\/groups\/[^/?]+)\/members(?:\/([^/?]+))?$/,
   );
   if (!member) return { key: intent.path, intent: { ...intent } };
   try {

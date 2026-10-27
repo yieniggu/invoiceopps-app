@@ -48,16 +48,16 @@ function http() {
   const unexpected: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = input.toString();
-    if (path === "/profile") return json({ profile });
-    if (path === "/groups") return groups();
+    if (path === "/api/v1/auth/profile") return json({ profile });
+    if (path === "/api/v1/groups") return groups();
     if (
-      path === "/organizations/org-A/groups/group-A" &&
+      path === "/api/v1/organizations/org-A/groups/group-A" &&
       init?.method === "PATCH"
     )
       return json({});
-    if (path === "/auth/logout" && init?.method === "POST")
+    if (path === "/api/v1/auth/logout" && init?.method === "POST")
       return new Response(null, { status: 204 });
-    if (/^\/invoices\?/.test(path)) {
+    if (/^\/api\/v1\/invoices\?/.test(path)) {
       protectedRequests.push(path);
       const url = new URL(path, "http://test.invalid");
       const owner = url.searchParams.get("ownerId");
@@ -158,7 +158,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
       } else {
         await screen.findByText("Proveedor group-A");
         expect(api.protectedRequests.slice(boundary)).toEqual([
-          "/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
+          "/api/v1/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
         ]);
       }
       if (revoked) {
@@ -216,7 +216,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     ).toBe("org-A:group:group-A");
     await screen.findByText("Proveedor group-A");
     expect(api.protectedRequests.slice(boundary)).toEqual([
-      "/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
+      "/api/v1/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
     ]);
     expect(api.unexpected).toEqual([]);
   });

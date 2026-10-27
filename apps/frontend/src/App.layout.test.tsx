@@ -54,9 +54,10 @@ describe("CR005 bounded long-content layout contracts", () => {
   it("keeps the invoice table in a named keyboard-scrollable region with bounded column layout and complete content", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = new URL(input.toString(), "http://test.invalid").pathname;
-      if (path === "/invoices")
+      if (path === "/api/v1/invoices")
         return json({ invoices: [invoice], nextCursor: null });
-      if (path === `/invoices/${longInvoiceId}`) return json({ invoice });
+      if (path === `/api/v1/invoices/${longInvoiceId}`)
+        return json({ invoice });
       throw new Error(`Unexpected request: ${path}`);
     });
     render(

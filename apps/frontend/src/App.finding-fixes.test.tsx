@@ -96,25 +96,25 @@ function http(platform = true) {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const path = new URL(String(input), "http://test.invalid").pathname;
-      if (path === "/profile")
+      if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
         return init?.method === "PATCH" ? patch() : reads();
-      if (path === "/groups") return readGroups();
-      if (path === "/platform/organizations")
+      if (path === "/api/v1/groups") return readGroups();
+      if (path === "/api/v1/platform/organizations")
         return json({ organizations: [{ ...org, groups: [] }] });
-      if (path.startsWith("/platform/organizations/")) {
+      if (path.startsWith("/api/v1/platform/organizations/")) {
         profile = { ...profile, memberships: [] };
         return new Response(null, { status: 204 });
       }
-      if (path === `/organizations/${org.id}/groups`)
+      if (path === `/api/v1/organizations/${org.id}/groups`)
         return init?.method === "POST" ? create() : catalog();
-      if (path.startsWith(`/organizations/${org.id}/groups/`)) {
+      if (path.startsWith(`/api/v1/organizations/${org.id}/groups/`)) {
         if (init?.method === "DELETE") member = false;
         return init?.method === "DELETE"
           ? new Response(null, { status: 204 })
           : json({});
       }
-      if (path === "/auth/logout") return logout();
-      if (path === "/auth/login") return json({});
+      if (path === "/api/v1/auth/logout") return logout();
+      if (path === "/api/v1/auth/login") return json({});
       throw new Error(`Unexpected request ${path}`);
     });
   return {
@@ -242,30 +242,30 @@ describe("FULLAPP12 authorized findings", () => {
     await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(6));
     const writes = api.fetchMock.mock.calls.filter(
       ([path, init]) =>
-        String(path).startsWith(`/organizations/${org.id}/groups`) &&
+        String(path).startsWith(`/api/v1/organizations/${org.id}/groups`) &&
         init?.method,
     );
     expect(
       writes.map(([path, init]) => [String(path), init?.method, init?.body]),
     ).toEqual([
       [
-        `/organizations/${org.id}/groups/g`,
+        `/api/v1/organizations/${org.id}/groups/g`,
         "PATCH",
         JSON.stringify({ name: "Equipo ajeno", description: "" }),
       ],
       [
-        `/organizations/${org.id}/groups/g/members`,
+        `/api/v1/organizations/${org.id}/groups/g/members`,
         "POST",
         JSON.stringify({ userId: actor }),
       ],
       [
-        `/organizations/${org.id}/groups/g/members/${actor}`,
+        `/api/v1/organizations/${org.id}/groups/g/members/${actor}`,
         "DELETE",
         undefined,
       ],
-      [`/organizations/${org.id}/groups/g`, "DELETE", undefined],
+      [`/api/v1/organizations/${org.id}/groups/g`, "DELETE", undefined],
       [
-        `/organizations/${org.id}/groups`,
+        `/api/v1/organizations/${org.id}/groups`,
         "POST",
         JSON.stringify({ name: "Intento original" }),
       ],
@@ -501,7 +501,7 @@ function membershipHttp() {
   api.fetchMock.mockImplementation(async (input, init) => {
     const path = new URL(String(input), "http://test.invalid").pathname;
     if (
-      path.startsWith(`/organizations/${org.id}/groups/g/members`) &&
+      path.startsWith(`/api/v1/organizations/${org.id}/groups/g/members`) &&
       init?.method
     )
       return write(path, init);
@@ -522,7 +522,7 @@ function submitMember(userId: string) {
 }
 describe("CR011 residual membership identity", () => {
   it("canonicalizes member request intent and shared ADD/REMOVE keys by trim only, retaining identifier case", () => {
-    const path = `/organizations/${org.id}/groups/g/members`;
+    const path = `/api/v1/organizations/${org.id}/groups/g/members`;
     const added = normalizeGroupIntent({
       path,
       method: "POST",
@@ -545,14 +545,14 @@ describe("CR011 residual membership identity", () => {
     expect(uppercase?.key).not.toBe(added?.key);
     expect(
       normalizeGroupIntent({
-        path: `/organizations/${org.id}/groups`,
+        path: `/api/v1/organizations/${org.id}/groups`,
         method: "POST",
         body: JSON.stringify({ name: "Another name" }),
       })?.key,
-    ).toBe(`/organizations/${org.id}/groups`);
+    ).toBe(`/api/v1/organizations/${org.id}/groups`);
   });
   it("rejects invalid member bodies and malformed URI input without throwing or allocating an identity", () => {
-    const path = `/organizations/${org.id}/groups/g/members`;
+    const path = `/api/v1/organizations/${org.id}/groups/g/members`;
     for (const body of [
       "{",
       "null",

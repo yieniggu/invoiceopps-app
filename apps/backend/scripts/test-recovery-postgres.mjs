@@ -52,7 +52,17 @@ export async function runRecoveryPostgresTests({
   if (generated.status !== 0) throw new Error("prisma generate failed");
   const tests = spawn(
     "pnpm",
-    ["exec", "vitest", "run", ".postgres.test.ts", "--testTimeout", "30000"],
+    [
+      "exec",
+      "vitest",
+      "run",
+      ".postgres.test.ts",
+      "--testTimeout",
+      "30000",
+      // The files share one test database (singleton administrator, truncated
+      // tables): they must never run at the same time.
+      "--no-file-parallelism",
+    ],
     { cwd: backendDirectory, stdio: "inherit", env: childEnv },
   );
   if (tests.status !== 0) {

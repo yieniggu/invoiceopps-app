@@ -48,22 +48,22 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
     .mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://test.invalid");
       const method = init?.method ?? "GET";
-      if (url.pathname === "/profile" && method === "GET")
+      if (url.pathname === "/api/v1/auth/profile" && method === "GET")
         return authenticated ? json({ profile }) : json({}, 401);
-      if (url.pathname === "/profile" && method === "PATCH") {
+      if (url.pathname === "/api/v1/profile" && method === "PATCH") {
         Object.assign(profile, JSON.parse(String(init?.body)));
         return json({ profile });
       }
-      if (url.pathname === "/auth/signup") return json({}, 201);
-      if (url.pathname === "/auth/login") {
+      if (url.pathname === "/api/v1/auth/signup") return json({}, 201);
+      if (url.pathname === "/api/v1/auth/login") {
         authenticated = true;
         return json({});
       }
-      if (url.pathname === "/auth/logout") {
+      if (url.pathname === "/api/v1/auth/logout") {
         authenticated = false;
         return new Response(null, { status: 204 });
       }
-      if (url.pathname === "/groups")
+      if (url.pathname === "/api/v1/groups")
         return json({
           groups: [
             {
@@ -77,20 +77,20 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
             },
           ],
         });
-      if (url.pathname === "/platform/organizations")
+      if (url.pathname === "/api/v1/platform/organizations")
         return json({
           organizations: [
             { ...organization, groups: [] },
             { id: id(9), name: "Solo administración", groups: [] },
           ],
         });
-      if (url.pathname === "/business-policies" && method === "GET")
+      if (url.pathname === "/api/v1/business-policies" && method === "GET")
         return json({
           policies: [{ version: "s8-policy", manualReviewThreshold: 0.8 }],
         });
-      if (url.pathname === "/invoices" && method === "GET")
+      if (url.pathname === "/api/v1/invoices" && method === "GET")
         return json({ invoices: [invoice], nextCursor: null });
-      if (url.pathname === "/invoices/S8-INVOICE" && method === "GET")
+      if (url.pathname === "/api/v1/invoices/S8-INVOICE" && method === "GET")
         return json({ invoice });
       throw new Error(`Unexpected S8 boundary: ${method} ${url.pathname}`);
     });
@@ -150,9 +150,11 @@ describe("APP12 S8 global acceptance characterization", () => {
       await screen.findByText(/Bienvenido, Persona S8/);
       expect(
         requests.mock.calls.every(([input]) =>
-          ["/profile", "/groups", "/platform/organizations"].includes(
-            String(input),
-          ),
+          [
+            "/api/v1/auth/profile",
+            "/api/v1/groups",
+            "/api/v1/platform/organizations",
+          ].includes(String(input)),
         ),
       ).toBe(true);
       await navigate(destination);
@@ -204,15 +206,15 @@ describe("APP12 S8 global acceptance characterization", () => {
     fireEvent.submit(screen.getByRole("form", { name: "Iniciar sesión" }));
     await screen.findByText(/Bienvenido, Persona S8/);
     expect(
-      requests.mock.calls.filter(([input]) => input === "/profile"),
+      requests.mock.calls.filter(([input]) => input === "/api/v1/auth/profile"),
     ).toHaveLength(2);
     const login = requests.mock.calls.find(
-      ([input]) => input === "/auth/login",
+      ([input]) => input === "/api/v1/auth/login",
     );
     expect(login?.[1]?.credentials).toBe("same-origin");
     expect(login?.[1]?.method).toBe("POST");
     expect(
-      requests.mock.calls.some(([input]) => input === "/auth/signup"),
+      requests.mock.calls.some(([input]) => input === "/api/v1/auth/signup"),
     ).toBe(false);
     semantics();
   });

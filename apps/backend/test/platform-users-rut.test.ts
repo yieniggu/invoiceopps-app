@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./support/request.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -62,7 +62,7 @@ function createFakePrisma() {
 
 function provision(app: ReturnType<typeof createApp>, rut: string) {
   return request(app)
-    .post("/platform/users")
+    .post("/api/v1/platform/users")
     .set("Host", "127.0.0.1")
     .set("Origin", "http://127.0.0.1")
     .set("Cookie", COOKIE)
@@ -125,7 +125,7 @@ describe("RV-081 login with a malformed RUT", () => {
     const app = createApp({ isReady: async () => true }, auth);
     const login = (rut: string) =>
       request(app)
-        .post("/auth/login")
+        .post("/api/v1/auth/login")
         .send({ rut, password: "correct-horse-battery-staple" });
 
     const wrongPassword = await login("12.345.678-5");

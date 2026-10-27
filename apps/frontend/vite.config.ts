@@ -23,26 +23,11 @@ export default defineConfig({
     port: 5380,
     strictPort: true,
     proxy: {
-      "/auth": sameOriginRule,
-      "/profile": sameOriginRule,
-      "/groups": sameOriginRule,
-      "/invoices": sameOriginRule,
-      "/organizations": sameOriginRule,
-      "^/business-policies(?:/[^/?]+)?(?:\\?|$)": {
-        target: backendTarget,
-        changeOrigin: false,
-        xfwd: true,
-      },
-      "^/platform/organizations(?:\\?|$)": {
-        target: backendTarget,
-        changeOrigin: false,
-        xfwd: true,
-      },
-      "^/platform/organizations/[^/?]+/members(?:/[^/?]+)?(?:\\?|$)": {
-        target: backendTarget,
-        changeOrigin: false,
-        xfwd: true,
-      },
+      "/api/": sameOriginRule,
+      // The bare `/api` reaches the backend, whose 404 envelope matches the one
+      // nginx answers for `location = /api`.
+      "^/api(?:\\?|$)": sameOriginRule,
+      "^/openapi\\.json(?:\\?|$)": sameOriginRule,
     },
   },
   test: {

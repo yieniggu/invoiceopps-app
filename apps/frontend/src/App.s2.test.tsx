@@ -57,10 +57,10 @@ function http(current = profile, membershipGroups = groups) {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const path = input.toString();
-      if (path === "/profile")
+      if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
         return init?.method === "PATCH" ? patch() : json({ profile: current });
-      if (path === "/groups") return readGroups();
-      if (path === "/platform/organizations")
+      if (path === "/api/v1/groups") return readGroups();
+      if (path === "/api/v1/platform/organizations")
         return json({
           organizations: [
             {
@@ -77,8 +77,8 @@ function http(current = profile, membershipGroups = groups) {
             },
           ],
         });
-      if (path.startsWith("/organizations/")) return mutation();
-      if (path.startsWith("/invoices?"))
+      if (path.startsWith("/api/v1/organizations/")) return mutation();
+      if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -118,7 +118,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
-        /^\/invoices\?/.test(path.toString()),
+        /^\/api\/v1\/invoices\?/.test(path.toString()),
       ),
     ).toBe(false);
   });
@@ -156,7 +156,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       screen.getByRole("textbox", { name: "Correo electrónico" }),
     ).toHaveProperty("value", "nuevo@example.test");
     expect(api.fetchMock).toHaveBeenLastCalledWith(
-      "/profile",
+      "/api/v1/profile",
       expect.objectContaining({
         body: JSON.stringify({
           email: "nuevo@example.test",
@@ -182,14 +182,14 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
           path
             .toString()
             .startsWith(
-              "/invoices?organizationId=org-B&ownerType=user&ownerId=person",
+              "/api/v1/invoices?organizationId=org-B&ownerType=user&ownerId=person",
             ),
         ),
       ).toBe(true),
     );
     expect(
       api.fetchMock.mock.calls
-        .filter(([path]) => /^\/invoices\?/.test(path.toString()))
+        .filter(([path]) => /^\/api\/v1\/invoices\?/.test(path.toString()))
         .every(([path]) => path.toString().includes("organizationId=org-B")),
     ).toBe(true);
   });
@@ -211,7 +211,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
         path
           .toString()
           .startsWith(
-            "/invoices?organizationId=org-B&ownerType=group&ownerId=group-1",
+            "/api/v1/invoices?organizationId=org-B&ownerType=group&ownerId=group-1",
           ),
       ),
     ).toBe(true);
@@ -254,7 +254,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
-        /^\/invoices\?/.test(path.toString()),
+        /^\/api\/v1\/invoices\?/.test(path.toString()),
       ),
     ).toBe(false);
   });
@@ -305,7 +305,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       ),
     ).toBeTruthy();
     expect(api.fetchMock).toHaveBeenCalledWith(
-      "/organizations/org-A/groups/group-0",
+      "/api/v1/organizations/org-A/groups/group-0",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({
@@ -321,28 +321,28 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       action: "create",
       button: "Crear grupo en Academia A",
       method: "POST",
-      path: "/organizations/org-A/groups",
+      path: "/api/v1/organizations/org-A/groups",
       body: { name: "Nuevo equipo" },
     },
     {
       action: "add",
       button: "Agregar integrante a Equipo 0",
       method: "POST",
-      path: "/organizations/org-A/groups/group-0/members",
+      path: "/api/v1/organizations/org-A/groups/group-0/members",
       body: { userId: "new-member" },
     },
     {
       action: "remove",
       button: "Quitar a Ada de Equipo 0",
       method: "DELETE",
-      path: "/organizations/org-A/groups/group-0/members/person",
+      path: "/api/v1/organizations/org-A/groups/group-0/members/person",
       body: undefined,
     },
     {
       action: "delete",
       button: "Eliminar grupo Equipo 0",
       method: "DELETE",
-      path: "/organizations/org-A/groups/group-0",
+      path: "/api/v1/organizations/org-A/groups/group-0",
       body: undefined,
     },
   ])(

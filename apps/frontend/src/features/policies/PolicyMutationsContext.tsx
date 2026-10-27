@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { protectedFetch } from "../auth/protectedFetch";
 
 export type Policy = { version: string; manualReviewThreshold: number };
 export type PolicyDraft = {
@@ -147,7 +148,7 @@ function useLedger() {
       if (!manages) throw new PolicyError(403);
       dispatched = true;
       // Navigation never aborts a mutation or discards its session-owned intent.
-      const response = await fetch(intent.path, {
+      const response = await protectedFetch(intent.path, {
         method: intent.method,
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

@@ -70,13 +70,13 @@ function http(role = "USER", platform = false) {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const url = new URL(input.toString(), "http://test.invalid");
-      if (url.pathname === "/profile") return profileRead();
-      if (url.pathname === "/groups") return json({ groups });
-      if (url.pathname === "/platform/organizations")
+      if (url.pathname === "/api/v1/auth/profile") return profileRead();
+      if (url.pathname === "/api/v1/groups") return json({ groups });
+      if (url.pathname === "/api/v1/platform/organizations")
         return json({ organizations: [] });
-      if (url.pathname === "/auth/logout") return logout();
-      if (url.pathname === "/auth/login") return json({});
-      if (url.pathname.startsWith("/business-policies"))
+      if (url.pathname === "/api/v1/auth/logout") return logout();
+      if (url.pathname === "/api/v1/auth/login") return json({});
+      if (url.pathname.startsWith("/api/v1/business-policies"))
         return init?.method ? write(init) : read();
       throw new Error(`Unexpected request: ${url.pathname}`);
     });
@@ -272,7 +272,7 @@ describe("APP12 S4 session-owned policy writes", () => {
     });
     await loaded();
     await screen.findByText(/Política guardada:/);
-    expect(api.write).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
   });
   it("keeps a pending PATCH through failed logout without blocking legitimate logout", async () => {
     const api = http();
@@ -357,7 +357,7 @@ describe("APP12 S4 session-owned policy writes", () => {
         ),
       );
       await screen.findByText(/Política guardada:/);
-      expect(api.write).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(api.write).toHaveBeenCalledTimes(2));
     },
   );
   it("preserves an unsent draft across destination navigation without selecting it in another owner", async () => {
@@ -395,10 +395,10 @@ describe("APP12 S4 policy HTTP workflow", () => {
     await act(async () => pending.resolve(json({ policies: [] })));
     await screen.findByText("No hay políticas para este propietario.");
     const call = api.fetchMock.mock.calls.find(([input]) =>
-      input.toString().startsWith("/business-policies"),
+      input.toString().startsWith("/api/v1/business-policies"),
     );
     expect(call?.[0]).toBe(
-      "/business-policies?organizationId=org&ownerType=user&ownerId=user",
+      "/api/v1/business-policies?organizationId=org&ownerType=user&ownerId=user",
     );
     expect(call?.[1]?.credentials).toBe("same-origin");
   });
@@ -491,7 +491,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       draft(String(threshold));
       submit();
       await screen.findByText(/Política guardada: risk-v2/);
-      expect(api.write).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
       expect(api.write.mock.calls[0][0]).toMatchObject({
         method: "POST",
         credentials: "same-origin",
@@ -501,7 +501,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
           manualReviewThreshold: threshold,
         }),
       });
-      expect(api.read).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
     },
   );
   it.each(["", "NaN", "-0.1", "1.01", "80", "0,8", "0x1"])(
@@ -541,7 +541,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       ([, init]) => init?.method === "PATCH",
     );
     expect(call?.[0]).toBe(
-      `/business-policies/${encodeURIComponent(policy.version)}?organizationId=org&ownerType=user&ownerId=user`,
+      `/api/v1/business-policies/${encodeURIComponent(policy.version)}?organizationId=org&ownerType=user&ownerId=user`,
     );
     expect(call?.[1]?.body).toBe(JSON.stringify({ manualReviewThreshold: 1 }));
   });
@@ -592,7 +592,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     draft();
     submit();
     await screen.findByText(/resultado es desconocido/i);
-    expect(api.write).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     expect(
       screen.getByRole("button", { name: "Crear política" }),
     ).toHaveProperty("disabled", true);
@@ -601,7 +601,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     );
     await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
     await screen.findByText(/Compara la lista actual/);
-    expect(api.write).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
   });
   it.each(["401", "body"])(
     "ignores a late mutation %s after switching owner and resets draft",
@@ -636,7 +636,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       );
       expect(screen.queryByText(/Política guardada/)).toBeNull();
       expect(screen.getByRole("navigation")).toBeTruthy();
-      expect(api.read).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
     },
   );
   it.each([false, true])(
@@ -778,7 +778,9 @@ describe("APP12 S4 policy HTTP workflow", () => {
     );
     await waitFor(() => expect(api.read).toHaveBeenCalledTimes(4));
     const readCall = api.fetchMock.mock.calls
-      .filter(([input]) => input.toString().startsWith("/business-policies"))
+      .filter(([input]) =>
+        input.toString().startsWith("/api/v1/business-policies"),
+      )
       .at(-1);
     const signal = readCall?.[1]?.signal;
     fireEvent.click(screen.getByRole("button", { name: "Mi perfil" }));
@@ -807,10 +809,10 @@ describe("APP12 S4 policy HTTP workflow", () => {
       "",
     );
     const calls = api.fetchMock.mock.calls.filter(([input]) =>
-      input.toString().startsWith("/business-policies"),
+      input.toString().startsWith("/api/v1/business-policies"),
     );
     expect(calls.at(-1)?.[0]).toBe(
-      "/business-policies?organizationId=org-B&ownerType=user&ownerId=user",
+      "/api/v1/business-policies?organizationId=org-B&ownerType=user&ownerId=user",
     );
   });
 });

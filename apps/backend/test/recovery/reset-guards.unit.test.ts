@@ -321,6 +321,21 @@ describe("recovery postgres runner", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("runs the PostgreSQL files one at a time on the shared test database", async () => {
+    const spawn = vi.fn(() => ({ status: 0 }));
+    await runRecoveryPostgresTests({
+      env: { PATH: "/bin", RECOVERY_TEST_DATABASE_URL: local(test) },
+      reset: vi.fn(),
+      spawn,
+      log: vi.fn(),
+    });
+
+    const vitest = (spawn.mock.calls as unknown as Array<[string, string[]]>)
+      .map(([, args]) => args)
+      .find((args) => args.includes("vitest"));
+    expect(vitest).toContain("--no-file-parallelism");
+  });
+
   it("fails without RECOVERY_TEST_DATABASE_URL instead of skipping", async () => {
     const reset = vi.fn();
     const spawn = vi.fn();

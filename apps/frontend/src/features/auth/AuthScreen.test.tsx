@@ -34,7 +34,7 @@ describe("AuthScreen closed access", () => {
     fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
     await waitFor(() => expect(onLogin).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledWith(
-      "/auth/login",
+      "/api/v1/auth/login",
       expect.objectContaining({ method: "POST" }),
     );
     expect(

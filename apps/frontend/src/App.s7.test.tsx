@@ -89,19 +89,19 @@ function http(platform = true, role = "USER", member = true) {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const path = new URL(String(input), "http://test.invalid").pathname;
-      if (path === "/profile") return reads();
-      if (path === "/groups") return json({ groups: [] });
-      if (path === "/platform/organizations") return discovery();
-      if (path.startsWith("/platform/organizations/"))
+      if (path === "/api/v1/auth/profile") return reads();
+      if (path === "/api/v1/groups") return json({ groups: [] });
+      if (path === "/api/v1/platform/organizations") return discovery();
+      if (path.startsWith("/api/v1/platform/organizations/"))
         return writes(path, init ?? {});
-      if (path === "/auth/logout") return logout();
-      if (path === "/auth/login") return json({});
-      if (path.startsWith("/business-policies"))
+      if (path === "/api/v1/auth/logout") return logout();
+      if (path === "/api/v1/auth/login") return json({});
+      if (path.startsWith("/api/v1/business-policies"))
         return init?.method
           ? policyWrite()
           : json({ policies: [{ version: "v1", manualReviewThreshold: 0.8 }] });
-      if (path.startsWith("/invoices"))
-        return path === "/invoices"
+      if (path.startsWith("/api/v1/invoices"))
+        return path === "/api/v1/invoices"
           ? json({ invoices: [invoice], nextCursor: null })
           : json({ invoice });
       throw new Error(`Unexpected request ${path}`);
@@ -235,7 +235,7 @@ describe("APP12 S7 administration", () => {
       expect(api.writes).toHaveBeenCalledTimes(1);
       const [path, init] = api.writes.mock.calls[0];
       expect(path).toBe(
-        `/platform/organizations/${encodeURIComponent(org.id)}/members${method === "POST" ? "" : `/${encodeURIComponent(target)}`}`,
+        `/api/v1/platform/organizations/${encodeURIComponent(org.id)}/members${method === "POST" ? "" : `/${encodeURIComponent(target)}`}`,
       );
       expect(init.method).toBe(method);
       expect(init.credentials).toBe("same-origin");

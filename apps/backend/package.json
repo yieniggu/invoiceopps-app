@@ -8,22 +8,28 @@
     "dev": "tsx watch src/server.ts",
     "generate": "prisma generate",
     "platform-administrator": "tsx src/bootstrap-platform-administrator.ts",
+    "recovery:bootstrap": "tsx src/recovery-bootstrap.ts",
     "recovery:local:reset": "node scripts/recovery-local-reset.mjs",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",
     "test:integration": "node scripts/test-integration.mjs",
+    "test:recovery:contracts": "vitest run '.contracts.test.ts'",
+    "test:recovery:http": "vitest run '.http.test.ts'",
     "test:recovery:postgres": "node scripts/test-recovery-postgres.mjs",
     "test:recovery:unit": "vitest run '.unit.test.ts'",
     "test:unit": "vitest run --exclude 'test/**/*.integration.test.ts' --exclude 'test/recovery/**/*.postgres.test.ts'",
     "typecheck": "pnpm run generate && tsc --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "9.1.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "express": "5.2.1",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "zod": "4.6.6"
   },
   "devDependencies": {
+    "@seriousme/openapi-schema-validator": "2.11.0",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.1",
     "@types/supertest": "^6.0.3",

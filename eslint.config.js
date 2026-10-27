@@ -23,4 +23,45 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // supertest(app) opens an ephemeral listener per request, which is flaky
+    // under load; backend HTTP tests use the loopback helper instead.
+    files: ["apps/backend/test/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "supertest",
+              message: "Import request from test/support/request.ts instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/backend/test/support/request.ts"],
+    rules: { "no-restricted-imports": "off" },
+  },
+  {
+    // Authenticated calls go through protectedFetch so a mid-session
+    // ONBOARDING_REQUIRED reaches the forced password-change screen.
+    files: ["apps/frontend/src/**/*.{ts,tsx}"],
+    ignores: [
+      "**/*.test.{ts,tsx}",
+      "apps/frontend/src/features/auth/protectedFetch.ts",
+      "apps/frontend/src/features/auth/AuthScreen.tsx",
+    ],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "fetch",
+          message: "Use protectedFetch from features/auth/protectedFetch.",
+        },
+      ],
+    },
+  },
 );

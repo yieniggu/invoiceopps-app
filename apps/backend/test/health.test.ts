@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./support/request.js";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";

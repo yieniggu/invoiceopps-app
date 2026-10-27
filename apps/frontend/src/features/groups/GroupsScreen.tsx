@@ -14,6 +14,7 @@ import {
   contextValue,
   useSharedWorkspace,
 } from "../workspace/WorkspaceContext";
+import { protectedFetch } from "../auth/protectedFetch";
 
 export type Group = {
   id: string;
@@ -62,7 +63,7 @@ function GroupCard({
       context.ownerId === group.id &&
       context.organizationId === group.organization.id,
   );
-  const path = `/organizations/${group.organization.id}/groups/${group.id}`;
+  const path = `/api/v1/organizations/${group.organization.id}/groups/${group.id}`;
   const addition = groupMemberTarget(path, memberId);
   const removal = groupMemberTarget(path, removedMemberId);
   pending = blocked ? blocked(path, "PATCH") : pending;
@@ -415,7 +416,7 @@ export function GroupsScreen({
                 onSubmit={(event) => {
                   event.preventDefault();
                   onMutate(
-                    `/organizations/${organization.id}/groups`,
+                    `/api/v1/organizations/${organization.id}/groups`,
                     "POST",
                     { name: new FormData(event.currentTarget).get("name") },
                     `Creando grupo en ${organization.name}...`,
@@ -433,7 +434,7 @@ export function GroupsScreen({
                     disabled={
                       blocked
                         ? blocked(
-                            `/organizations/${organization.id}/groups`,
+                            `/api/v1/organizations/${organization.id}/groups`,
                             "POST",
                           )
                         : pending
@@ -445,7 +446,7 @@ export function GroupsScreen({
                   disabled={
                     blocked
                       ? blocked(
-                          `/organizations/${organization.id}/groups`,
+                          `/api/v1/organizations/${organization.id}/groups`,
                           "POST",
                         )
                       : pending
@@ -530,8 +531,8 @@ function GroupCatalog({
           limit: "50",
           ...(cursor ? { cursor } : {}),
         });
-        const response = await fetch(
-          `/organizations/${encodeURIComponent(organizationId)}/groups?${query}`,
+        const response = await protectedFetch(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/groups?${query}`,
           { credentials: "same-origin" },
         );
         if (!current) return;

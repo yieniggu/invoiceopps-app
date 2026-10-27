@@ -6,357 +6,395 @@ import { createServer, type ProxyOptions, type ViteDevServer } from "vite";
 import { describe, expect, it, vi } from "vitest";
 import config from "./vite.config";
 
-const route = "/platform/organizations";
 const expectedTarget = `http://127.0.0.1:${process.env.PORT || "4380"}`;
-function discoveryRule(): [string, ProxyOptions] {
-  const rules = Object.entries(config.server?.proxy ?? {});
-  const match = rules.find(([key]) =>
-    key.startsWith("^") ? new RegExp(key).test(route) : route.startsWith(key),
+const API_PREFIX = "/api/";
+const OPENAPI_PATH = "/openapi.json";
+
+// Vite matches a "^" key as a RegExp and any other key as a URL prefix.
+function matchingKeys(path: string): string[] {
+  return Object.keys(config.server?.proxy ?? {}).filter((key) =>
+    key.startsWith("^") ? new RegExp(key).test(path) : path.startsWith(key),
   );
-  expect(
-    match,
-    "Discovery must be proxied, not served by SPA fallback",
-  ).toBeDefined();
-  if (!match || typeof match[1] === "string")
-    throw new Error("Expected explicit bounded proxy options");
-  return [match[0], match[1]];
 }
 
-describe("CR-002 exact discovery transport", () => {
-  it("bounds Vite discovery to the registered surface and preserves target/headers/path", () => {
-    const [key, options] = discoveryRule();
-    expect(key.startsWith("^")).toBe(true);
-    const pattern = new RegExp(key);
-    expect(pattern.test(`${route}?limit=2`)).toBe(true);
-    for (const path of [
-      "/platform/other",
-      `${route}/org-1/members`,
-      `${route}-extra`,
-      "/business-policies",
-    ])
-      expect(pattern.test(path)).toBe(false);
-    expect(options.target).toBe(expectedTarget);
-    expect(options.changeOrigin).toBe(false);
-    expect(options.xfwd).toBe(true);
-    expect(options.rewrite).toBeUndefined();
-  });
+function ruleFor(key: string): ProxyOptions {
+  const rule = (config.server?.proxy ?? {})[key];
+  if (!rule || typeof rule === "string")
+    throw new Error(`Expected explicit proxy options for ${key}`);
+  return rule;
+}
 
-  it("routes Nginx discovery exactly before SPA fallback without URI rewriting", () => {
-    const source = readFileSync(
-      new URL("./nginx.conf", import.meta.url),
-      "utf8",
-    );
-    const block = source.match(
-      /location\s+=\s+\/platform\/organizations\s*\{([^}]+)\}/,
-    );
-    expect(
-      block,
-      "Exact discovery location must prevent SPA fallthrough",
-    ).not.toBeNull();
-    expect(block?.[1]).toContain("proxy_pass http://backend:3000;");
-    expect(block?.[1]).toContain("proxy_set_header Host $http_host;");
-    expect(block?.[1]).toContain(
-      "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    );
-    expect(block?.[1]).toContain("proxy_set_header X-Forwarded-Proto $scheme;");
-    expect(block?.[1]).not.toMatch(/rewrite|try_files/);
-    expect(source).not.toMatch(/location\s+(?:\^~\s+)?\/platform\//);
-    expect(source).toContain("try_files $uri $uri/ /index.html;");
-  });
-
-  it("forwards actual Vite HTTP to an owned loopback backend, retaining query and forwarding headers", async () => {
-    const [key, options] = discoveryRule();
-    const requests: string[] = [];
-    const backend = createHttpServer((request, response) => {
-      requests.push(request.url ?? "");
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({ path: request.url, headers: request.headers }),
-      );
+async function withProxiedBackend(
+  handler: Parameters<typeof createHttpServer>[1],
+  run: (context: { origin: string; port: number }) => Promise<void>,
+) {
+  const backend = createHttpServer(handler);
+  let vite: ViteDevServer | undefined;
+  try {
+    backend.listen(0, "127.0.0.1");
+    await once(backend, "listening");
+    const address = backend.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing backend port");
+    vite = await createServer({
+      configFile: false,
+      envDir: false,
+      root: import.meta.dirname,
+      plugins: [],
+      logLevel: "silent",
+      optimizeDeps: { noDiscovery: true, include: [] },
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+        hmr: false,
+        watch: null,
+        proxy: Object.fromEntries(
+          Object.entries(config.server?.proxy ?? {}).map(([key, options]) => [
+            key,
+            {
+              ...(typeof options === "string" ? {} : options),
+              target: `http://127.0.0.1:${address.port}`,
+            },
+          ]),
+        ),
+      },
     });
-    let vite: ViteDevServer | undefined;
+    await vite.listen();
+    const frontend = vite.httpServer?.address();
+    if (!frontend || typeof frontend === "string")
+      throw new Error("Missing frontend port");
+    await run({
+      origin: `http://127.0.0.1:${frontend.port}`,
+      port: frontend.port,
+    });
+  } finally {
     try {
-      backend.listen(0, "127.0.0.1");
-      await once(backend, "listening");
-      const address = backend.address();
-      if (!address || typeof address === "string")
-        throw new Error("Missing backend port");
-      vite = await createServer({
-        configFile: false,
-        envDir: false,
-        root: import.meta.dirname,
-        plugins: [],
-        logLevel: "silent",
-        optimizeDeps: { noDiscovery: true, include: [] },
-        server: {
-          host: "127.0.0.1",
-          port: 0,
-          hmr: false,
-          watch: null,
-          proxy: {
-            [key]: { ...options, target: `http://127.0.0.1:${address.port}` },
-          },
-        },
-      });
-      await vite.listen();
-      const frontend = vite.httpServer?.address();
-      if (!frontend || typeof frontend === "string")
-        throw new Error("Missing frontend port");
-      const origin = `http://127.0.0.1:${frontend.port}`;
-      const response = await fetch(`${origin}${route}?name=A%20B&limit=2`, {
-        headers: { "X-Forwarded-For": "192.0.2.10" },
-        signal: AbortSignal.timeout(2000),
-      });
-      expect(response.headers.get("content-type")).toContain(
-        "application/json",
-      );
-      const body = (await response.json()) as {
-        path: string;
-        headers: Record<string, string>;
-      };
-      expect(body.path).toBe(`${route}?name=A%20B&limit=2`);
-      expect(body.headers.host).toBe(`127.0.0.1:${frontend.port}`);
-      expect(body.headers["x-forwarded-proto"]).toBe("http");
-      expect(body.headers["x-forwarded-for"]).toBe("192.0.2.10,127.0.0.1");
-      const unrelated = await fetch(`${origin}/platform/unrelated`, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(2000),
-      });
-      expect(unrelated.status).toBe(404);
-      expect(requests).toEqual([`${route}?name=A%20B&limit=2`]);
+      await vite?.close();
     } finally {
-      try {
-        await vite?.close();
-      } finally {
-        backend.closeAllConnections();
-        if (backend.listening)
-          await new Promise<void>((resolve, reject) =>
-            backend.close((error) => (error ? reject(error) : resolve())),
-          );
-      }
+      backend.closeAllConnections();
+      if (backend.listening)
+        await new Promise<void>((resolve, reject) =>
+          backend.close((error) => (error ? reject(error) : resolve())),
+        );
+    }
+  }
+}
+
+const BARE_API_KEY = "^/api(?:\\?|$)";
+
+describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
+  it("declares only the /api/ prefix, the bare /api and the exact OpenAPI document", () => {
+    const keys = Object.keys(config.server?.proxy ?? {});
+
+    expect(keys).toHaveLength(3);
+    expect(keys).toContain(API_PREFIX);
+    expect(keys).toContain(BARE_API_KEY);
+    const openApiKey = keys.find(
+      (key) => key !== API_PREFIX && key !== BARE_API_KEY,
+    );
+    expect(openApiKey?.startsWith("^")).toBe(true);
+    const pattern = new RegExp(openApiKey!);
+    expect(pattern.test(OPENAPI_PATH)).toBe(true);
+    for (const path of [
+      "/openapi.json/extra",
+      "/openapi.jsonx",
+      "/x/openapi.json",
+      "/openapi",
+    ])
+      expect(pattern.test(path), path).toBe(false);
+  });
+
+  it("shares one same-origin rule that never rewrites Host or the path", () => {
+    for (const key of Object.keys(config.server?.proxy ?? {})) {
+      const rule = ruleFor(key);
+      expect(rule, key).toMatchObject({
+        target: expectedTarget,
+        changeOrigin: false,
+        xfwd: true,
+      });
+      expect(rule.rewrite, key).toBeUndefined();
+    }
+  });
+
+  it("proxies API and OpenAPI paths and nothing else", () => {
+    for (const path of [
+      "/api/v1/auth/login",
+      "/api/v1/auth/profile",
+      "/api/v1/platform/organizations/o%2Fx/members/u",
+      "/api/v1/invoices?limit=2",
+      "/api/v1/unknown",
+      "/openapi.json",
+      "/openapi.json?v=1",
+    ])
+      expect(matchingKeys(path), path).toHaveLength(1);
+  });
+
+  it("proxies the bare /api (with or without a query) and nothing like it", () => {
+    for (const path of ["/api", "/api?x=1"])
+      expect(matchingKeys(path), path).toEqual([BARE_API_KEY]);
+    for (const path of ["/apix", "/api-docs", "/api%2F", "/API"])
+      expect(matchingKeys(path), path).toEqual([]);
+  });
+
+  it("no longer carries any old root functional rule", () => {
+    for (const path of [
+      "/auth/login",
+      "/auth/profile",
+      "/profile",
+      "/groups",
+      "/invoices",
+      "/invoices/abc",
+      "/organizations/o/groups",
+      "/business-policies",
+      "/business-policies/v1",
+      "/platform/organizations",
+      "/platform/organizations/o/members",
+      "/platform/organizations/o/members/u",
+      "/apix/v1",
+      "/api-docs",
+      "/health/live",
+    ])
+      expect(matchingKeys(path), path).toEqual([]);
+  });
+});
+
+describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
+  const source = readFileSync(new URL("./nginx.conf", import.meta.url), "utf8");
+
+  function block(header: string): string {
+    const start = source.indexOf(`location ${header} {`);
+    expect(start, `location ${header}`).toBeGreaterThanOrEqual(0);
+    return source.slice(start, source.indexOf("}", start));
+  }
+
+  it("answers the bare /api with a JSON 404 instead of the SPA 301", () => {
+    const start = source.indexOf("location = /api {");
+    const body = source.slice(start, source.indexOf("\n  }", start));
+
+    expect(body).toContain(
+      `return 404 '{"error":{"code":"NOT_FOUND","message":"Route not found"}}';`,
+    );
+    expect(body).toContain("default_type application/json;");
+    expect(body).not.toMatch(/proxy_pass|try_files|rewrite/);
+    // The exact-match location wins over the prefix and the SPA fallback.
+    expect(source.indexOf("location = /api {")).toBeLessThan(
+      source.indexOf("location /api/ {"),
+    );
+  });
+
+  it("declares only /api/, = /api, = /openapi.json and the SPA fallback", () => {
+    const locations = [...source.matchAll(/location\s+([^{]+?)\s*\{/g)].map(
+      (match) => match[1],
+    );
+
+    expect(locations.sort()).toEqual(
+      ["/", "/api/", "= /api", "= /openapi.json"].sort(),
+    );
+    expect(source).toContain("try_files $uri $uri/ /index.html;");
+    expect(source).not.toMatch(/location\s+~/);
+  });
+
+  it("forwards the proxied locations to the backend keeping Host and the URI untouched", () => {
+    for (const header of ["/api/", "= /openapi.json"]) {
+      const body = block(header);
+      expect(body, header).toMatch(/proxy_pass http:\/\/backend:3000;/);
+      expect(body, header).toContain("proxy_set_header Host $http_host;");
+      expect(body, header).toContain(
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+      );
+      expect(body, header).toContain(
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+      );
+      expect(body, header).not.toMatch(/rewrite|try_files/);
     }
   });
 });
 
-describe("APP12 S4 exact policy transport", () => {
-  it("forwards real Vite policy GET/POST/PATCH with encoded version, query, JSON statuses and CSRF headers", async () => {
-    const requests: string[] = [];
-    const backend = createHttpServer(async (request, response) => {
-      requests.push(request.url ?? "");
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      response.statusCode =
-        new URL(request.url!, "http://fixture.invalid").searchParams.get(
-          "status",
-        ) === "403"
-          ? 403
-          : request.method === "POST"
-            ? 201
-            : request.method === "PATCH"
-              ? 409
-              : 200;
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          path: request.url,
-          method: request.method,
-          headers: request.headers,
-          body: Buffer.concat(chunks).toString(),
-        }),
-      );
-    });
-    let vite: ViteDevServer | undefined;
-    try {
-      backend.listen(0, "127.0.0.1");
-      await once(backend, "listening");
-      const address = backend.address();
-      if (!address || typeof address === "string")
-        throw new Error("Missing port");
-      vite = await createServer({
-        configFile: false,
-        envDir: false,
-        root: import.meta.dirname,
-        plugins: [],
-        logLevel: "silent",
-        optimizeDeps: { noDiscovery: true, include: [] },
-        server: {
-          host: "127.0.0.1",
-          port: 0,
-          hmr: false,
-          watch: null,
-          proxy: Object.fromEntries(
-            Object.entries(config.server?.proxy ?? {}).map(([key, options]) => [
-              key,
-              {
-                ...(typeof options === "string" ? {} : options),
-                target: `http://127.0.0.1:${address.port}`,
-              },
-            ]),
-          ),
-        },
-      });
-      await vite.listen();
-      const frontend = vite.httpServer?.address();
-      if (!frontend || typeof frontend === "string")
-        throw new Error("Missing frontend");
-      const origin = `http://127.0.0.1:${frontend.port}`;
-      const query = "?organizationId=org%20A&ownerType=group&ownerId=group%2B1";
-      const version = encodeURIComponent("risk/v1 ?#é");
-      for (const method of ["GET", "POST", "PATCH"]) {
-        const path = `/business-policies${method === "PATCH" ? `/${version}` : ""}${query}`;
-        const payload =
-          method === "PATCH"
-            ? { manualReviewThreshold: 1 }
-            : { version: "v1", manualReviewThreshold: 0 };
-        const response = await fetch(`${origin}${path}`, {
-          method,
+describe("RP0 real Vite HTTP forwarding", () => {
+  it("forwards the bare /api to the backend and returns its 404 envelope", async () => {
+    const seen: string[] = [];
+    await withProxiedBackend(
+      (request, response) => {
+        seen.push(request.url ?? "");
+        response.statusCode = 404;
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({
+            error: { code: "NOT_FOUND", message: "Route not found" },
+          }),
+        );
+      },
+      async ({ origin }) => {
+        for (const path of ["/api", "/api?x=1"]) {
+          const response = await fetch(`${origin}${path}`, {
+            redirect: "manual",
+            signal: AbortSignal.timeout(5000),
+          });
+          expect(response.status, path).toBe(404);
+          expect(await response.json()).toEqual({
+            error: { code: "NOT_FOUND", message: "Route not found" },
+          });
+        }
+        expect(seen).toEqual(["/api", "/api?x=1"]);
+      },
+    );
+  });
+
+  it("RV-096: the backend receives the original Host and Origin for POST /api/v1/auth/login", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    await withProxiedBackend(
+      async (request, response) => {
+        requests.push({ url: request.url ?? "", method: request.method ?? "" });
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({
+            headers: request.headers,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
+      },
+      async ({ origin, port }) => {
+        const payload = JSON.stringify({ rut: "12.345.678-5", password: "x" });
+        const response = await fetch(`${origin}/api/v1/auth/login`, {
+          method: "POST",
           headers: {
-            Accept: "application/json",
+            "Content-Type": "application/json",
             Origin: origin,
             Cookie: "invoiceops_session=synthetic",
-            "Content-Type": "application/json",
             "X-Forwarded-For": "192.0.2.10",
           },
-          ...(method === "GET" ? {} : { body: JSON.stringify(payload) }),
-          signal: AbortSignal.timeout(2000),
+          body: payload,
+          signal: AbortSignal.timeout(5000),
         });
-        expect(response.status).toBe(
-          method === "POST" ? 201 : method === "PATCH" ? 409 : 200,
-        );
-        expect(response.headers.get("content-type")).toContain(
-          "application/json",
-        );
+
+        expect(response.status).toBe(200);
         const body = (await response.json()) as {
-          path: string;
-          method: string;
           headers: Record<string, string>;
           body: string;
         };
-        expect(body.path).toBe(path);
-        expect(body.method).toBe(method);
-        expect(body.headers.host).toBe(`127.0.0.1:${frontend.port}`);
+        expect(body.headers.host).toBe(`127.0.0.1:${port}`);
         expect(body.headers.origin).toBe(origin);
         expect(body.headers.cookie).toBe("invoiceops_session=synthetic");
         expect(body.headers["x-forwarded-proto"]).toBe("http");
         expect(body.headers["x-forwarded-for"]).toBe("192.0.2.10,127.0.0.1");
-        expect(body.body).toBe(method === "GET" ? "" : JSON.stringify(payload));
-      }
-      for (const status of [200, 403]) {
-        const path = `/organizations/00000000-0000-4000-8000-000000000001/groups?limit=50&status=${status}`;
-        const response = await fetch(`${origin}${path}`, {
-          headers: {
-            Accept: "application/json",
-            Cookie: "invoiceops_session=catalog-fixture",
-            Origin: origin,
-          },
-          signal: AbortSignal.timeout(2000),
-        });
-        expect(response.status).toBe(status);
-        expect(response.headers.get("content-type")).toContain(
-          "application/json",
-        );
-        const body = (await response.json()) as {
-          path: string;
-          method: string;
-          headers: Record<string, string>;
-        };
-        expect(body.path).toBe(path);
-        expect(body.method).toBe("GET");
-        expect(body.headers.cookie).toBe("invoiceops_session=catalog-fixture");
-        expect(body.headers.origin).toBe(origin);
-      }
-      for (const path of [
-        "/business-policies-extra",
-        "/business-policies/v1/history",
-        "/platform/unrelated",
-        "/administration",
-      ]) {
-        const response = await fetch(`${origin}${path}`, {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(2000),
-        });
-        expect(response.status).toBe(404);
-      }
-      expect(requests).toHaveLength(5);
-    } finally {
-      try {
-        await vite?.close();
-      } finally {
-        backend.closeAllConnections();
-        if (backend.listening)
-          await new Promise<void>((resolve, reject) =>
-            backend.close((error) => (error ? reject(error) : resolve())),
-          );
-      }
-    }
+        expect(body.body).toBe(payload);
+        expect(requests).toEqual([
+          { url: "/api/v1/auth/login", method: "POST" },
+        ]);
+      },
+    );
   });
 
-  it("declares exact Vite/Nginx policy parity without rewriting encoded paths or opening platform", () => {
-    const rule = Object.entries(config.server?.proxy ?? {}).find(
-      ([key]) =>
-        key.startsWith("^") && new RegExp(key).test("/business-policies"),
+  it("forwards /openapi.json and rejects old root paths without reaching the backend", async () => {
+    const requests: string[] = [];
+    await withProxiedBackend(
+      (request, response) => {
+        requests.push(request.url ?? "");
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ openapi: "3.1.0" }));
+      },
+      async ({ origin }) => {
+        const document = await fetch(`${origin}${OPENAPI_PATH}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        expect(document.status).toBe(200);
+
+        for (const path of [
+          "/auth/login",
+          "/profile",
+          "/platform/organizations",
+          "/business-policies",
+          "/health/live",
+        ]) {
+          const response = await fetch(`${origin}${path}`, {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(5000),
+          });
+          expect(response.status, path).toBe(404);
+        }
+        expect(requests).toEqual([OPENAPI_PATH]);
+      },
     );
-    expect(rule).toBeDefined();
-    if (!rule || typeof rule[1] === "string")
-      throw new Error("Expected explicit policy rule");
-    expect(rule[1]).toMatchObject({
-      target: expectedTarget,
-      changeOrigin: false,
-      xfwd: true,
-    });
-    expect(rule[1].rewrite).toBeUndefined();
-    const source = readFileSync(
-      new URL("./nginx.conf", import.meta.url),
-      "utf8",
-    );
-    const root = source.match(
-      /location\s+=\s+\/business-policies\s*\{([^}]+)\}/,
-    );
-    const version = source.match(
-      /location\s+~\s+\^\/business-policies\/\s*\{([\s\S]+?)\n {2}\}/,
-    );
-    expect(root).not.toBeNull();
-    expect(version).not.toBeNull();
-    expect(version?.[1]).toContain(
-      'if ($request_uri !~ "^/business-policies/[^/?]+([?].*)?$")',
-    );
-    expect(version?.[1]).toContain("return 404;");
-    for (const block of [root?.[1], version?.[1]]) {
-      expect(block).toContain("proxy_pass http://backend:3000;");
-      expect(block).toContain("proxy_set_header Host $http_host;");
-      expect(block).toContain(
-        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-      );
-      expect(block).toContain("proxy_set_header X-Forwarded-Proto $scheme;");
-      expect(block).not.toMatch(/rewrite|try_files/);
-    }
-    for (const path of [
-      "/business-policies",
-      "/business-policies?organizationId=o",
-      "/business-policies/risk%2Fv1?ownerId=g",
-    ])
-      expect(new RegExp(rule[0]).test(path)).toBe(true);
-    for (const path of [
-      "/business-policies-extra",
-      "/business-policies/v1/history",
-      "/platform/other",
-      "/administration",
-    ])
-      expect(new RegExp(rule[0]).test(path)).toBe(false);
   });
 });
 
-describe("Vite proxy keeps the browser Host for the cookie Origin check", () => {
-  it("never rewrites Host on any backend rule", () => {
-    const proxy = config.server?.proxy ?? {};
-    const rules = Object.entries(proxy);
-    expect(rules.length).toBeGreaterThan(0);
-    for (const [key, rule] of rules) {
-      // The string shorthand implies changeOrigin: true in Vite.
-      expect(typeof rule, key).not.toBe("string");
-      if (typeof rule !== "string") expect(rule.changeOrigin, key).toBe(false);
-    }
-  });
+describe("RP0 real Vite forwarding of encoded policy requests", () => {
+  const VERSION_PATH = "/api/v1/business-policies/risk%2Fv1?ownerId=g%2B1";
+  const LIST_PATH = "/api/v1/business-policies?ownerId=g%2B1&q=a%26b%3Dc";
+
+  it.each([
+    ["GET", LIST_PATH, undefined, 200],
+    [
+      "POST",
+      LIST_PATH,
+      { version: "risk/v1", manualReviewThreshold: 0.5 },
+      201,
+    ],
+    ["PATCH", VERSION_PATH, { manualReviewThreshold: 0.2 }, 200],
+    ["PATCH", VERSION_PATH, { manualReviewThreshold: 0.2 }, 403],
+    ["PATCH", VERSION_PATH, { manualReviewThreshold: 0.2 }, 409],
+    ["POST", LIST_PATH, { version: "risk/v1", manualReviewThreshold: 2 }, 400],
+  ] as const)(
+    "%s %s keeps the raw URL, method, JSON, cookie and Origin and passes %i through",
+    async (method, path, payload, status) => {
+      const seen: Array<{ url: string; method: string }> = [];
+      await withProxiedBackend(
+        async (request, response) => {
+          seen.push({ url: request.url ?? "", method: request.method ?? "" });
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) chunks.push(Buffer.from(chunk));
+          response.statusCode = status;
+          response.setHeader("Content-Type", "application/json");
+          response.end(
+            JSON.stringify({
+              status,
+              headers: request.headers,
+              body: Buffer.concat(chunks).toString(),
+            }),
+          );
+        },
+        async ({ origin, port }) => {
+          const response = await fetch(`${origin}${path}`, {
+            method,
+            headers: {
+              Accept: "application/json",
+              Origin: origin,
+              Cookie: "invoiceops_session=synthetic",
+              ...(payload === undefined
+                ? {}
+                : { "Content-Type": "application/json" }),
+            },
+            ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+            signal: AbortSignal.timeout(5000),
+          });
+
+          expect(response.status).toBe(status);
+          expect(response.headers.get("content-type")).toContain(
+            "application/json",
+          );
+          const body = (await response.json()) as {
+            status: number;
+            headers: Record<string, string>;
+            body: string;
+          };
+          expect(body.status).toBe(status);
+          expect(body.body).toBe(
+            payload === undefined ? "" : JSON.stringify(payload),
+          );
+          expect(body.headers.host).toBe(`127.0.0.1:${port}`);
+          expect(body.headers.origin).toBe(origin);
+          expect(body.headers.cookie).toBe("invoiceops_session=synthetic");
+          if (payload !== undefined) {
+            expect(body.headers["content-type"]).toContain("application/json");
+          }
+          // Identical raw URL: %2F and %2B stay encoded, nothing is rewritten.
+          expect(seen).toEqual([{ url: path, method }]);
+        },
+      );
+    },
+  );
 });
 
 describe("backend proxy target follows PORT", () => {
@@ -366,8 +404,7 @@ describe("backend proxy target follows PORT", () => {
     else process.env.PORT = port;
     try {
       const fresh = (await import("./vite.config")).default;
-      const proxy = fresh.server?.proxy ?? {};
-      const rule = proxy["/auth"];
+      const rule = (fresh.server?.proxy ?? {})[API_PREFIX];
       return typeof rule === "string" ? rule : rule?.target;
     } finally {
       vi.resetModules();

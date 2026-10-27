@@ -15,6 +15,7 @@ import {
   type MembershipMethod,
   type MembershipRole,
 } from "./administrationOperations";
+import { protectedFetch } from "../auth/protectedFetch";
 
 const actionLabel = (method: MembershipMethod) =>
   method === "POST"
@@ -317,75 +318,138 @@ export function AdministrationScreen({
   );
 }
 
+interface ProvisioningFeedback {
+  kind: "success" | "error";
+  text: string;
+  /** Changes on every failure so the alert is focused again each time. */
+  nonce: number;
+}
+
+// Backend messages are English and never shown: the copy is chosen by status
+// and error code.
+async function provisioningFailureText(response: Response) {
+  const code = await response
+    .clone()
+    .json()
+    .then((body: { error?: { code?: unknown } }) => body.error?.code)
+    .catch(() => undefined);
+  if (response.status === 409)
+    return "Ya existe una organización con ese slug o un usuario con ese RUT.";
+  if (response.status === 403) return "No tienes permiso para esta operación.";
+  if (response.status === 400 && code === "VALIDATION_ERROR")
+    return "Revisa los campos e intenta nuevamente.";
+  return "No fue posible completar la operación. Intenta nuevamente.";
+}
+
 function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
-  const [message, setMessage] = useState<string>();
+  const [feedback, setFeedback] = useState<ProvisioningFeedback>();
   const [temporaryPassword, setTemporaryPassword] = useState<string>();
+  const [pending, setPending] = useState(false);
   const [userRut, setUserRut] = useState("");
   const [rutSubmitted, setRutSubmitted] = useState(false);
   const rutInput = useRef<HTMLInputElement>(null);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const action = String(form.get("action"));
-    if (action !== "organization") {
-      setRutSubmitted(true);
-      if (!isValidRut(userRut)) {
-        rutInput.current?.focus();
-        return;
-      }
-    }
-    const payload =
-      action === "organization"
-        ? {
-            name: String(form.get("organizationName") ?? ""),
-            slug: String(form.get("slug") ?? ""),
-          }
-        : {
-            name: String(form.get("userName") ?? ""),
-            rut: toApiRut(userRut),
-            organizationId: String(form.get("organizationId") ?? ""),
-            role: String(form.get("role") ?? "USER"),
-          };
-    const response = await fetch(
-      action === "organization" ? "/platform/organizations" : "/platform/users",
-      {
+  const alertRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (feedback?.kind === "error") alertRef.current?.focus();
+  }, [feedback]);
+
+  const succeed = (text: string) =>
+    setFeedback((current) => ({
+      kind: "success",
+      text,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  const fail = (text: string) => {
+    setTemporaryPassword(undefined);
+    setFeedback((current) => ({
+      kind: "error",
+      text,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  };
+
+  // Organization and user provisioning are separate forms with their own
+  // fields and submit button, so each reads only its own FormData and neither
+  // is blocked by the other's required fields.
+  async function send(path: string, payload: unknown) {
+    setPending(true);
+    try {
+      const response = await protectedFetch(path, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      },
-    );
-    if (!response.ok) {
-      setTemporaryPassword(undefined);
-      setMessage(
-        "La operación fue rechazada; revisa los datos y tus permisos.",
+      });
+      if (!response.ok) {
+        fail(await provisioningFailureText(response));
+        return undefined;
+      }
+      return response;
+    } catch {
+      fail(
+        "No fue posible conectar con el servidor. Revisa tu conexión e intenta nuevamente.",
       );
+      return undefined;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const submitOrganization = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    // React clears currentTarget once the handler yields: capture it first.
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const response = await send("/api/v1/platform/organizations", {
+      name: String(data.get("organizationName") ?? ""),
+      slug: String(data.get("slug") ?? ""),
+    });
+    if (!response) return;
+    setTemporaryPassword(undefined);
+    succeed("Organización creada.");
+    form.reset();
+    onCreated();
+  };
+
+  const submitUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setRutSubmitted(true);
+    if (!isValidRut(userRut)) {
+      rutInput.current?.focus();
       return;
     }
-    const body =
-      action === "organization"
-        ? undefined
-        : ((await response.json()) as { temporaryPassword?: unknown });
+    const response = await send("/api/v1/platform/users", {
+      name: String(data.get("userName") ?? ""),
+      rut: toApiRut(userRut),
+      organizationId: String(data.get("organizationId") ?? ""),
+      role: String(data.get("role") ?? "USER"),
+    });
+    if (!response) return;
+    const body = (await response.json().catch(() => ({}))) as {
+      temporaryPassword?: unknown;
+    };
     setTemporaryPassword(
-      typeof body?.temporaryPassword === "string"
+      typeof body.temporaryPassword === "string"
         ? body.temporaryPassword
         : undefined,
     );
-    setMessage(
-      action === "organization"
-        ? "Organización creada."
-        : "Usuario provisionado. Guarda la contraseña temporal ahora: no volverá a mostrarse.",
+    succeed(
+      "Usuario provisionado. Guarda la contraseña temporal ahora: no volverá a mostrarse.",
     );
-    event.currentTarget.reset();
+    form.reset();
     setUserRut("");
     setRutSubmitted(false);
     onCreated();
   };
+
   return (
     <section aria-labelledby="global-provisioning-title">
       <h2 id="global-provisioning-title">Crear organización o usuario</h2>
       <p>Solo el administrador de plataforma puede usar estas operaciones.</p>
-      <form onSubmit={(event) => void submit(event)}>
+      <form onSubmit={(event) => void submitOrganization(event)}>
         <fieldset>
           <legend>Organización</legend>
           <input
@@ -394,10 +458,12 @@ function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
             required
           />
           <input name="slug" aria-label="Slug de organización" required />
-          <button name="action" value="organization" type="submit">
+          <button type="submit" disabled={pending}>
             Crear organización
           </button>
         </fieldset>
+      </form>
+      <form onSubmit={(event) => void submitUser(event)}>
         <fieldset>
           <legend>Usuario</legend>
           <input name="userName" aria-label="Nombre de usuario" required />
@@ -419,12 +485,19 @@ function GlobalProvisioning({ onCreated }: { onCreated: () => void }) {
             <option value="USER">Usuario</option>
             <option value="ADMIN">Administrador de organización</option>
           </select>
-          <button name="action" value="user" type="submit">
+          <button type="submit" disabled={pending}>
             Provisionar usuario
           </button>
         </fieldset>
       </form>
-      {message ? <p role="status">{message}</p> : null}
+      {feedback?.kind === "success" ? (
+        <p role="status">{feedback.text}</p>
+      ) : null}
+      {feedback?.kind === "error" ? (
+        <p role="alert" tabIndex={-1} ref={alertRef}>
+          {feedback.text}
+        </p>
+      ) : null}
       {temporaryPassword ? (
         <p role="alert">
           Contraseña temporal: <code>{temporaryPassword}</code>

@@ -8,6 +8,7 @@ import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
 import { createGroupService } from "./groups.js";
 import { createInvoiceService } from "./invoices.js";
+import { trustProxyHopsFromEnv } from "./http/trust-proxy.js";
 import { createPlatformAdministratorService } from "./platform-administrator.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -29,8 +30,12 @@ if (authRateLimitConfig.disabled) {
     "Auth rate limiting is DISABLED (AUTH_RATE_LIMIT_DISABLED=true)",
   );
 }
+// Behind a reverse proxy request.ip is the proxy; set the hop count so the
+// login limiter keys on the real client (see README, AUTH_TRUST_PROXY_HOPS).
+const trustProxyHops = trustProxyHopsFromEnv(process.env.AUTH_TRUST_PROXY_HOPS);
 const app = createApp(database, createAuthService(database.prisma), {
   authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
+  trustProxyHops,
   groups: createGroupService(database.prisma),
   invoices: createInvoiceService(database.prisma),
   businessPolicies: createBusinessPolicyService(database.prisma),

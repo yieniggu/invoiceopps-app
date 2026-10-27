@@ -38,6 +38,7 @@ describe("backend startup configuration", () => {
         "AUTH_RATE_LIMIT_DISABLED",
         "AUTH_RATE_LIMIT_MAX_ATTEMPTS",
         "AUTH_RATE_LIMIT_WINDOW_MS",
+        "AUTH_TRUST_PROXY_HOPS",
       ]),
     );
   });

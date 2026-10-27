@@ -62,13 +62,13 @@ function http() {
   const read = vi
     .fn<(url: URL) => Promise<Response>>()
     .mockImplementation(async (url) => {
-      if (url.pathname === "/invoices")
+      if (url.pathname === "/api/v1/invoices")
         return json({
           invoices: [invoice("INV-A"), invoice("INV-B")],
           nextCursor: null,
         });
-      if (/^\/invoices\/INV-[AB]$/.test(url.pathname))
-        return json({ invoice: invoice(url.pathname.split("/")[2]) });
+      if (/^\/api\/v1\/invoices\/INV-[AB]$/.test(url.pathname))
+        return json({ invoice: invoice(url.pathname.split("/")[4]) });
       throw new Error(`Unexpected read ${url.pathname}`);
     });
   const unexpected: string[] = [];
@@ -76,7 +76,7 @@ function http() {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input) => {
       const url = new URL(input.toString(), "http://test.invalid");
-      if (url.pathname === "/profile")
+      if (url.pathname === "/api/v1/auth/profile")
         return json({
           profile: {
             ...profile,
@@ -84,10 +84,10 @@ function http() {
             name: `Persona ${identity}`,
           },
         });
-      if (url.pathname === "/groups") return json({ groups });
-      if (url.pathname === "/auth/logout")
+      if (url.pathname === "/api/v1/groups") return json({ groups });
+      if (url.pathname === "/api/v1/auth/logout")
         return new Response(null, { status: 204 });
-      if (url.pathname === "/auth/login") {
+      if (url.pathname === "/api/v1/auth/login") {
         identity = "B";
         return json({ user: { id: "user-B" } });
       }
@@ -154,7 +154,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
     fireEvent.change(selector, { target: { value: "org:group:group-B" } });
     await waitFor(() => expect(document.activeElement).toBe(selector));
   });
-  it.each(["/invoices", "/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
     "CR007 expires the current session on protected GET %s 401",
     async (path) => {
       const api = http();
@@ -163,7 +163,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
         url.pathname === path ? json({}, 401) : original(url),
       );
       await start("Facturas");
-      if (path === "/invoices/INV-A")
+      if (path === "/api/v1/invoices/INV-A")
         fireEvent.click(
           await screen.findByRole("button", { name: "Ver INV-A" }),
         );
@@ -172,7 +172,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
       expect(screen.queryByRole("button", { name: "Salir" })).toBeNull();
     },
   );
-  it.each(["/invoices", "/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
     "CR007 ignores late old-session %s 401 after unmount",
     async (path) => {
       const api = http();
@@ -187,7 +187,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
         return original(url);
       });
       await start("Facturas");
-      if (path === "/invoices/INV-A")
+      if (path === "/api/v1/invoices/INV-A")
         fireEvent.click(
           await screen.findByRole("button", { name: "Ver INV-A" }),
         );
@@ -201,7 +201,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
       expect(screen.queryByRole("alert")).toBeNull();
     },
   );
-  it.each(["/invoices", "/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
     "CR007 ignores delayed old-session %s JSON after a current 401",
     async (path) => {
       const api = http();
@@ -218,13 +218,13 @@ describe("APP12 S1 CR003-008 regressions", () => {
         return original(url);
       });
       await start("Facturas");
-      if (path === "/invoices/INV-A")
+      if (path === "/api/v1/invoices/INV-A")
         fireEvent.click(
           await screen.findByRole("button", { name: "Ver INV-A" }),
         );
       await waitFor(() => expect(parse).toHaveBeenCalled());
       api.read.mockImplementation(async (url) =>
-        url.pathname === "/invoices" ? json({}, 401) : original(url),
+        url.pathname === "/api/v1/invoices" ? json({}, 401) : original(url),
       );
       navigate("Mi perfil");
       navigate("Facturas");

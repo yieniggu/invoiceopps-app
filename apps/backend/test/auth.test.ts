@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./support/request.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -75,15 +75,16 @@ describe("APP-02 auth HTTP contract", () => {
     });
     const cookie = "invoiceops_session=temporary-session";
     expect(
-      (await request(app).get("/groups").set("Cookie", cookie)).status,
+      (await request(app).get("/api/v1/groups").set("Cookie", cookie)).status,
     ).toBe(403);
     expect(
-      (await request(app).get("/profile").set("Cookie", cookie)).status,
+      (await request(app).get("/api/v1/auth/profile").set("Cookie", cookie))
+        .status,
     ).toBe(200);
     expect(
       (
         await request(app)
-          .post("/auth/change-password")
+          .post("/api/v1/auth/change-password")
           .set("Host", "127.0.0.1")
           .set("Origin", "http://127.0.0.1")
           .set("Cookie", cookie)
@@ -105,10 +106,10 @@ describe("APP-02 auth HTTP contract", () => {
     };
 
     const signupResponse = await request(app)
-      .post("/auth/signup")
+      .post("/api/v1/auth/signup")
       .send(credentials);
     const loginResponse = await request(app)
-      .post("/auth/login")
+      .post("/api/v1/auth/login")
       .send({ rut: credentials.rut, password: credentials.password });
 
     expect.soft(signupResponse.status).toBe(404);
@@ -135,11 +136,11 @@ describe("APP-02 auth HTTP contract", () => {
       createAuthServiceForHttpTest(),
     );
 
-    const unknownUser = await request(app).post("/auth/login").send({
+    const unknownUser = await request(app).post("/api/v1/auth/login").send({
       rut: "11.111.111-1",
       password: "correct-horse-battery-staple",
     });
-    const invalidPassword = await request(app).post("/auth/login").send({
+    const invalidPassword = await request(app).post("/api/v1/auth/login").send({
       rut: "12.345.678-5",
       password: "not-the-correct-password",
     });
@@ -147,6 +148,26 @@ describe("APP-02 auth HTTP contract", () => {
     expect(unknownUser.status).toBe(401);
     expect(invalidPassword.status).toBe(401);
     expect(unknownUser.body).toEqual(invalidPassword.body);
+  });
+
+  it("answers a missing or non-object login body with the generic 401", async () => {
+    const app = createApp(
+      { isReady: async () => true },
+      createAuthServiceForHttpTest(),
+    );
+
+    const missing = await request(app).post("/api/v1/auth/login");
+    const array = await request(app).post("/api/v1/auth/login").send([]);
+    const wrongTypes = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ rut: 1, password: null });
+
+    for (const response of [missing, array, wrongTypes]) {
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({
+        error: { code: "UNAUTHENTICATED", message: "Invalid credentials" },
+      });
+    }
   });
 
   it("limits auth attempts from one origin and recovers after its window", async () => {
@@ -164,22 +185,24 @@ describe("APP-02 auth HTTP contract", () => {
     );
 
     const failedLogin = () =>
-      request(app).post("/auth/login").send({
+      request(app).post("/api/v1/auth/login").send({
         rut: "12.345.678-5",
         password: "not-the-correct-password",
       });
 
     expect((await failedLogin()).status).toBe(401);
     expect((await failedLogin()).status).toBe(401);
-    const limitedResponse = await request(app).post("/auth/login").send({
+    const limitedResponse = await request(app).post("/api/v1/auth/login").send({
       rut: "12.345.678-5",
       password: "correct-horse-battery-staple",
     });
 
     expect(limitedResponse.status).toBe(429);
     expect(limitedResponse.body).toEqual({
-      status: "error",
-      message: "Too many attempts. Try again later.",
+      error: {
+        code: "RATE_LIMITED",
+        message: "Too many attempts; wait before trying again",
+      },
     });
 
     currentTime += 1_000;
@@ -224,12 +247,12 @@ describe("APP-02 auth HTTP contract", () => {
         ...createAuthServiceForHttpTest(),
         async logout(sessionToken: string) {
           if (!activeSessions.delete(sessionToken)) {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
         },
         async getProfile(sessionToken: string) {
           if (!activeSessions.has(sessionToken)) {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           return {
@@ -249,15 +272,15 @@ describe("APP-02 auth HTTP contract", () => {
     );
 
     const logout = await request(app)
-      .post("/auth/logout")
+      .post("/api/v1/auth/logout")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=current-session");
     const revokedProfile = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=current-session");
     const otherProfile = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=other-session");
 
     expect(logout.status).toBe(204);
@@ -274,19 +297,19 @@ describe("APP-02 auth HTTP contract", () => {
       {
         ...createAuthServiceForHttpTest(),
         async logout() {
-          throw new AuthError(401, "Unauthorized");
+          throw new AuthError(401, "Unauthenticated");
         },
       },
     );
 
-    const absent = await request(app).post("/auth/logout");
+    const absent = await request(app).post("/api/v1/auth/logout");
     const invalid = await request(app)
-      .post("/auth/logout")
+      .post("/api/v1/auth/logout")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=invalid-session");
     const expired = await request(app)
-      .post("/auth/logout")
+      .post("/api/v1/auth/logout")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=expired-session");
@@ -307,7 +330,7 @@ describe("APP-03 profile HTTP contract", () => {
         ...createAuthServiceForHttpTest(),
         async getProfile(sessionToken: string) {
           if (sessionToken !== "valid-session") {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           return {
@@ -344,12 +367,14 @@ describe("APP-03 profile HTTP contract", () => {
     );
 
     const response = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=valid-session");
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       profile: {
+        mustChangePassword: false,
+        contexts: [],
         id: "user-1",
         name: "Ada Lovelace",
         rut: "123456785",
@@ -386,7 +411,7 @@ describe("APP-03 profile HTTP contract", () => {
         ...createAuthServiceForHttpTest(),
         async getProfile(sessionToken: string) {
           if (sessionToken !== "platform-session") {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           return {
@@ -403,7 +428,7 @@ describe("APP-03 profile HTTP contract", () => {
     );
 
     const response = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=platform-session");
 
     expect(response.status).toBe(200);
@@ -416,20 +441,20 @@ describe("APP-03 profile HTTP contract", () => {
       {
         ...createAuthServiceForHttpTest(),
         async getProfile() {
-          throw new AuthError(401, "Unauthorized");
+          throw new AuthError(401, "Unauthenticated");
         },
         async updateProfile() {
-          throw new AuthError(401, "Unauthorized");
+          throw new AuthError(401, "Unauthenticated");
         },
       },
     );
 
-    const absent = await request(app).get("/profile");
+    const absent = await request(app).get("/api/v1/auth/profile");
     const invalid = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=invalid-session");
     const expired = await request(app)
-      .get("/profile")
+      .get("/api/v1/auth/profile")
       .set("Cookie", "invoiceops_session=expired-session");
 
     expect(absent.status).toBe(401);
@@ -450,7 +475,7 @@ describe("APP-03 profile HTTP contract", () => {
         },
         async updateProfile(sessionToken: string, input: unknown) {
           if (sessionToken !== "valid-session") {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           updates.push(input);
@@ -468,13 +493,13 @@ describe("APP-03 profile HTTP contract", () => {
     );
 
     const updated = await request(app)
-      .patch("/profile")
+      .patch("/api/v1/profile")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session")
       .send({ email: "ada.updated@example.test", username: "ada-updated" });
     const rejected = await request(app)
-      .patch("/profile")
+      .patch("/api/v1/profile")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session")
@@ -491,8 +516,11 @@ describe("APP-03 profile HTTP contract", () => {
     ]);
     expect(rejected.status).toBe(400);
     expect(rejected.body).toEqual({
-      status: "error",
-      message: "Invalid profile update",
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid profile update",
+        fields: { rut: "Unknown field", role: "Unknown field" },
+      },
     });
   });
 
@@ -508,13 +536,15 @@ describe("APP-03 profile HTTP contract", () => {
     );
 
     const response = await request(app)
-      .patch("/profile")
+      .patch("/api/v1/profile")
       .set("Cookie", "invoiceops_session=valid-session")
       .set("Origin", "https://untrusted.example.test")
       .send({ email: "ada@example.test" });
 
     expect(response.status).toBe(403);
-    expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+    expect(response.body).toEqual({
+      error: { code: "FORBIDDEN_ORIGIN", message: "Origin not allowed" },
+    });
   });
 });
 
@@ -528,7 +558,7 @@ describe("APP-04 groups HTTP contract", () => {
         ...createAuthServiceForHttpTest(),
         async getProfile(sessionToken: string) {
           if (sessionToken !== "admin-session") {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           return {
@@ -593,7 +623,7 @@ describe("APP-04 groups HTTP contract", () => {
 
   it("lists the authenticated user's groups with deterministic members", async () => {
     const response = await request(createGroupApp())
-      .get("/groups")
+      .get("/api/v1/groups")
       .set("Cookie", "invoiceops_session=admin-session");
 
     expect(response.status).toBe(200);
@@ -619,11 +649,11 @@ describe("APP-04 groups HTTP contract", () => {
       .mockResolvedValue({ groups: [], nextCursor: null });
     const app = createGroupApp({ listOrganizationGroups });
     expect(
-      (await request(app).get(`/organizations/${organizationId}/groups`))
+      (await request(app).get(`/api/v1/organizations/${organizationId}/groups`))
         .status,
     ).toBe(401);
     const response = await request(app)
-      .get(`/organizations/${organizationId}/groups`)
+      .get(`/api/v1/organizations/${organizationId}/groups`)
       .set("Cookie", "invoiceops_session=admin-session");
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
@@ -644,7 +674,7 @@ describe("APP-04 groups HTTP contract", () => {
       expect(
         (
           await request(app)
-            .get(`/organizations/${organizationId}/groups${suffix}`)
+            .get(`/api/v1/organizations/${organizationId}/groups${suffix}`)
             .set("Cookie", "invoiceops_session=admin-session")
         ).status,
       ).toBe(400);
@@ -654,7 +684,7 @@ describe("APP-04 groups HTTP contract", () => {
 
   it("allows only an organization ADMIN to create a group", async () => {
     const response = await request(createGroupApp())
-      .post("/organizations/organization-1/groups")
+      .post("/api/v1/organizations/organization-1/groups")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
@@ -696,24 +726,26 @@ describe("APP-04 groups HTTP contract", () => {
       },
     });
     const updated = await request(app)
-      .patch("/organizations/organization-1/groups/group-2")
+      .patch("/api/v1/organizations/organization-1/groups/group-2")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
       .send({ name: " Updated topics ", description: " Current curriculum " });
     const added = await request(app)
-      .post("/organizations/organization-1/groups/group-2/members")
+      .post("/api/v1/organizations/organization-1/groups/group-2/members")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
       .send({ userId: " student-1 " });
     const removed = await request(app)
-      .delete("/organizations/organization-1/groups/group-2/members/student-1")
+      .delete(
+        "/api/v1/organizations/organization-1/groups/group-2/members/student-1",
+      )
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session");
     const deleted = await request(app)
-      .delete("/organizations/organization-1/groups/group-2")
+      .delete("/api/v1/organizations/organization-1/groups/group-2")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session");
@@ -760,22 +792,22 @@ describe("APP-04 groups HTTP contract", () => {
     });
     const responses = await Promise.all([
       request(app)
-        .patch("/organizations/organization-1/groups/group-2")
+        .patch("/api/v1/organizations/organization-1/groups/group-2")
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ name: "Updated topics" }),
       request(app)
-        .delete("/organizations/organization-1/groups/group-2")
+        .delete("/api/v1/organizations/organization-1/groups/group-2")
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test"),
       request(app)
-        .post("/organizations/organization-1/groups/group-2/members")
+        .post("/api/v1/organizations/organization-1/groups/group-2/members")
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ userId: "student-1" }),
       request(app)
         .delete(
-          "/organizations/organization-1/groups/group-2/members/student-1",
+          "/api/v1/organizations/organization-1/groups/group-2/members/student-1",
         )
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test"),
@@ -783,7 +815,9 @@ describe("APP-04 groups HTTP contract", () => {
 
     for (const response of responses) {
       expect(response.status).toBe(403);
-      expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+      expect(response.body).toEqual({
+        error: { code: "FORBIDDEN_ORIGIN", message: "Origin not allowed" },
+      });
     }
     expect(invoked).toBe(0);
   });
@@ -796,10 +830,10 @@ describe("APP-04 groups HTTP contract", () => {
     });
 
     const unauthenticated = await request(app)
-      .patch("/organizations/organization-1/groups/group-2")
+      .patch("/api/v1/organizations/organization-1/groups/group-2")
       .send({ name: "Updated topics" });
     const forbidden = await request(app)
-      .post("/organizations/organization-1/groups/group-2/members")
+      .post("/api/v1/organizations/organization-1/groups/group-2/members")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
@@ -807,11 +841,12 @@ describe("APP-04 groups HTTP contract", () => {
 
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.body).toEqual({
-      status: "error",
-      message: "Unauthorized",
+      error: { code: "UNAUTHENTICATED", message: "Unauthenticated" },
     });
     expect(forbidden.status).toBe(403);
-    expect(forbidden.body).toEqual({ status: "error", message: "Forbidden" });
+    expect(forbidden.body).toEqual({
+      error: { code: "FORBIDDEN", message: "Forbidden" },
+    });
   });
 });
 
@@ -824,7 +859,7 @@ describe("platform membership HTTP contract", () => {
         ...createAuthServiceForHttpTest(),
         async getProfile(sessionToken: string) {
           if (sessionToken !== "platform-session") {
-            throw new AuthError(401, "Unauthorized");
+            throw new AuthError(401, "Unauthenticated");
           }
 
           return {
@@ -840,9 +875,6 @@ describe("platform membership HTTP contract", () => {
       },
       {
         platformAdministrators: {
-          async bootstrap() {
-            throw new Error("not used");
-          },
           async transfer() {
             throw new Error("not used");
           },
@@ -877,27 +909,27 @@ describe("platform membership HTTP contract", () => {
     );
 
     const discovered = await request(app)
-      .get("/platform/organizations")
+      .get("/api/v1/platform/organizations")
       .set("Cookie", "invoiceops_session=platform-session");
     const created = await request(app)
-      .post("/platform/organizations/organization-1/members")
+      .post("/api/v1/platform/organizations/organization-1/members")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session")
       .send({ userId: "student-1", role: "ADMIN" });
     const changed = await request(app)
-      .patch("/platform/organizations/organization-1/members/student-1")
+      .patch("/api/v1/platform/organizations/organization-1/members/student-1")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session")
       .send({ role: "USER" });
     const removed = await request(app)
-      .delete("/platform/organizations/organization-1/members/student-1")
+      .delete("/api/v1/platform/organizations/organization-1/members/student-1")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session");
     const csrfRejected = await request(app)
-      .post("/platform/organizations/organization-1/members")
+      .post("/api/v1/platform/organizations/organization-1/members")
       .set("Cookie", "invoiceops_session=platform-session")
       .set("Origin", "https://untrusted.example.test")
       .send({ userId: "student-2", role: "USER" });

@@ -39,18 +39,18 @@ function http() {
   const read = vi
     .fn<(url: URL) => Promise<Response>>()
     .mockImplementation(async (url) => {
-      if (url.pathname === "/invoices")
+      if (url.pathname === "/api/v1/invoices")
         return json({
           invoices: [invoice(), invoice("INV-B")],
           nextCursor: "cursor-original",
         });
-      return json({ invoice: invoice(url.pathname.split("/")[2]) });
+      return json({ invoice: invoice(url.pathname.split("/")[4]) });
     });
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input) => {
       const url = new URL(input.toString(), "http://test.invalid");
-      if (url.pathname === "/profile")
+      if (url.pathname === "/api/v1/auth/profile")
         return json({
           profile: {
             id: "user",
@@ -66,8 +66,8 @@ function http() {
             ],
           },
         });
-      if (url.pathname === "/groups") return json({ groups: [] });
-      if (url.pathname === "/auth/logout") return json({}, 500);
+      if (url.pathname === "/api/v1/groups") return json({ groups: [] });
+      if (url.pathname === "/api/v1/auth/logout") return json({}, 500);
       return read(url);
     });
   return { read, fetchMock };
@@ -197,7 +197,7 @@ describe("APP12 S3 invoice presentation HTTP boundary", () => {
     const api = http();
     const original = api.read.getMockImplementation()!;
     api.read.mockImplementation(async (url) =>
-      url.pathname === "/invoices/INV-A"
+      url.pathname === "/api/v1/invoices/INV-A"
         ? json({
             invoice: {
               ...invoice(),

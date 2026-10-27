@@ -53,7 +53,7 @@ export function AuthScreen({ onLogin }: { onLogin: () => void }) {
     activeRequest.current = controller;
     setPending(true);
     try {
-      const response = await fetch("/auth/login", {
+      const response = await fetch("/api/v1/auth/login", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

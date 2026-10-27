@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./support/request.js";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -25,7 +25,7 @@ function createAuth(): AuthService {
     },
     async getProfile(sessionToken) {
       if (sessionToken !== "valid-session") {
-        throw new AuthError(401, "Unauthorized");
+        throw new AuthError(401, "Unauthenticated");
       }
       return {
         id: "user-1",
@@ -78,16 +78,16 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
   it("lists, creates, and updates policies in the authenticated context", async () => {
     const app = createPolicyApp();
     const listed = await request(app)
-      .get(withContext("/business-policies"))
+      .get(withContext("/api/v1/business-policies"))
       .set("Cookie", "invoiceops_session=valid-session");
     const created = await request(app)
-      .post(withContext("/business-policies"))
+      .post(withContext("/api/v1/business-policies"))
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=valid-session")
       .send({ version: " ml-policy-v2 ", manualReviewThreshold: 0 });
     const updated = await request(app)
-      .patch(withContext("/business-policies/ml-policy-v2"))
+      .patch(withContext("/api/v1/business-policies/ml-policy-v2"))
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=valid-session")
@@ -120,11 +120,11 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
       },
     });
     const unauthenticated = await request(app).get(
-      withContext("/business-policies"),
+      withContext("/api/v1/business-policies"),
     );
     const crossOwner = await request(app)
       .get(
-        `/business-policies?${new URLSearchParams({
+        `/api/v1/business-policies?${new URLSearchParams({
           ...context,
           ownerId: "other-user",
         })}`,
@@ -132,7 +132,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
       .set("Cookie", "invoiceops_session=valid-session");
     const crossOrganization = await request(app)
       .post(
-        `/business-policies?${new URLSearchParams({
+        `/api/v1/business-policies?${new URLSearchParams({
           ...context,
           organizationId: "organization-2",
         })}`,
@@ -146,8 +146,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
     expect(crossOwner.status).toBe(404);
     expect(crossOrganization.status).toBe(404);
     expect(crossOwner.body).toEqual({
-      status: "error",
-      message: "Business policy not found",
+      error: { code: "NOT_FOUND", message: "Business policy not found" },
     });
   });
 
@@ -165,11 +164,11 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
     });
     const responses = await Promise.all([
       request(app)
-        .post(withContext("/business-policies"))
+        .post(withContext("/api/v1/business-policies"))
         .set("Cookie", "invoiceops_session=valid-session")
         .send({ version: "ml-policy-v1", manualReviewThreshold: 0.8 }),
       request(app)
-        .patch(withContext("/business-policies/ml-policy-v1"))
+        .patch(withContext("/api/v1/business-policies/ml-policy-v1"))
         .set("Cookie", "invoiceops_session=valid-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ manualReviewThreshold: 0.8 }),
@@ -177,7 +176,9 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
 
     for (const response of responses) {
       expect(response.status).toBe(403);
-      expect(response.body).toEqual({ status: "error", message: "Forbidden" });
+      expect(response.body).toEqual({
+        error: { code: "FORBIDDEN_ORIGIN", message: "Origin not allowed" },
+      });
     }
     expect(invoked).toBe(0);
   });
@@ -203,7 +204,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
     const responses = await Promise.all(
       invalidPayloads.map((body) =>
         request(app)
-          .post(withContext("/business-policies"))
+          .post(withContext("/api/v1/business-policies"))
           .set("Host", "127.0.0.1")
           .set("Origin", validOrigin)
           .set("Cookie", "invoiceops_session=valid-session")
@@ -211,7 +212,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
       ),
     );
     const invalidPatch = await request(app)
-      .patch(withContext("/business-policies/ml-policy-v1"))
+      .patch(withContext("/api/v1/business-policies/ml-policy-v1"))
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=valid-session")
@@ -231,7 +232,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
     ["missing ownerId", { organizationId: "o", ownerType: "user" }],
   ])("returns 400 for %s on GET /business-policies", async (_label, params) => {
     const response = await request(createPolicyApp())
-      .get(`/business-policies?${new URLSearchParams(params)}`)
+      .get(`/api/v1/business-policies?${new URLSearchParams(params)}`)
       .set("Host", "127.0.0.1")
       .set("Cookie", "invoiceops_session=valid-session");
     expect(response.status).toBe(400);
@@ -240,7 +241,7 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
   it("maps malformed and oversized JSON bodies to 400 and 413", async () => {
     const app = createPolicyApp();
     const malformed = await request(app)
-      .post(withContext("/business-policies"))
+      .post(withContext("/api/v1/business-policies"))
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=valid-session")
@@ -248,19 +249,20 @@ describe("APP-07 BusinessPolicy HTTP contract", () => {
       .send('{"version": ');
     expect(malformed.status).toBe(400);
     expect(malformed.body).toEqual({
-      status: "error",
-      message: "Invalid JSON body",
+      error: { code: "INVALID_JSON", message: "Invalid JSON body" },
     });
     const oversized = await request(app)
-      .post(withContext("/business-policies"))
+      .post(withContext("/api/v1/business-policies"))
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=valid-session")
       .send({ version: "x".repeat(20_000), manualReviewThreshold: 0.5 });
     expect(oversized.status).toBe(413);
     expect(oversized.body).toEqual({
-      status: "error",
-      message: "Request body too large",
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message: "Request body too large",
+      },
     });
   });
 });

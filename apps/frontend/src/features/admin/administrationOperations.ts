@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Profile } from "../profile/ProfileScreen";
 import type { PlatformOrganization } from "../organizations/OrganizationsScreen";
+import { protectedFetch } from "../auth/protectedFetch";
 
 export type MembershipRole = "ADMIN" | "USER";
 export type MembershipMethod = "POST" | "PATCH" | "DELETE";
@@ -134,9 +135,9 @@ export function useAdministrationOperations() {
         !fresh.organizations.some((org) => org.id === intent.organizationId)
       )
         throw new AdministrationReadError(403);
-      const path = `/platform/organizations/${encodeURIComponent(intent.organizationId)}/members${intent.method === "POST" ? "" : `/${encodeURIComponent(intent.userId)}`}`;
+      const path = `/api/v1/platform/organizations/${encodeURIComponent(intent.organizationId)}/members${intent.method === "POST" ? "" : `/${encodeURIComponent(intent.userId)}`}`;
       dispatched = true;
-      const response = await fetch(path, {
+      const response = await protectedFetch(path, {
         method: intent.method,
         credentials: "same-origin",
         ...(intent.method === "DELETE"

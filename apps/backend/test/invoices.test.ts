@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./support/request.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -26,7 +26,7 @@ function createAuth(): AuthService {
     },
     async getProfile(token) {
       if (token !== "valid-session") {
-        throw new AuthError(401, "Unauthorized");
+        throw new AuthError(401, "Unauthenticated");
       }
 
       return {
@@ -86,10 +86,10 @@ describe("APP-06 invoice HTTP contract", () => {
     const query = new URLSearchParams({ ...context, q: "acme" });
 
     const list = await request(app)
-      .get(`/invoices?${query}`)
+      .get(`/api/v1/invoices?${query}`)
       .set("Cookie", "invoiceops_session=valid-session");
     const detail = await request(app)
-      .get(`/invoices/${invoice.id}?${query}`)
+      .get(`/api/v1/invoices/${invoice.id}?${query}`)
       .set("Cookie", "invoiceops_session=valid-session");
     expect(list.status).toBe(200);
     expect(list.body.invoices[0]).toMatchObject({ businessId: "FAC-2026-001" });
@@ -105,13 +105,12 @@ describe("APP-06 invoice HTTP contract", () => {
     try {
       const response = await request(app)
         .get(
-          "/invoices/%E0%A4%A?organizationId=organization-1&ownerType=group&ownerId=group-1",
+          "/api/v1/invoices/%E0%A4%A?organizationId=organization-1&ownerType=group&ownerId=group-1",
         )
         .set("Cookie", "invoiceops_session=valid-session");
       expect(response.status).toBe(400);
       expect(response.body).toEqual({
-        status: "error",
-        message: "Bad request",
+        error: { code: "BAD_REQUEST", message: "Bad request" },
       });
       expect(JSON.stringify(response.body)).not.toMatch(
         /URIError|at \w+|stack/,
@@ -127,9 +126,9 @@ describe("APP-06 invoice HTTP contract", () => {
       invoices: createInvoiceService(),
     });
 
-    const invalid = await request(app).get("/invoices?limit=101");
+    const invalid = await request(app).get("/api/v1/invoices?limit=101");
     const unauthenticated = await request(app)
-      .get(`/invoices?${new URLSearchParams(context)}`)
+      .get(`/api/v1/invoices?${new URLSearchParams(context)}`)
       .set("Cookie", "invoiceops_session=invalid-session");
 
     expect(invalid.status).toBe(400);
@@ -148,12 +147,14 @@ describe("APP-06 invoice HTTP contract", () => {
       invoices: createInvoiceService(),
     });
     const response = await request(app)
-      .get(`/invoices?${new URLSearchParams(params)}`)
+      .get(`/api/v1/invoices?${new URLSearchParams(params)}`)
       .set("Cookie", "invoiceops_session=valid-session");
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
-      status: "error",
-      message: "Invalid resource context",
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid resource context",
+      },
     });
   });
 });

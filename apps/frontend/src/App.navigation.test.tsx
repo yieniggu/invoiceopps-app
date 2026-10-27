@@ -90,14 +90,15 @@ function mockHttp(anonymous = false) {
       const url = new URL(path, "http://test.invalid");
       const method =
         init?.method ?? (input instanceof Request ? input.method : "GET");
-      if (method === "PATCH" && url.pathname === "/profile") return patch();
+      if (method === "PATCH" && url.pathname === "/api/v1/profile")
+        return patch();
       if (method === "GET") {
-        if (url.pathname === "/profile")
+        if (url.pathname === "/api/v1/auth/profile")
           return json(anonymous ? {} : { profile }, anonymous ? 401 : 200);
-        if (url.pathname === "/groups") return json({ groups });
-        if (url.pathname === "/business-policies")
+        if (url.pathname === "/api/v1/groups") return json({ groups });
+        if (url.pathname === "/api/v1/business-policies")
           return json({ policies: [] });
-        if (url.pathname === "/invoices") return lists(url);
+        if (url.pathname === "/api/v1/invoices") return lists(url);
       }
       unexpected.push(`${method} ${path}`);
       throw new Error(`Unexpected request: ${method} ${path}`);
@@ -170,7 +171,7 @@ describe("APP12 S1 navigation and shared context", () => {
     render(<App />);
     const navigation = await screen.findByRole("navigation");
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/groups", {
+      expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/groups", {
         credentials: "same-origin",
       }),
     );
@@ -180,7 +181,9 @@ describe("APP12 S1 navigation and shared context", () => {
     navigate(navigation, "Facturas");
     await screen.findByText("Proveedor user-1");
     expect(
-      api.lists.mock.calls.every(([url]) => url.pathname === "/invoices"),
+      api.lists.mock.calls.every(
+        ([url]) => url.pathname === "/api/v1/invoices",
+      ),
     ).toBe(true);
   });
 
@@ -190,9 +193,9 @@ describe("APP12 S1 navigation and shared context", () => {
     let discoveryReady = false;
     const original = api.fetchMock.getMockImplementation()!;
     api.fetchMock.mockImplementation(async (input, init) => {
-      if (String(input) === "/profile" && !init?.method)
+      if (String(input) === "/api/v1/auth/profile" && !init?.method)
         return json({ profile: currentProfile });
-      if (String(input) === "/platform/organizations")
+      if (String(input) === "/api/v1/platform/organizations")
         return discoveryReady ? json({ organizations: [] }) : json({}, 500);
       return original(input, init);
     });
@@ -264,7 +267,7 @@ describe("APP12 S1 navigation and shared context", () => {
     expect(
       api.lists.mock.calls.some(
         ([url]) =>
-          url.pathname === "/invoices" &&
+          url.pathname === "/api/v1/invoices" &&
           url.searchParams.get("organizationId") === "org-B" &&
           url.searchParams.get("ownerType") === "group" &&
           url.searchParams.get("ownerId") === "group-B",
@@ -284,7 +287,7 @@ describe("APP12 S1 navigation and shared context", () => {
 
   it.each([
     {
-      path: "/invoices",
+      path: "/api/v1/invoices",
       current: "Proveedor group-B",
       stale: "Proveedor user-1",
     },
@@ -351,7 +354,7 @@ describe("APP12 S1 navigation and shared context", () => {
     },
   );
 
-  it.each(["/invoices"])(
+  it.each(["/api/v1/invoices"])(
     "ignores a delayed %s response body after the shared owner changes",
     async (path) => {
       const api = mockHttp();
@@ -387,16 +390,16 @@ describe("APP12 S1 navigation and shared context", () => {
     expect(screen.getByText(profile.name)).toBeTruthy();
     navigate(screen.getByRole("navigation"), "Facturas");
     await screen.findByText("Proveedor user-1");
-    expect(api.fetchMock).toHaveBeenCalledWith("/profile", {
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/auth/profile", {
       credentials: "same-origin",
     });
-    expect(api.fetchMock).toHaveBeenCalledWith("/groups", {
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/groups", {
       credentials: "same-origin",
     });
     expect(
       api.lists.mock.calls.some(
         ([url]) =>
-          url.pathname === "/invoices" &&
+          url.pathname === "/api/v1/invoices" &&
           url.searchParams.get("organizationId") === "org-A" &&
           url.searchParams.get("ownerType") === "user" &&
           url.searchParams.get("ownerId") === profile.id,
@@ -411,7 +414,7 @@ describe("APP12 S1 navigation and shared context", () => {
     await screen.findByRole("button", { name: "Iniciar sesión" });
 
     expect(api.fetchMock).toHaveBeenCalledTimes(1);
-    expect(api.fetchMock).toHaveBeenCalledWith("/profile", {
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/auth/profile", {
       credentials: "same-origin",
     });
     expect(api.lists).not.toHaveBeenCalled();

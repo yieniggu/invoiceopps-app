@@ -123,7 +123,7 @@ describe("APP-03 profile", () => {
       );
     });
     expect(fetchMock).toHaveBeenLastCalledWith(
-      "/profile",
+      "/api/v1/profile",
       expect.objectContaining({
         method: "PATCH",
         credentials: "same-origin",
@@ -244,7 +244,7 @@ describe("APP-03 profile", () => {
       await screen.findByText("Tu sesión no está disponible o expiró."),
     ).toBeTruthy();
     expect(screen.queryByText("Ada Lovelace")).toBeNull();
-    expect(fetchMock).toHaveBeenLastCalledWith("/auth/logout", {
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/auth/logout", {
       method: "POST",
       credentials: "same-origin",
     });
@@ -360,10 +360,11 @@ describe("APP-04 organization groups", () => {
     ).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(
-        ([path]) => typeof path === "string" && path.startsWith("/invoices"),
+        ([path]) =>
+          typeof path === "string" && path.startsWith("/api/v1/invoices"),
       ),
     ).toBe(false);
-    expect(fetchMock).toHaveBeenCalledWith("/platform/organizations", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/platform/organizations", {
       credentials: "same-origin",
     });
   });
@@ -375,7 +376,7 @@ describe("APP-04 organization groups", () => {
       .mockImplementation((input) => {
         const url = input instanceof Request ? input.url : input.toString();
 
-        if (url === "/profile") {
+        if (url === "/api/v1/auth/profile") {
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -403,11 +404,11 @@ describe("APP-04 organization groups", () => {
           );
         }
 
-        if (url === "/platform/organizations") {
+        if (url === "/api/v1/platform/organizations") {
           return Promise.resolve(new Response(null, { status: 500 }));
         }
 
-        if (url === "/groups") {
+        if (url === "/api/v1/groups") {
           groupRequestCount += 1;
           return Promise.resolve(
             new Response(
@@ -442,7 +443,7 @@ describe("APP-04 organization groups", () => {
     );
     await navigate("Mis grupos");
     expect(await screen.findByText("Reloaded local group")).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith("/groups", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/groups", {
       credentials: "same-origin",
     });
     expect(screen.queryByText("No fue posible cargar los grupos.")).toBeNull();

@@ -9,6 +9,10 @@ import {
 
 import { AuthScreen } from "./features/auth/AuthScreen";
 import { ProtectedSessionProvider } from "./features/auth/ProtectedSession";
+import {
+  onOnboardingRequired,
+  protectedFetch,
+} from "./features/auth/protectedFetch";
 import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
 import { LogOut } from "lucide-react";
 
@@ -46,7 +50,9 @@ type ProfileState =
   | { kind: "authenticated"; profile: Profile };
 
 async function requestProfile() {
-  const response = await fetch("/profile", { credentials: "same-origin" });
+  const response = await protectedFetch("/api/v1/auth/profile", {
+    credentials: "same-origin",
+  });
 
   if (response.status === 401) {
     return { kind: "anonymous" } as const;
@@ -70,7 +76,9 @@ class ProtectedReadError extends Error {
 }
 
 async function requestGroups() {
-  const response = await fetch("/groups", { credentials: "same-origin" });
+  const response = await protectedFetch("/api/v1/groups", {
+    credentials: "same-origin",
+  });
 
   if (!response.ok) {
     throw new ProtectedReadError("Groups request failed", response.status);
@@ -80,7 +88,7 @@ async function requestGroups() {
 }
 
 async function requestPlatformOrganizations() {
-  const response = await fetch("/platform/organizations", {
+  const response = await protectedFetch("/api/v1/platform/organizations", {
     credentials: "same-origin",
   });
 
@@ -99,6 +107,21 @@ async function requestPlatformOrganizations() {
   };
 }
 
+type PasswordField = "currentPassword" | "newPassword";
+
+interface PasswordError {
+  /** Field the message is about; null for errors that belong to no field. */
+  field: PasswordField | null;
+  text: string;
+  /** Changes on every failure so the field is focused again each time. */
+  nonce: number;
+}
+
+const MIN_PASSWORD_LENGTH = 12;
+const MAX_PASSWORD_LENGTH = 256;
+const PASSWORD_ERROR_ID = "password-change-error";
+const NEW_PASSWORD_LENGTH_MESSAGE = `La contraseña nueva debe tener entre ${MIN_PASSWORD_LENGTH} y ${MAX_PASSWORD_LENGTH} caracteres.`;
+
 export function App() {
   const administration = useAdministrationOperations();
   const groupOperations = useGroupOperations();
@@ -112,6 +135,8 @@ export function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [passwordError, setPasswordError] = useState<PasswordError>();
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [logoutError, setLogoutError] = useState<string>();
   const [groupError, setGroupError] = useState<string>();
   const [isMutatingGroup, setIsMutatingGroup] = useState(false);
@@ -125,6 +150,34 @@ export function App() {
   // Authority ordering is separate from session ownership: refreshing roles
   // must not reset policy, invoice or administration mutation ledgers.
   const authorityRevision = useRef(0);
+  const passwordFields = {
+    currentPassword: useRef<HTMLInputElement>(null),
+    newPassword: useRef<HTMLInputElement>(null),
+  };
+  const changingPassword = useRef(false);
+  const reloadingForOnboarding = useRef(false);
+  const latestLoadProfile = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    if (passwordError?.field) {
+      passwordFields[passwordError.field].current?.focus();
+    }
+  }, [passwordError]);
+
+  // A protected call answered 403 ONBOARDING_REQUIRED while the session was
+  // open (the temporary password became pending): reload the profile so the
+  // forced password-change screen replaces the generic permission message.
+  useEffect(
+    () =>
+      onOnboardingRequired(() => {
+        if (!session.current.active || reloadingForOnboarding.current) return;
+        reloadingForOnboarding.current = true;
+        void latestLoadProfile.current().finally(() => {
+          reloadingForOnboarding.current = false;
+        });
+      }),
+    [],
+  );
 
   useLayoutEffect(() => {
     const title =
@@ -188,6 +241,9 @@ export function App() {
         setState(result);
         setEmail(result.profile.email ?? "");
         setUsername(result.profile.username ?? "");
+        // Until the temporary password is replaced every protected read is
+        // answered 403 ONBOARDING_REQUIRED: do not issue them.
+        if (result.profile.mustChangePassword) return;
         if (result.profile.isPlatformAdministrator) {
           setPlatformOrganizationsState({ kind: "loading" });
           try {
@@ -245,6 +301,8 @@ export function App() {
       setState({ kind: "error" });
     }
   };
+
+  latestLoadProfile.current = loadProfile;
 
   const reloadGroups = async (epoch = session.current.epoch) => {
     const completeConfirmedReads = groupOperations.beginRead();
@@ -335,7 +393,7 @@ export function App() {
     setGroupMessage(undefined);
     setGroupOperation(label);
     try {
-      const response = await fetch(operation.intent.path, {
+      const response = await protectedFetch(operation.intent.path, {
         method: operation.intent.method,
         credentials: "same-origin",
         ...(operation.intent.body === undefined
@@ -401,7 +459,7 @@ export function App() {
     setMessage(undefined);
 
     try {
-      const response = await fetch("/profile", {
+      const response = await protectedFetch("/api/v1/profile", {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
@@ -455,7 +513,7 @@ export function App() {
     setLogoutError(undefined);
 
     try {
-      const response = await fetch("/auth/logout", {
+      const response = await protectedFetch("/api/v1/auth/logout", {
         method: "POST",
         credentials: "same-origin",
       });
@@ -487,26 +545,80 @@ export function App() {
     }
   };
 
+  const failPassword = (field: PasswordField | null, text: string) =>
+    setPasswordError((current) => ({
+      field,
+      text,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+
   const changeTemporaryPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (changingPassword.current) return;
     const data = new FormData(event.currentTarget);
     const currentPassword = String(data.get("currentPassword") ?? "");
     const newPassword = String(data.get("newPassword") ?? "");
     setMessage(undefined);
-    const response = await fetch("/auth/change-password", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword, newPassword }),
-    });
-    if (response.status === 401) return endSession();
-    if (!response.ok) {
-      setMessage(
-        "No fue posible cambiar la contraseña. Revisa los datos e intenta nuevamente.",
-      );
+    setPasswordError(undefined);
+    // Own validation (the form is noValidate): Spanish text, focus and ARIA
+    // instead of the browser's native tooltip.
+    if (!currentPassword) {
+      failPassword("currentPassword", "Ingresa tu contraseña temporal.");
       return;
     }
-    await loadProfile();
+    if (
+      newPassword.length < MIN_PASSWORD_LENGTH ||
+      newPassword.length > MAX_PASSWORD_LENGTH
+    ) {
+      failPassword("newPassword", NEW_PASSWORD_LENGTH_MESSAGE);
+      return;
+    }
+
+    changingPassword.current = true;
+    setIsChangingPassword(true);
+    try {
+      const response = await protectedFetch("/api/v1/auth/change-password", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      if (response.status === 401) return endSession();
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: { code?: unknown; fields?: Record<string, unknown> };
+        };
+        if (response.status === 400 && body.error?.code === "PASSWORD_REUSE") {
+          failPassword(
+            "newPassword",
+            "La nueva contraseña debe ser distinta de la actual.",
+          );
+        } else if (
+          response.status === 400 &&
+          body.error?.code === "VALIDATION_ERROR" &&
+          body.error.fields &&
+          "newPassword" in body.error.fields
+        ) {
+          failPassword("newPassword", NEW_PASSWORD_LENGTH_MESSAGE);
+        } else {
+          failPassword(
+            null,
+            "No fue posible cambiar la contraseña. Revisa los datos e intenta nuevamente.",
+          );
+        }
+        return;
+      }
+      // The server rotated the session cookie; the browser already holds it.
+      await loadProfile();
+    } catch {
+      failPassword(
+        null,
+        "No fue posible conectar con el servidor. Revisa tu conexión e intenta nuevamente.",
+      );
+    } finally {
+      changingPassword.current = false;
+      setIsChangingPassword(false);
+    }
   };
 
   if (state.kind === "loading") {
@@ -541,28 +653,56 @@ export function App() {
           Debes establecer una contraseña nueva antes de acceder al resto de la
           aplicación.
         </p>
-        <form onSubmit={(event) => void changeTemporaryPassword(event)}>
+        <form
+          noValidate
+          aria-busy={isChangingPassword}
+          onSubmit={(event) => void changeTemporaryPassword(event)}
+        >
           <label>
             Contraseña temporal
             <input
+              ref={passwordFields.currentPassword}
               name="currentPassword"
               type="password"
               autoComplete="current-password"
               required
+              aria-invalid={passwordError?.field === "currentPassword"}
+              aria-describedby={
+                passwordError?.field === "currentPassword"
+                  ? PASSWORD_ERROR_ID
+                  : undefined
+              }
             />
           </label>
           <label>
             Contraseña nueva
             <input
+              ref={passwordFields.newPassword}
               name="newPassword"
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={MIN_PASSWORD_LENGTH}
+              maxLength={MAX_PASSWORD_LENGTH}
               required
+              aria-invalid={passwordError?.field === "newPassword"}
+              aria-describedby={
+                passwordError?.field === "newPassword"
+                  ? PASSWORD_ERROR_ID
+                  : undefined
+              }
             />
           </label>
-          <button type="submit">Cambiar contraseña</button>
+          <button type="submit" disabled={isChangingPassword}>
+            {isChangingPassword
+              ? "Cambiando contraseña..."
+              : "Cambiar contraseña"}
+          </button>
         </form>
+        {passwordError ? (
+          <p role="alert" id={PASSWORD_ERROR_ID}>
+            {passwordError.text}
+          </p>
+        ) : null}
         {message ? <p role="alert">{message}</p> : null}
         <button
           type="button"

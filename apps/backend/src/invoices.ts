@@ -6,23 +6,11 @@ import {
   type PrismaClient,
 } from "./generated/prisma/client.js";
 import { AuthError } from "./auth.js";
+import type { Invoice } from "./features/invoices/types.js";
 import type { ResourceContext } from "./resource-context.js";
 
-export type InvoiceDto = {
-  id: string;
-  businessId: string;
-  organizationId: string;
-  groupId: string;
-  supplierName: string;
-  amountPesos: number;
-  currency: Currency;
-  issuedOn: string;
-  dueOn: string;
-  businessStatus: InvoiceBusinessStatus;
-  processingStatus: InvoiceProcessingStatus;
-  createdByUserId: string;
-  createdAt: string;
-};
+// The legacy list/detail DTO is exactly the zod Invoice contract.
+export type InvoiceDto = Invoice;
 
 type InvoiceRow = {
   id: string;

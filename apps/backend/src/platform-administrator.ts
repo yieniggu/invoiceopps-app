@@ -13,7 +13,6 @@ import type { GroupResponse } from "./groups.js";
 const MAX_SERIALIZABLE_RETRIES = 3;
 
 export interface PlatformAdministratorService {
-  bootstrap(userId: string): Promise<void>;
   transfer(userId: string): Promise<void>;
   listOrganizations(
     actorUserId: string,
@@ -74,6 +73,28 @@ function isTransactionConflict(error: unknown) {
   return (error as { code?: unknown }).code === "P2034";
 }
 
+/**
+ * Retries a serializable operation a bounded number of times on conflicts.
+ * When retries run out, `conflictError` builds the error to throw; the default
+ * is the membership-update conflict.
+ */
+export async function runSerializable<T>(
+  operation: () => Promise<T>,
+  conflictError: () => Error = () =>
+    new AuthError(409, "Membership update conflicted; retry"),
+): Promise<T> {
+  for (let attempt = 0; attempt < MAX_SERIALIZABLE_RETRIES; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransactionConflict(error)) throw error;
+      if (attempt === MAX_SERIALIZABLE_RETRIES - 1) throw conflictError();
+    }
+  }
+
+  throw conflictError();
+}
+
 function notFound() {
   return new AuthError(404, "Organization membership not found");
 }
@@ -81,26 +102,6 @@ function notFound() {
 export function createPlatformAdministratorService(
   prisma: PrismaClient,
 ): PlatformAdministratorService {
-  async function runSerializable<T>(operation: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; attempt < MAX_SERIALIZABLE_RETRIES; attempt += 1) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (
-          !isTransactionConflict(error) ||
-          attempt === MAX_SERIALIZABLE_RETRIES - 1
-        ) {
-          if (isTransactionConflict(error)) {
-            throw new AuthError(409, "Membership update conflicted; retry");
-          }
-          throw error;
-        }
-      }
-    }
-
-    throw new AuthError(409, "Membership update conflicted; retry");
-  }
-
   async function requirePlatformAdministrator(
     transaction: Prisma.TransactionClient,
     userId: string,
@@ -139,44 +140,6 @@ export function createPlatformAdministratorService(
   }
 
   return {
-    async bootstrap(userId) {
-      try {
-        await prisma.$transaction(async (transaction) => {
-          const user = await transaction.user.findUnique({
-            where: { id: userId },
-            select: { id: true },
-          });
-          if (!user) {
-            throw new AuthError(404, "User not found");
-          }
-
-          const administrator =
-            await transaction.platformAdministrator.findUnique({
-              where: { id: 1 },
-              select: { id: true },
-            });
-          if (administrator) {
-            throw new AuthError(409, "Platform administrator already exists");
-          }
-
-          await transaction.platformAdministrator.create({
-            data: { id: 1, userId },
-          });
-          await transaction.platformAdministrativeAuditEvent.create({
-            data: {
-              type: PlatformAdministrativeAuditEventType.PLATFORM_ADMINISTRATOR_BOOTSTRAPPED,
-              actorUserId: userId,
-              targetUserId: userId,
-            },
-          });
-        });
-      } catch (error) {
-        if ((error as { code?: unknown }).code === "P2002") {
-          throw new AuthError(409, "Platform administrator already exists");
-        }
-        throw error;
-      }
-    },
     async transfer(userId) {
       await prisma.$transaction(async (transaction) => {
         const administrator =

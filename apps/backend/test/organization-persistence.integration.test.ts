@@ -5,7 +5,11 @@ import {
   OrganizationRole,
   PrismaClient,
 } from "../src/generated/prisma/client.js";
-import { AuthError, createAuthService } from "../src/auth.js";
+import { AuthError, createAuthService, hashPassword } from "../src/auth.js";
+import {
+  BootstrapRejectedError,
+  createBootstrapService,
+} from "../src/features/auth/bootstrap-service.js";
 import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
 import { createGroupService } from "../src/groups.js";
@@ -48,6 +52,20 @@ async function resetOwnedTestDatabase() {
 }
 
 beforeEach(resetOwnedTestDatabase);
+
+// The first platform administrator is designated through the bootstrap
+// service (the same code `pnpm recovery:bootstrap` runs). It only designates
+// users with a usable credential, so the fixture user gets one first.
+async function designatePlatformAdministrator(user: {
+  id: string;
+  rut: string;
+}) {
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: await hashPassword("integration-password-1") },
+  });
+  return createBootstrapService(prisma).designateExisting(user.rut);
+}
 
 describe("APP-01 PostgreSQL persistence", () => {
   it("persists distinct local roles for one user across organizations", async () => {
@@ -538,7 +556,7 @@ describe("Organization group catalog PostgreSQL integration", () => {
     await expect(
       groups.listOrganizationGroups(admin.id, foreign.id, { limit: 50 }),
     ).rejects.toMatchObject({ status: 404 });
-    await createPlatformAdministratorService(prisma).bootstrap(student.id);
+    await designatePlatformAdministrator(student);
     expect(
       (
         await groups.listOrganizationGroups(student.id, organization.id, {
@@ -609,7 +627,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       rut: "12.345.679-3",
     });
     const service = createPlatformAdministratorService(prisma);
-    await service.bootstrap(global.id);
+    await designatePlatformAdministrator(global);
     await expect(
       service.createOrganization!(organizationAdmin.id, {
         name: "Denied",
@@ -667,13 +685,13 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     expect(JSON.stringify(audit)).not.toContain(provisioned.temporaryPassword);
   });
 
-  it("clears the temporary requirement, keeps the current session and revokes other sessions after password change", async () => {
+  it("clears the temporary requirement, revokes every session and issues a rotated one after password change", async () => {
     const global = await persistence.createUser({
       name: "Global",
       rut: "12.345.678-5",
     });
     const service = createPlatformAdministratorService(prisma);
-    await service.bootstrap(global.id);
+    await designatePlatformAdministrator(global);
     const organization = await service.createOrganization!(global.id, {
       name: "Provisioned",
       slug: "provisioned",
@@ -696,16 +714,20 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     expect((await auth.getProfile(first.sessionToken)).mustChangePassword).toBe(
       true,
     );
-    await auth.changePassword!(first.sessionToken, {
+    // RP0-04: the change revokes every session and returns a rotated one.
+    const rotated = await auth.changePassword!(first.sessionToken, {
       currentPassword: provisioned.temporaryPassword,
       newPassword: "changed-password-123",
     });
-    expect(await auth.getProfile(first.sessionToken)).toMatchObject({
+    if (!rotated) throw new Error("expected a rotated session");
+    expect(await auth.getProfile(rotated.sessionToken)).toMatchObject({
       mustChangePassword: false,
     });
-    await expect(auth.getProfile(second.sessionToken)).rejects.toMatchObject({
-      status: 401,
-    });
+    for (const revoked of [first, second]) {
+      await expect(auth.getProfile(revoked.sessionToken)).rejects.toMatchObject(
+        { status: 401 },
+      );
+    }
     const stored = await prisma.user.findUniqueOrThrow({
       where: { id: provisioned.user.userId },
     });
@@ -744,7 +766,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     });
     const groups = createGroupService(prisma);
     const platformAdministrators = createPlatformAdministratorService(prisma);
-    await platformAdministrators.bootstrap(platformUser.id);
+    await designatePlatformAdministrator(platformUser);
     const group = await groups.createGroup(platformUser.id, organization.id, {
       name: "Advanced topics",
     });
@@ -780,15 +802,12 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "Grace Hopper",
       rut: "12.345.679-3",
     });
-    const platformAdministrators = createPlatformAdministratorService(prisma);
 
-    await platformAdministrators.bootstrap(firstUser.id);
+    await designatePlatformAdministrator(firstUser);
 
     await expect(
-      platformAdministrators.bootstrap(secondUser.id),
-    ).rejects.toMatchObject({
-      status: 409,
-    });
+      designatePlatformAdministrator(secondUser),
+    ).rejects.toBeInstanceOf(BootstrapRejectedError);
     await expect(
       prisma.platformAdministrator.create({
         data: { id: 2, userId: secondUser.id },
@@ -840,7 +859,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       })),
     });
     const platformAdministrators = createPlatformAdministratorService(prisma);
-    await platformAdministrators.bootstrap(platformUser.id);
+    await designatePlatformAdministrator(platformUser);
 
     await platformAdministrators.createMembership(
       platformUser.id,
@@ -941,7 +960,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       slug: "ai-academy",
     });
     const platformAdministrators = createPlatformAdministratorService(prisma);
-    await platformAdministrators.bootstrap(platformUser.id);
+    await designatePlatformAdministrator(platformUser);
 
     try {
       await prisma.$executeRawUnsafe(`
@@ -1002,8 +1021,8 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
 
     for (const arguments_ of [
       [],
-      ["bootstrap", firstUser.id],
-      ["bootstrap", firstUser.id, "--confirm-transfer"],
+      ["bootstrap", firstUser.id, "--confirm-bootstrap"],
+      ["transfer", secondUser.id],
       ["transfer", secondUser.id, "--confirm-bootstrap"],
     ]) {
       expect(() => parsePlatformAdministratorCommand(arguments_)).toThrow();
@@ -1011,12 +1030,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     expect(await prisma.platformAdministrator.count()).toBe(0);
     expect(await prisma.platformAdministrativeAuditEvent.count()).toBe(0);
 
-    const bootstrap = parsePlatformAdministratorCommand([
-      "bootstrap",
-      firstUser.id,
-      "--confirm-bootstrap",
-    ]);
-    await platformAdministrators.bootstrap(bootstrap.userId);
+    await designatePlatformAdministrator(firstUser);
     const transfer = parsePlatformAdministratorCommand([
       "transfer",
       secondUser.id,
@@ -1072,7 +1086,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       },
     });
     const platformAdministrators = createPlatformAdministratorService(prisma);
-    await platformAdministrators.bootstrap(platformUser.id);
+    await designatePlatformAdministrator(platformUser);
 
     await expect(
       platformAdministrators.createMembership(
@@ -1125,7 +1139,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       })),
     });
     const platformAdministrators = createPlatformAdministratorService(prisma);
-    await platformAdministrators.bootstrap(platformUser.id);
+    await designatePlatformAdministrator(platformUser);
 
     const demotions = await Promise.allSettled([
       platformAdministrators.changeMembershipRole(

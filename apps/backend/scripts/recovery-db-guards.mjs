@@ -59,8 +59,13 @@ function resolveHost(url) {
   }
   const allowed = new Set(["schema", "sslmode", "connect_timeout"]);
   if (url.hostname === "") allowed.add("host");
+  const seen = new Set();
   for (const key of params.keys()) {
-    if (!allowed.has(key.toLowerCase())) {
+    if (seen.has(key)) {
+      throw reject(`query parameter "${key.slice(0, 40)}" must appear once`);
+    }
+    seen.add(key);
+    if (!allowed.has(key)) {
       throw reject(`query parameter "${key.slice(0, 40)}" is not allowed`);
     }
   }

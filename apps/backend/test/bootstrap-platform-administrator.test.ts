@@ -6,9 +6,9 @@ describe("bootstrap-platform-administrator command validation", () => {
   it.each<[unknown]>([
     [[]],
     [["invalid", "user-1", "--confirm-invalid"]],
-    [["bootstrap"]],
-    [["bootstrap", "user-1"]],
-    [["bootstrap", "user-1", "--confirm-transfer"]],
+    [["transfer"]],
+    [["transfer", "user-1"]],
+    [["bootstrap", "user-1", "--confirm-bootstrap"]],
     [["transfer", "user-1", "--confirm-bootstrap"]],
     [["transfer", "user-1", "--confirm-transfer", "unexpected"]],
   ])(
@@ -28,14 +28,7 @@ describe("bootstrap-platform-administrator command validation", () => {
     }
   });
 
-  it("accepts only explicitly confirmed bootstrap and transfer commands", () => {
-    expect(
-      parsePlatformAdministratorCommand([
-        "bootstrap",
-        "user-1",
-        "--confirm-bootstrap",
-      ]),
-    ).toEqual({ operation: "bootstrap", userId: "user-1" });
+  it("accepts only the explicitly confirmed transfer command", () => {
     expect(
       parsePlatformAdministratorCommand([
         "transfer",

@@ -9,18 +9,12 @@ async function main() {
     throw new Error("DATABASE_URL must be configured");
   }
 
-  const { operation, userId } = parsePlatformAdministratorCommand(
-    process.argv.slice(2),
-  );
+  const { userId } = parsePlatformAdministratorCommand(process.argv.slice(2));
   const database = createDatabase(databaseUrl);
   const service = createPlatformAdministratorService(database.prisma);
 
   try {
-    if (operation === "bootstrap") {
-      await service.bootstrap(userId);
-    } else {
-      await service.transfer(userId);
-    }
+    await service.transfer(userId);
   } finally {
     await database.prisma.$disconnect();
   }

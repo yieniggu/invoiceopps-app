@@ -57,18 +57,24 @@ function mockAuthHttp() {
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const url = input instanceof Request ? input.url : input.toString();
-      if (url === "/profile" && (!init?.method || init.method === "GET")) {
+      if (
+        url === "/api/v1/auth/profile" &&
+        (!init?.method || init.method === "GET")
+      ) {
         return authenticated
           ? authenticatedProfile()
-          : jsonResponse({ status: "error", message: "Unauthorized" }, 401);
+          : jsonResponse(
+              { error: { code: "UNAUTHENTICATED", message: "Unauthorized" } },
+              401,
+            );
       }
-      if (url === "/auth/login" && init?.method === "POST") {
+      if (url === "/api/v1/auth/login" && init?.method === "POST") {
         return login();
       }
-      if (url === "/auth/signup" && init?.method === "POST") {
+      if (url === "/api/v1/auth/signup" && init?.method === "POST") {
         return signup();
       }
-      if (url === "/groups") {
+      if (url === "/api/v1/groups") {
         return jsonResponse({ groups: [] });
       }
       throw new Error(
@@ -112,7 +118,7 @@ function expectNoProtectedResourceRequests(
   expect(
     fetchMock.mock.calls.some(([input]) => {
       const url = input instanceof Request ? input.url : input.toString();
-      return /^\/(?:groups|invoices|platform\/organizations|organizations)(?:[/?]|$)/.test(
+      return /^\/api\/v1\/(?:groups|invoices|platform\/organizations|organizations)(?:[/?]|$)/.test(
         url,
       );
     }),
@@ -160,8 +166,11 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
       expect(await screen.findByText("AI Academy")).toBeTruthy();
       expect(screen.getByText(/usuario/i)).toBeTruthy();
       expect(screen.getByRole("button", { name: /^salir$/i })).toBeTruthy();
-      expectJsonPost(fetchMock, "/auth/login", { rut: user.rut, password });
-      expect(fetchMock).toHaveBeenCalledWith("/profile", {
+      expectJsonPost(fetchMock, "/api/v1/auth/login", {
+        rut: user.rut,
+        password,
+      });
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/auth/profile", {
         credentials: "same-origin",
       });
       expect(storageWrite).not.toHaveBeenCalled();
@@ -182,7 +191,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     expect(authenticatedProfile).not.toHaveBeenCalled();
     expectNoProtectedResourceRequests(fetchMock);
     expect(
-      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+      fetchMock.mock.calls.some(([input]) => input === "/api/v1/auth/signup"),
     ).toBe(false);
     expect(screen.queryByRole("button", { name: /^salir$/i })).toBeNull();
     expect(screen.queryByText(profile.name)).toBeNull();
@@ -194,11 +203,11 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input, init) => {
         const url = String(input);
-        if (url === "/profile")
+        if (url === "/api/v1/auth/profile")
           return jsonResponse({ profile: temporaryProfile });
-        if (url === "/auth/change-password" && init?.method === "POST")
+        if (url === "/api/v1/auth/change-password" && init?.method === "POST")
           return new Response(null, { status: 204 });
-        if (url === "/groups") return jsonResponse({ groups: [] });
+        if (url === "/api/v1/groups") return jsonResponse({ groups: [] });
         throw new Error(`Unexpected fetch request: ${url}`);
       });
     render(<App />);
@@ -217,7 +226,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cambiar contraseña" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/auth/change-password",
+        "/api/v1/auth/change-password",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
@@ -229,10 +238,49 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     );
   });
 
+  it("explains in Spanish that the new password must differ from the temporary one", async () => {
+    const temporaryProfile = { ...profile, mustChangePassword: true };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/profile")
+        return jsonResponse({ profile: temporaryProfile });
+      if (url === "/api/v1/auth/change-password" && init?.method === "POST")
+        return jsonResponse(
+          {
+            error: {
+              code: "PASSWORD_REUSE",
+              message: "New password must differ from the current one",
+            },
+          },
+          400,
+        );
+      if (url === "/api/v1/groups") return jsonResponse({ groups: [] });
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /cambia tu contraseña temporal/i,
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña temporal"), {
+      target: { value: password },
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña nueva"), {
+      target: { value: password },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar contraseña" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "La nueva contraseña debe ser distinta de la actual.",
+    );
+  });
+
   it("announces rejected credentials safely in Spanish and allows another login attempt", async () => {
     const { login, authenticatedProfile } = mockAuthHttp();
     login.mockResolvedValueOnce(
-      jsonResponse({ status: "error", message: "Invalid credentials" }, 401),
+      jsonResponse(
+        { error: { code: "UNAUTHENTICATED", message: "Invalid credentials" } },
+        401,
+      ),
     );
     render(<App />);
     const submit = await screen.findByRole("button", { name: loginName });
@@ -280,7 +328,12 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
         throw new Error("Login request did not start");
       }
       completeLogin(
-        jsonResponse({ status: "error", message: "Invalid credentials" }, 401),
+        jsonResponse(
+          {
+            error: { code: "UNAUTHENTICATED", message: "Invalid credentials" },
+          },
+          401,
+        ),
       );
       expect(await screen.findByRole("alert")).toBeTruthy();
       expect(screen.getByRole("button", { name: loginName })).toHaveProperty(
@@ -291,7 +344,12 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
       await act(async () => {
         completeLogin?.(
           jsonResponse(
-            { status: "error", message: "Invalid credentials" },
+            {
+              error: {
+                code: "UNAUTHENTICATED",
+                message: "Invalid credentials",
+              },
+            },
             401,
           ),
         );
@@ -305,7 +363,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     expect(screen.queryByText(/cuenta creada|registro/i)).toBeNull();
     expect(screen.queryByRole("button", { name: signupName })).toBeNull();
     expect(
-      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+      fetchMock.mock.calls.some(([input]) => input === "/api/v1/auth/signup"),
     ).toBe(false);
   });
 
@@ -317,7 +375,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     ).toBeNull();
     expect(authenticatedProfile).not.toHaveBeenCalled();
     expect(
-      fetchMock.mock.calls.some(([input]) => input === "/auth/signup"),
+      fetchMock.mock.calls.some(([input]) => input === "/api/v1/auth/signup"),
     ).toBe(false);
   });
 });
