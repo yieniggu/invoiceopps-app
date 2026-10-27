@@ -40,11 +40,16 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:-replace-with-a-local-password}@db:5432/${POSTGRES_DB:-invoiceops}?schema=public
       TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:-replace-with-a-local-password}@db-test:5432/invoiceops_test?schema=public
       PORT: 3000
+      # The frontend's nginx is the only proxy in front of the backend: trust
+      # exactly one hop so the login limiter keys on the real client address.
+      AUTH_TRUST_PROXY_HOPS: "1"
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      # Loopback only: /health/* is served by the backend alone, and a wider
+      # publish would let any caller forge X-Forwarded-For past the IP limit.
+      - "127.0.0.1:${BACKEND_PORT:-3000}:3000"
     healthcheck:
       test:
         [
