@@ -2,16 +2,13 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
 import type { Profile } from "./features/profile/ProfileScreen";
-import type { Group } from "./features/groups/GroupsScreen";
-import { normalizeGroupIntent } from "./features/groups/groupOperations";
+import { renderApp } from "./test/renderApp";
 
 const org = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -28,6 +25,7 @@ const initial: Profile = {
   isPlatformAdministrator: true,
   memberships: [{ organization: org, role: "ADMIN" }],
 };
+const base = `/api/v1/organizations/${org.id}`;
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status });
 }
@@ -40,13 +38,13 @@ function deferred<T>() {
 }
 function navigate(name: string) {
   fireEvent.click(
-    within(screen.getByRole("navigation")).getByRole("button", { name }),
+    within(screen.getByRole("navigation")).getByRole("link", { name }),
   );
 }
 // The active context is observable on the dashboard "Tu espacio de trabajo" card.
 function dashboardContext() {
   fireEvent.click(
-    within(screen.getByRole("navigation")).getByRole("button", {
+    within(screen.getByRole("navigation")).getByRole("link", {
       name: "Panel principal",
     }),
   );
@@ -60,24 +58,22 @@ function http(platform = true) {
   const patch = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () => json({ profile }));
-  const create = vi
-    .fn<() => Promise<Response>>()
-    .mockImplementation(async () => json({}, 201));
-  const logout = vi
-    .fn<() => Promise<Response>>()
-    .mockImplementation(async () => new Response(null, { status: 204 }));
   let member = false;
   const group = {
     id: "g",
+    organizationId: org.id,
     name: "Equipo ajeno",
     description: null,
-    organization: org,
+    permissions: {
+      readInvoices: false,
+      createInvoices: false,
+      deleteOwnInvoices: false,
+      deleteOthersInvoices: false,
+    },
   };
   const catalog = vi
     .fn<() => Promise<Response>>()
-    .mockImplementation(async () =>
-      json({ groups: [group], nextCursor: null }),
-    );
+    .mockImplementation(async () => json({ groups: [group] }));
   const readGroups = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () =>
@@ -85,84 +81,113 @@ function http(platform = true) {
         groups: member
           ? [
               {
-                ...group,
+                id: group.id,
+                name: group.name,
+                description: null,
+                organization: org,
                 members: [{ id: actor, name: "Persona", rut: "12345678-5" }],
               },
             ]
           : [],
       }),
     );
+  const self = { id: actor, name: "Persona", rut: "123456785" };
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
       const path = new URL(String(input), "http://test.invalid").pathname;
+      const method = init?.method ?? "GET";
       if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
-        return init?.method === "PATCH" ? patch() : reads();
+        return method === "PATCH" ? patch() : reads();
       if (path === "/api/v1/groups") return readGroups();
-      if (path === "/api/v1/platform/organizations")
-        return json({ organizations: [{ ...org, groups: [] }] });
-      if (path.startsWith("/api/v1/platform/organizations/")) {
+      if (path === "/api/v1/organizations") return json({ organizations: [] });
+      if (path === `${base}/memberships` && method === "GET")
+        return json({
+          memberships: [
+            {
+              userId: actor,
+              organizationId: org.id,
+              role: "ADMIN",
+              user: self,
+            },
+          ],
+        });
+      if (path === `${base}/memberships/${actor}` && method === "DELETE") {
         profile = { ...profile, memberships: [] };
         return new Response(null, { status: 204 });
       }
-      if (path === `/api/v1/organizations/${org.id}/groups`)
-        return init?.method === "POST" ? create() : catalog();
-      if (path.startsWith(`/api/v1/organizations/${org.id}/groups/`)) {
-        if (init?.method === "DELETE") member = false;
-        return init?.method === "DELETE"
-          ? new Response(null, { status: 204 })
-          : json({});
+      if (path === `${base}/users`)
+        return json({ users: [{ ...self, role: "ADMIN" }] });
+      if (path === `${base}/groups`)
+        return method === "POST" ? json({ group }, 201) : catalog();
+      if (path === `${base}/groups/g/memberships`)
+        return method === "POST"
+          ? json(
+              {
+                membership: {
+                  userId: actor,
+                  groupId: "g",
+                  organizationId: org.id,
+                },
+              },
+              201,
+            )
+          : json({
+              memberships: member
+                ? [
+                    {
+                      userId: actor,
+                      groupId: "g",
+                      organizationId: org.id,
+                      user: self,
+                    },
+                  ]
+                : [],
+            });
+      if (path === `${base}/groups/g/memberships/${actor}`) {
+        member = false;
+        return new Response(null, { status: 204 });
       }
-      if (path === "/api/v1/auth/logout") return logout();
-      if (path === "/api/v1/auth/login") return json({});
-      throw new Error(`Unexpected request ${path}`);
+      if (path === `${base}/groups/g` && method === "PATCH")
+        return json({ group });
+      throw new Error(`Unexpected request ${method} ${path}`);
     });
   return {
     reads,
     patch,
-    create,
-    logout,
     catalog,
     readGroups,
     fetchMock,
-    setProfile: (next: Profile) => {
-      profile = next;
-    },
     member: () => {
       member = true;
     },
   };
 }
+/** People are managed on the organization detail, reached from the list. */
+async function openOrganization() {
+  navigate("Organizaciones");
+  fireEvent.click(
+    await screen.findByRole("link", { name: "Ver detalle de Academia" }),
+  );
+}
 async function start(destination: string) {
-  render(<App />);
+  const view = renderApp();
   await screen.findByRole("navigation");
   navigate(destination);
+  return view;
 }
-function removeSelf() {
-  fireEvent.change(screen.getByLabelText("Organización administrada"), {
-    target: { value: org.id },
-  });
-  fireEvent.change(screen.getByLabelText("UUID de usuario existente"), {
-    target: { value: actor },
-  });
-  fireEvent.change(screen.getByLabelText("Operación de membresía"), {
-    target: { value: "DELETE" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Revisar operación" }));
-  fireEvent.click(screen.getByRole("button", { name: "Confirmar operación" }));
-}
-function createGroup() {
-  fireEvent.change(screen.getByLabelText("Nuevo grupo en Academia"), {
-    target: { value: "Intento original" },
-  });
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Crear grupo en Academia" }),
+async function removeSelf() {
+  await screen.findByText("12.345.678-5");
+  fireEvent.click(screen.getByRole("button", { name: "Quitar a Persona" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirmar quitar a Persona" }),
   );
 }
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
 describe("FULLAPP12 authorized findings", () => {
   it("CR009 never restores capabilities from a delayed contact PATCH body after self removal", async () => {
     const api = http();
@@ -176,9 +201,11 @@ describe("FULLAPP12 authorized findings", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
-    navigate("Administración");
-    removeSelf();
-    await screen.findByText(/Operación confirmada/);
+    await openOrganization();
+    await removeSelf();
+    await waitFor(() =>
+      expect(api.reads.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
     navigate("Mi perfil");
     expect(screen.getByLabelText("Correo electrónico")).toHaveProperty(
       "value",
@@ -189,473 +216,160 @@ describe("FULLAPP12 authorized findings", () => {
         profile: { ...initial, email: "confirmed@example.test" },
       }),
     );
+    // The late body only carries contact data: memberships stay revoked.
     expect(
-      screen.getByText("No tienes organizaciones asignadas."),
+      await screen.findByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
     expect(dashboardContext().textContent).toContain(
       "Elige una organización o grupo para empezar.",
     );
   });
+
   it("CR010 lazily catalogs non-member groups for an organization ADMIN without granting workspace ownership", async () => {
     const api = http(false);
     await start("Mi perfil");
     expect(api.catalog).not.toHaveBeenCalled();
-    navigate("Mis grupos");
-    fireEvent.change(
-      screen.getByLabelText("Organización del catálogo de grupos"),
-      { target: { value: org.id } },
+    navigate("Grupos");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" }),
     );
-    await screen.findByRole("button", { name: "Guardar grupo Equipo ajeno" });
+    const editor = await screen.findByRole("group", {
+      name: "Permisos sobre facturas",
+    });
     expect(
       screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
     ).toBeNull();
-    expect(screen.getByText(/Integrantes no consultados/)).toBeTruthy();
-    expect(api.catalog).toHaveBeenCalledOnce();
-    // Exercise the existing five write contracts through the actual App UI,
-    // without ever joining the catalog group or adding a Workspace owner.
+    expect(api.catalog).toHaveBeenCalled();
+    // The write contracts of the screen, without ever joining the catalogue
+    // group or adding a Workspace owner. Each write refreshes the catalogue.
+    let reads = api.catalog.mock.calls.length;
     fireEvent.click(
-      screen.getByRole("button", { name: "Guardar grupo Equipo ajeno" }),
+      within(editor).getByRole("checkbox", { name: "Leer facturas" }),
     );
-    await screen.findByText(/Cambio guardado/);
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(2));
-    fireEvent.change(
-      screen.getByLabelText("ID de integrante para Equipo ajeno"),
-      { target: { value: actor } },
+    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+    await screen.findByText("Permisos guardados.");
+    await waitFor(() =>
+      expect(api.catalog.mock.calls.length).toBeGreaterThan(reads),
     );
+    await screen.findByRole("option", { name: "Persona" });
+    reads = api.catalog.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Agregar al grupo" }));
+    await waitFor(() =>
+      expect(api.catalog.mock.calls.length).toBeGreaterThan(reads),
+    );
+    navigate("Grupos");
     fireEvent.click(
-      screen.getByRole("button", { name: "Agregar integrante a Equipo ajeno" }),
+      await screen.findByRole("link", { name: "Crear grupo en Academia" }),
     );
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(3));
-    fireEvent.change(
-      screen.getByLabelText("UUID de integrante para quitar de Equipo ajeno"),
-      { target: { value: actor } },
+    reads = api.catalog.mock.calls.length;
+    fireEvent.change(await screen.findByLabelText("Nombre del grupo"), {
+      target: { value: "Intento original" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear grupo" }));
+    await waitFor(() =>
+      expect(api.catalog.mock.calls.length).toBeGreaterThan(reads),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Quitar integrante de Equipo ajeno" }),
-    );
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(4));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Eliminar grupo Equipo ajeno" }),
-    );
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(5));
-    createGroup();
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(6));
     const writes = api.fetchMock.mock.calls.filter(
       ([path, init]) =>
-        String(path).startsWith(`/api/v1/organizations/${org.id}/groups`) &&
-        init?.method,
+        String(path).startsWith(`${base}/groups`) && init?.method !== "GET",
     );
     expect(
       writes.map(([path, init]) => [String(path), init?.method, init?.body]),
     ).toEqual([
       [
-        `/api/v1/organizations/${org.id}/groups/g`,
+        `${base}/groups/g`,
         "PATCH",
-        JSON.stringify({ name: "Equipo ajeno", description: "" }),
+        JSON.stringify({
+          permissions: {
+            readInvoices: true,
+            createInvoices: false,
+            deleteOwnInvoices: false,
+            deleteOthersInvoices: false,
+          },
+        }),
       ],
       [
-        `/api/v1/organizations/${org.id}/groups/g/members`,
+        `${base}/groups/g/memberships`,
         "POST",
         JSON.stringify({ userId: actor }),
       ],
-      [
-        `/api/v1/organizations/${org.id}/groups/g/members/${actor}`,
-        "DELETE",
-        undefined,
-      ],
-      [`/api/v1/organizations/${org.id}/groups/g`, "DELETE", undefined],
-      [
-        `/api/v1/organizations/${org.id}/groups`,
-        "POST",
-        JSON.stringify({ name: "Intento original" }),
-      ],
+      [`${base}/groups`, "POST", JSON.stringify({ name: "Intento original" })],
     ]);
+    navigate("Grupos");
+    await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" });
     expect(
       screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
     ).toBeNull();
   });
+
   it("CR009 ignores an older capability GET body after a newer same-session authority refresh", async () => {
     const api = http();
-    await start("Administración");
+    const view = await start("Organizaciones");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Ver detalle de Academia" }),
+    );
+    await screen.findByText("12.345.678-5");
     const body = deferred<unknown>();
     const response = json({});
     const parse = vi.spyOn(response, "json").mockReturnValue(body.promise);
     api.reads.mockResolvedValueOnce(response);
-    fireEvent.change(screen.getByLabelText("Organización administrada"), {
-      target: { value: org.id },
+    // An older refresh is still reading its body...
+    act(() => {
+      void view.store.getSnapshot().client.invalidateQueries({
+        queryKey: ["identity", actor, "profile"],
+        exact: true,
+      });
     });
-    fireEvent.change(screen.getByLabelText("UUID de usuario existente"), {
-      target: { value: "00000000-0000-4000-8000-000000000003" },
-    });
-    fireEvent.change(screen.getByLabelText("Operación de membresía"), {
-      target: { value: "DELETE" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Revisar operación" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar operación" }),
-    );
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
-    removeSelf();
-    await screen.findByText(/Operación confirmada/);
+    // ...when a newer authority change (self removal) refreshes the profile.
+    fireEvent.click(screen.getByRole("button", { name: "Quitar a Persona" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirmar quitar a Persona" }),
+    );
+    await waitFor(() =>
+      expect(api.reads.mock.calls.length).toBeGreaterThanOrEqual(3),
+    );
     await act(async () => body.resolve({ profile: initial }));
     navigate("Mi perfil");
     expect(
-      screen.getByText("No tienes organizaciones asignadas."),
+      await screen.findByText("No tienes organizaciones asignadas."),
     ).toBeTruthy();
     expect(dashboardContext().textContent).toContain(
       "Elige una organización o grupo para empezar.",
     );
   });
+
   it("CR010 refreshes actual memberships and the selected catalog after self group removal without duplicate cards", async () => {
     const api = http(false);
     api.member();
-    await start("Mis grupos");
-    fireEvent.change(
-      screen.getByLabelText("Organización del catálogo de grupos"),
-      { target: { value: org.id } },
-    );
+    await start("Grupos");
     await waitFor(() => expect(api.catalog).toHaveBeenCalledOnce());
+    expect(
+      await screen.findByRole("button", { name: "Trabajar con Equipo ajeno" }),
+    ).toBeTruthy();
     expect(
       screen.getAllByRole("heading", { name: "Equipo ajeno" }),
     ).toHaveLength(1);
     fireEvent.click(
-      screen.getByRole("button", { name: "Quitar a Persona de Equipo ajeno" }),
+      screen.getByRole("link", { name: "Ver detalle de Equipo ajeno" }),
     );
-    await screen.findByText(/Cambio guardado/);
-    await screen.findByText(/Integrantes no consultados/);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Quitar a Persona del grupo" }),
+    );
+    await screen.findByText("Persona quitada del grupo.");
+    await waitFor(() => expect(api.readGroups).toHaveBeenCalledTimes(2));
+    // Workspace ownership is revoked together with the membership.
+    navigate("Grupos");
+    await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
+      ).toBeNull(),
+    );
     expect(
       screen.getAllByRole("heading", { name: "Equipo ajeno" }),
     ).toHaveLength(1);
-    expect(
-      screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
-    ).toBeNull();
-    expect(api.catalog).toHaveBeenCalledTimes(2);
-  });
-  it("CR011 retains a lost-header committed creation across navigation and failed logout, without a duplicate POST", async () => {
-    const api = http(false);
-    let committed = 0;
-    api.create.mockImplementationOnce(async () => {
-      committed += 1;
-      throw new Error("Response lost before headers");
-    });
-    await start("Mis grupos");
-    createGroup();
-    await screen.findByText(/resultado es desconocido/i);
-    navigate("Mi perfil");
-    navigate("Mis grupos");
-    createGroup();
-    api.logout.mockRejectedValueOnce(new Error("Logout failed"));
-    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
-    await screen.findByText(/No fue posible cerrar la sesión/);
-    createGroup();
-    expect(committed).toBe(1);
-    expect(api.create).toHaveBeenCalledOnce();
-    expect(screen.getByText(/resultado es desconocido/i)).toBeTruthy();
-  });
-  it("CR011 permits correction after a known 4xx rejection", async () => {
-    const api = http(false);
-    api.create.mockResolvedValueOnce(json({}, 400));
-    await start("Mis grupos");
-    createGroup();
-    await screen.findByText(/No fue posible actualizar los grupos/);
-    createGroup();
-    await screen.findByText(/Cambio guardado/);
-    expect(api.create).toHaveBeenCalledTimes(2);
-  });
-  it("CR011 retains known 2xx acknowledgement when the refresh fails and retries only reads", async () => {
-    const api = http(false);
-    await start("Mis grupos");
-    await waitFor(() => expect(api.readGroups).toHaveBeenCalledOnce());
-    api.readGroups.mockResolvedValueOnce(json({}, 500));
-    createGroup();
-    await screen.findByText(/Cambio guardado.*no repitas la operación/);
-    expect(
-      screen.getByRole("button", { name: "Crear grupo en Academia" }),
-    ).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Reintentar grupos" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Crear grupo en Academia" }),
-      ).toHaveProperty("disabled", false),
-    );
-    expect(api.create).toHaveBeenCalledOnce();
-  });
-  it("CR009 isolates a delayed old contact body from a new actor session", async () => {
-    const api = http();
-    const body = deferred<unknown>();
-    const response = json({});
-    const parse = vi.spyOn(response, "json").mockReturnValue(body.promise);
-    api.patch.mockResolvedValueOnce(response);
-    await start("Mi perfil");
-    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(parse).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
-    await screen.findByRole("button", { name: "Iniciar sesión" });
-    api.setProfile({
-      ...initial,
-      id: "B",
-      name: "Persona B",
-      email: "b@example.test",
-      memberships: [],
-    });
-    fireEvent.change(screen.getByLabelText("RUT"), {
-      target: { value: "123456785" },
-    });
-    fireEvent.change(screen.getByLabelText("Contraseña"), {
-      target: { value: "synthetic-password" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
-    await screen.findByRole("navigation");
-    await act(async () =>
-      body.resolve({ profile: { ...initial, email: "old@example.test" } }),
-    );
-    navigate("Mi perfil");
-    expect(screen.getByText("Persona B")).toBeTruthy();
-    expect(screen.getByLabelText("Correo electrónico")).toHaveProperty(
-      "value",
-      "b@example.test",
-    );
-  });
-  it("CR011 does not release a creation lock using a catalog read, but resets it after a legitimate same-user login", async () => {
-    const api = http(false);
-    const pending = deferred<Response>();
-    api.create.mockReturnValueOnce(pending.promise);
-    await start("Mis grupos");
-    createGroup();
-    api.logout.mockRejectedValueOnce(new Error("Logout failed"));
-    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
-    await screen.findByText(/No fue posible cerrar la sesión/);
-    await screen.findByText(/resultado es desconocido/i);
-    fireEvent.change(
-      screen.getByLabelText("Organización del catálogo de grupos"),
-      { target: { value: org.id } },
-    );
-    await screen.findByText(/Integrantes no consultados/);
-    await act(async () => pending.resolve(json({}, 401)));
-    createGroup();
-    expect(api.create).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "Salir" }));
-    await screen.findByRole("button", { name: "Iniciar sesión" });
-    fireEvent.change(screen.getByLabelText("RUT"), {
-      target: { value: "123456785" },
-    });
-    fireEvent.change(screen.getByLabelText("Contraseña"), {
-      target: { value: "synthetic-password" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
-    await screen.findByRole("navigation");
-    navigate("Mis grupos");
-    createGroup();
-    await screen.findByText(/Cambio guardado/);
-    expect(api.create).toHaveBeenCalledTimes(2);
-  });
-});
-
-const memberA = "abcdefab-cdef-4abc-8abc-abcdefabcdef";
-const memberB = "abcdefab-cdef-4abc-8abc-abcdefabcdee";
-function membershipHttp() {
-  const api = http(false);
-  const members = new Map<string, Group["members"][number]>([
-    [actor, { id: actor, name: "Persona", rut: "12345678-5" }],
-  ]);
-  api.readGroups.mockImplementation(async () =>
-    json({
-      groups: [
-        {
-          id: "g",
-          name: "Equipo ajeno",
-          description: null,
-          organization: org,
-          members: [...members.values()],
-        },
-      ],
-    }),
-  );
-  const write = vi
-    .fn<(path: string, init: RequestInit) => Promise<Response>>()
-    .mockImplementation(async (path, init) => {
-      if (init.method === "POST") {
-        const input: unknown = JSON.parse(String(init.body));
-        if (
-          !input ||
-          typeof input !== "object" ||
-          !("userId" in input) ||
-          typeof input.userId !== "string"
-        )
-          return json({}, 400);
-        const userId = input.userId.trim();
-        if (members.has(userId)) return json({}, 409);
-        // The HTTP fixture commits the native server's semantic target, then loses
-        // the transport BEFORE returning a Response/acknowledgement to App.
-        members.set(userId, {
-          id: userId,
-          name: `Integrante ${userId}`,
-          rut: "12345679-3",
-        });
-        throw new Error("Committed membership; response lost before headers");
-      }
-      members.delete(decodeURIComponent(path.split("/").at(-1) ?? ""));
-      return new Response(null, { status: 204 });
-    });
-  const original = api.fetchMock.getMockImplementation()!;
-  api.fetchMock.mockImplementation(async (input, init) => {
-    const path = new URL(String(input), "http://test.invalid").pathname;
-    if (
-      path.startsWith(`/api/v1/organizations/${org.id}/groups/g/members`) &&
-      init?.method
-    )
-      return write(path, init);
-    return original(input, init);
-  });
-  return { ...api, write, members };
-}
-function submitMember(userId: string) {
-  fireEvent.change(
-    screen.getByLabelText("ID de integrante para Equipo ajeno"),
-    { target: { value: userId } },
-  );
-  // Force the real form handler even when its submit button is disabled. This
-  // verifies the session owner's lock, not just unreachable UI controls.
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Agregar integrante a Equipo ajeno" }),
-  );
-}
-describe("CR011 residual membership identity", () => {
-  it("canonicalizes member request intent and shared ADD/REMOVE keys by trim only, retaining identifier case", () => {
-    const path = `/api/v1/organizations/${org.id}/groups/g/members`;
-    const added = normalizeGroupIntent({
-      path,
-      method: "POST",
-      body: JSON.stringify({ userId: ` ${memberA} ` }),
-    });
-    const removed = normalizeGroupIntent({
-      path: `${path}/${encodeURIComponent(` ${memberA} `)}`,
-      method: "DELETE",
-    });
-    expect(added?.key).toBe(`${path}/${memberA}`);
-    expect(removed?.key).toBe(added?.key);
-    expect(added?.intent.body).toBe(JSON.stringify({ userId: memberA }));
-    expect(removed?.intent.path).toBe(added?.key);
-    const uppercase = normalizeGroupIntent({
-      path,
-      method: "POST",
-      body: JSON.stringify({ userId: memberA.toUpperCase() }),
-    });
-    expect(uppercase?.key).toBe(`${path}/${memberA.toUpperCase()}`);
-    expect(uppercase?.key).not.toBe(added?.key);
-    expect(
-      normalizeGroupIntent({
-        path: `/api/v1/organizations/${org.id}/groups`,
-        method: "POST",
-        body: JSON.stringify({ name: "Another name" }),
-      })?.key,
-    ).toBe(`/api/v1/organizations/${org.id}/groups`);
-  });
-  it("rejects invalid member bodies and malformed URI input without throwing or allocating an identity", () => {
-    const path = `/api/v1/organizations/${org.id}/groups/g/members`;
-    for (const body of [
-      "{",
-      "null",
-      "[]",
-      "{}",
-      '{"userId":1}',
-      '{"userId":"  "}',
-      '{"userId":"x","extra":true}',
-      JSON.stringify({ userId: "\ud800" }),
-    ]) {
-      expect(normalizeGroupIntent({ path, method: "POST", body })).toBeNull();
-    }
-    expect(
-      normalizeGroupIntent({ path: `${path}/%`, method: "DELETE" }),
-    ).toBeNull();
-    expect(
-      normalizeGroupIntent({ path: `${path}/%20`, method: "DELETE" }),
-    ).toBeNull();
-  });
-  it("blocks a whitespace alias in the actual form handler after a canonical POST commits but loses headers", async () => {
-    const api = membershipHttp();
-    await start("Mis grupos");
-    await screen.findByRole("form", {
-      name: "Agregar integrante a Equipo ajeno",
-    });
-    submitMember(memberA);
-    await screen.findByText(/resultado es desconocido/i);
-    expect(api.members.has(memberA)).toBe(true);
-    submitMember(` ${memberA} `);
-    await act(async () => {});
-    expect(api.write).toHaveBeenCalledOnce();
-    expect(
-      screen.getByLabelText("ID de integrante para Equipo ajeno"),
-    ).toHaveProperty("value", ` ${memberA} `);
-    navigate("Mi perfil");
-    navigate("Mis grupos");
-    fireEvent.change(
-      screen.getByLabelText("Organización del catálogo de grupos"),
-      { target: { value: org.id } },
-    );
-    await waitFor(() => expect(api.catalog).toHaveBeenCalledOnce());
-    submitMember(` ${memberA} `);
-    expect(api.write).toHaveBeenCalledOnce();
-    expect(screen.getByText(/resultado es desconocido/i)).toBeTruthy();
-  });
-  it("shares a spaced POST lock with canonical roster DELETE after an authoritative MyGroups read", async () => {
-    const api = membershipHttp();
-    api.readGroups.mockResolvedValueOnce(json({}, 500));
-    await start("Mis grupos");
-    await screen.findByRole("button", { name: "Reintentar grupos" });
-    fireEvent.change(
-      screen.getByLabelText("Organización del catálogo de grupos"),
-      { target: { value: org.id } },
-    );
-    await screen.findByRole("form", {
-      name: "Agregar integrante a Equipo ajeno",
-    });
-    submitMember(` ${memberA} `);
-    await screen.findByText(/resultado es desconocido/i);
-    expect(api.members.has(memberA)).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Reintentar grupos" }));
-    const remove = await screen.findByRole("button", {
-      name: `Quitar a Integrante ${memberA} de Equipo ajeno`,
-    });
-    expect(remove).toHaveProperty("disabled", true);
-    fireEvent.click(remove);
-    submitMember(memberA);
-    expect(api.write).toHaveBeenCalledOnce();
-    expect(api.write.mock.calls[0][1].body).toBe(
-      JSON.stringify({ userId: memberA }),
-    );
-    expect(screen.getByText(/resultado es desconocido/i)).toBeTruthy();
-  });
-  it("retains two independent unknown members with unique React keys and visible canonical targets", async () => {
-    const api = membershipHttp();
-    const errors = vi.spyOn(console, "error");
-    await start("Mis grupos");
-    await screen.findByRole("form", {
-      name: "Agregar integrante a Equipo ajeno",
-    });
-    submitMember(memberA);
-    await screen.findByText(/resultado es desconocido/i);
-    submitMember(memberB);
-    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
-    expect(api.write).toHaveBeenCalledTimes(2);
-    expect([...api.members.keys()]).toEqual([actor, memberA, memberB]);
-    expect(
-      errors.mock.calls.filter((args) =>
-        args.some((arg) => String(arg).includes("same key")),
-      ),
-    ).toEqual([]);
-    const alerts = screen.getAllByRole("alert");
-    expect(
-      alerts.filter((alert) => alert.textContent?.includes(memberA)),
-    ).toHaveLength(1);
-    expect(
-      alerts.filter((alert) => alert.textContent?.includes(memberB)),
-    ).toHaveLength(1);
-    navigate("Mi perfil");
-    navigate("Mis grupos");
-    submitMember(` ${memberA} `);
-    submitMember(` ${memberB} `);
-    expect(api.write).toHaveBeenCalledTimes(2);
-    expect(screen.getAllByRole("alert")).toHaveLength(2);
+    expect(api.catalog.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(api.readGroups).toHaveBeenCalledTimes(2);
   });
 });

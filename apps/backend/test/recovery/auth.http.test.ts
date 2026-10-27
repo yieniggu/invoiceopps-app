@@ -94,8 +94,8 @@ describe("RP0-04 onboarding gate", () => {
     ["get", "/api/v1/groups"],
     ["get", "/api/v1/invoices"],
     ["get", "/api/v1/business-policies"],
-    ["get", "/api/v1/platform/organizations"],
-    ["post", "/api/v1/platform/users"],
+    ["get", "/api/v1/organizations"],
+    ["post", "/api/v1/organizations/o-1/users"],
     ["get", "/api/v1/organizations/o-1/groups"],
   ] as const)("blocks %s %s with ONBOARDING_REQUIRED", async (method, path) => {
     const agent = request(buildApp(pending));

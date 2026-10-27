@@ -32,7 +32,17 @@ const invoice: InvoiceDetail = {
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status });
 }
-function http({ platform = true, member = true, anonymous = false } = {}) {
+function http({
+  platform = true,
+  member = true,
+  anonymous = false,
+  role = "USER",
+}: {
+  platform?: boolean;
+  member?: boolean;
+  anonymous?: boolean;
+  role?: string;
+} = {}) {
   let authenticated = !anonymous;
   const profile: Profile = {
     id: id(2),
@@ -41,7 +51,7 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
     email: null,
     username: null,
     isPlatformAdministrator: platform,
-    memberships: member ? [{ organization, role: "USER" }] : [],
+    memberships: member ? [{ organization, role }] : [],
   };
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
@@ -77,13 +87,47 @@ function http({ platform = true, member = true, anonymous = false } = {}) {
             },
           ],
         });
-      if (url.pathname === "/api/v1/platform/organizations")
+      if (url.pathname === "/api/v1/organizations")
         return json({
           organizations: [
-            { ...organization, groups: [] },
-            { id: id(9), name: "Solo administración", groups: [] },
+            {
+              ...organization,
+              description: null,
+              enabled: true,
+              createdAt,
+            },
+            {
+              id: id(9),
+              name: "Solo administración",
+              slug: "admin-only",
+              description: null,
+              enabled: true,
+              createdAt,
+            },
           ],
         });
+      if (url.pathname === `/api/v1/organizations/${organization.id}/groups`)
+        return json({
+          groups: [
+            {
+              id: id(3),
+              organizationId: organization.id,
+              name: "Equipo S8",
+              description: null,
+              permissions: {
+                readInvoices: true,
+                createInvoices: false,
+                deleteOwnInvoices: false,
+                deleteOthersInvoices: false,
+              },
+            },
+          ],
+        });
+      // Detail screens of an ADMIN also read the people they manage.
+      if (/\/memberships$/.test(url.pathname) && method === "GET")
+        return json({ memberships: [] });
+      if (/\/users$/.test(url.pathname) && method === "GET")
+        return json({ users: [] });
       if (url.pathname === "/api/v1/business-policies" && method === "GET")
         return json({
           policies: [{ version: "s8-policy", manualReviewThreshold: 0.8 }],
@@ -127,21 +171,20 @@ async function navigate(name: string) {
   const nav = await screen.findByRole("navigation", {
     name: "Navegación principal",
   });
-  fireEvent.click(within(nav).getByRole("button", { name }));
+  fireEvent.click(within(nav).getByRole("link", { name }));
   expect(screen.getByRole("heading", { level: 1, name })).toBeTruthy();
   expect(
-    within(nav).getByRole("button", { name }).getAttribute("aria-current"),
+    within(nav).getByRole("link", { name }).getAttribute("aria-current"),
   ).toBe("page");
 }
 describe("APP12 S8 global acceptance characterization", () => {
   it.each([
     ["Panel principal", "Tu espacio de trabajo"],
     ["Mi perfil", "Datos de contacto"],
-    ["Organizaciones", "Mis membresías"],
-    ["Mis grupos", "Grupos de mis membresías"],
+    ["Organizaciones", "Academia S8"],
+    ["Grupos", "Academia S8"],
     ["Facturas", "Facturas"],
     ["Políticas", "Políticas de negocio versionadas"],
-    ["Administración", "Membresías organizacionales"],
   ])(
     "mounts the real %s surface with Spanish landmarks and valid accessible references",
     async (destination, heading) => {
@@ -150,11 +193,7 @@ describe("APP12 S8 global acceptance characterization", () => {
       await screen.findByText(/Bienvenido, Persona S8/);
       expect(
         requests.mock.calls.every(([input]) =>
-          [
-            "/api/v1/auth/profile",
-            "/api/v1/groups",
-            "/api/v1/platform/organizations",
-          ].includes(String(input)),
+          ["/api/v1/auth/profile", "/api/v1/groups"].includes(String(input)),
         ),
       ).toBe(true);
       await navigate(destination);
@@ -193,6 +232,36 @@ describe("APP12 S8 global acceptance characterization", () => {
     },
   );
 
+  it("mounts the organization and group details with valid accessible references", async () => {
+    http({ role: "ADMIN" });
+    render(<App />);
+    await screen.findByText(/Bienvenido, Persona S8/);
+    await navigate("Organizaciones");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Ver detalle de Academia S8" }),
+    );
+    await screen.findByRole("heading", {
+      level: 2,
+      name: "Miembros de la organización",
+    });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Academia S8" }),
+    ).toBeTruthy();
+    semantics();
+    await navigate("Grupos");
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Ver detalle de Equipo S8" }),
+    );
+    await screen.findByRole("heading", {
+      level: 2,
+      name: "Información del grupo",
+    });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Equipo S8" }),
+    ).toBeTruthy();
+    semantics();
+  });
+
   it("logs in only and establishes authority through the native profile read", async () => {
     const requests = http({ anonymous: true });
     render(<App />);
@@ -222,7 +291,7 @@ describe("APP12 S8 global acceptance characterization", () => {
   it("carries a selected group from policies to the invoice detail", async () => {
     const requests = http();
     render(<App />);
-    await navigate("Mis grupos");
+    await navigate("Grupos");
     fireEvent.click(
       await screen.findByRole("button", { name: "Trabajar con Equipo S8" }),
     );
@@ -272,10 +341,15 @@ describe("APP12 S8 global acceptance characterization", () => {
           /invoices|business-policies/.test(String(input)),
         ),
       ).toBe(false);
+      // Platform authority adds only the create action, never a destination.
       expect(
-        within(screen.getByRole("navigation")).queryByRole("button", {
+        within(screen.getByRole("navigation")).queryByRole("link", {
           name: "Administración",
-        }) !== null,
+        }),
+      ).toBeNull();
+      await navigate("Organizaciones");
+      expect(
+        screen.queryByRole("link", { name: "Crear organización" }) !== null,
       ).toBe(platform);
       semantics();
     },

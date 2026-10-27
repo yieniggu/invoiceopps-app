@@ -74,7 +74,7 @@ function http() {
 }
 async function start() {
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: /^Facturas$/ }));
+  fireEvent.click(await screen.findByRole("link", { name: /^Facturas$/ }));
 }
 async function open(id = "INV-A") {
   fireEvent.click(await screen.findByRole("button", { name: `Ver ${id}` }));

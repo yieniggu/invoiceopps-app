@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { Link, useLocation } from "react-router";
 import {
   Building2,
   LayoutDashboard,
@@ -13,7 +14,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ReceiptText,
-  ShieldCheck,
   SlidersHorizontal,
   UserRound,
   Users,
@@ -21,35 +21,26 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export const destinations = [
-  "Panel principal",
-  "Mi perfil",
-  "Organizaciones",
-  "Mis grupos",
-  "Facturas",
-  "Políticas",
-  "Administración",
-] as const;
-export type Destination = (typeof destinations)[number];
+import { paths } from "./paths";
 
-const destinationIcons: Record<Destination, LucideIcon> = {
-  "Panel principal": LayoutDashboard,
-  Facturas: ReceiptText,
-  Políticas: SlidersHorizontal,
-  Organizaciones: Building2,
-  "Mis grupos": Users,
-  Administración: ShieldCheck,
-  "Mi perfil": UserRound,
-};
+interface Destination {
+  label: string;
+  to: string;
+  icon: LucideIcon;
+}
 
-const primaryItems: Destination[] = [
-  "Panel principal",
-  "Facturas",
-  "Políticas",
-  "Organizaciones",
-  "Mis grupos",
-  "Administración",
+export const primaryDestinations: Destination[] = [
+  { label: "Panel principal", to: paths.panel, icon: LayoutDashboard },
+  { label: "Facturas", to: paths.invoices, icon: ReceiptText },
+  { label: "Políticas", to: paths.policies, icon: SlidersHorizontal },
+  { label: "Organizaciones", to: paths.organizations, icon: Building2 },
+  { label: "Grupos", to: paths.groups, icon: Users },
 ];
+const profileDestination: Destination = {
+  label: "Mi perfil",
+  to: paths.profile,
+  icon: UserRound,
+};
 
 export const SIDEBAR_COLLAPSED_KEY = "invoiceops.sidebar.collapsed";
 
@@ -69,30 +60,36 @@ function writeCollapsed(collapsed: boolean) {
   }
 }
 
+// Group screens live under /organizaciones/:id/grupos but belong to "Grupos".
+const organizationGroupsPath = /^\/organizaciones\/[^/]+\/grupos(\/|$)/;
+
+function isDestinationActive(to: string, pathname: string) {
+  if (organizationGroupsPath.test(pathname)) return to === paths.groups;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+/** The page title is rendered by each screen's PageHeader. */
+const focusPageTitle = () => document.getElementById("page-title")?.focus();
+
 export function AppShell({
-  destination,
-  onNavigate,
   children,
-  canAdministrate = false,
   onLogout,
   isLoggingOut,
 }: {
-  destination: Destination;
-  onNavigate: (destination: Destination) => void;
   children: ReactNode;
-  canAdministrate?: boolean;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
-  const heading = useRef<HTMLHeadingElement>(null);
+  const { pathname } = useLocation();
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const drawerClose = useRef<HTMLButtonElement>(null);
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // Every URL change lands on the new page title (DOM synchronisation).
   useEffect(() => {
-    heading.current?.focus();
-  }, [destination]);
+    focusPageTitle();
+  }, [pathname]);
 
   // Focus can only move once the closed drawer has removed `inert` from the
   // trigger and the page, so the target is applied after the commit.
@@ -107,7 +104,7 @@ export function AppShell({
       const target = pendingFocus.current;
       pendingFocus.current = null;
       if (target === "trigger") drawerTrigger.current?.focus();
-      if (target === "heading") heading.current?.focus();
+      if (target === "heading") focusPageTitle();
       return;
     }
     drawerClose.current?.focus();
@@ -147,10 +144,10 @@ export function AppShell({
     writeCollapsed(next);
   };
 
-  const navigate = (name: Destination) => {
-    onNavigate(name);
-    // Navigation lands on the page title, even when the destination is unchanged.
+  // Following a link lands on the page title, even for the current URL.
+  const navigate = () => {
     if (drawerOpen) closeDrawer("heading");
+    else focusPageTitle();
   };
 
   // Close the drawer first so `main` is no longer inert and a logout error
@@ -161,23 +158,20 @@ export function AppShell({
   };
 
   const labelClass = collapsed ? "nav-label visually-hidden" : "nav-label";
-  const renderItem = (name: Destination) => {
-    const Icon = destinationIcons[name];
-    return (
-      <li key={name}>
-        <button
-          type="button"
-          className="nav-item"
-          title={collapsed ? name : undefined}
-          aria-current={destination === name ? "page" : undefined}
-          onClick={() => navigate(name)}
-        >
-          <Icon aria-hidden="true" focusable="false" size={20} />
-          <span className={labelClass}>{name}</span>
-        </button>
-      </li>
-    );
-  };
+  const renderItem = ({ label, to, icon: Icon }: Destination) => (
+    <li key={to}>
+      <Link
+        to={to}
+        className="nav-item"
+        aria-current={isDestinationActive(to, pathname) ? "page" : undefined}
+        title={collapsed ? label : undefined}
+        onClick={navigate}
+      >
+        <Icon aria-hidden="true" focusable="false" size={20} />
+        <span className={labelClass}>{label}</span>
+      </Link>
+    </li>
+  );
   const logoutLabel = isLoggingOut ? "Saliendo..." : "Salir";
 
   return (
@@ -236,13 +230,9 @@ export function AppShell({
           </button>
         </div>
         <nav id="app-sidebar-nav" aria-label="Navegación principal">
-          <ul className="nav-group">
-            {primaryItems
-              .filter((name) => name !== "Administración" || canAdministrate)
-              .map(renderItem)}
-          </ul>
+          <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
           <ul className="nav-group nav-group-bottom">
-            {renderItem("Mi perfil")}
+            {renderItem(profileDestination)}
             <li>
               <button
                 type="button"
@@ -264,9 +254,6 @@ export function AppShell({
         tabIndex={-1}
         inert={drawerOpen}
       >
-        <h1 id="page-title" ref={heading} tabIndex={-1}>
-          {destination}
-        </h1>
         {children}
       </main>
     </div>

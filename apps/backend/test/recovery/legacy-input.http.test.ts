@@ -4,14 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app.js";
 import type { AuthService } from "../../src/auth.js";
 import type { BusinessPolicyService } from "../../src/business-policies.js";
-import type { GroupService } from "../../src/groups.js";
+import type {
+  GroupCatalogService,
+  GroupService,
+} from "../../src/features/groups/services.js";
+import type { OrganizationService } from "../../src/features/orgs/services.js";
+import type { UserService } from "../../src/features/users/services.js";
 import type { InvoiceService } from "../../src/invoices.js";
-import type { PlatformAdministratorService } from "../../src/platform-administrator.js";
 
-// Characterization of the legacy (not yet OpenAPI-documented) input rules:
-// exactly which bodies and queries each route accepts, what the service
-// receives, and that everything else is a 400 VALIDATION_ERROR. The table
-// must pass identically before and after the parsers move to zod schemas.
+// Characterization of the input rules: exactly which bodies and queries each
+// route accepts, what the service receives, and that everything else is a 400
+// VALIDATION_ERROR. The group, organization and user tables follow the
+// documented RP0-06/07/08 operations; the business-policy and invoice tables
+// still characterize the legacy (undocumented) routes.
 
 const COOKIE = "invoiceops_session=session-token";
 const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
@@ -32,19 +37,20 @@ function harness() {
   const group = { id: "g1" };
   const groups = {
     createGroup: vi.fn(async () => group),
-    updateGroup: vi.fn(async () => group),
-    addMember: vi.fn(async () => group),
-    deleteGroup: vi.fn(async () => {}),
+    updatePermissions: vi.fn(async () => group),
+    addMember: vi.fn(async () => ({ userId: "u1" })),
     removeMember: vi.fn(async () => {}),
     listGroups: vi.fn(async () => []),
   };
   const platform = {
-    createOrganization: vi.fn(async () => ({ id: "o1" })),
-    provisionUser: vi.fn(async () => ({ user: {}, temporaryPassword: "x" })),
-    createMembership: vi.fn(async () => ({ id: "m1" })),
-    changeMembershipRole: vi.fn(async () => ({ id: "m1" })),
+    createOrganization: vi.fn(async () => ({ organization: { id: "o1" } })),
+    createMembership: vi.fn(async () => ({ userId: "u1" })),
+    changeMembershipRole: vi.fn(async () => ({ userId: "u1" })),
     removeMembership: vi.fn(async () => {}),
     listOrganizations: vi.fn(async () => []),
+  };
+  const users = {
+    provisionUser: vi.fn(async () => ({ user: {}, temporaryPassword: "x" })),
   };
   const policies = {
     listPolicies: vi.fn(async () => []),
@@ -62,12 +68,14 @@ function harness() {
     updateProfile: vi.fn(async () => profile),
   } as unknown as AuthService;
   const app = createApp({ isReady: async () => true }, auth, {
-    groups: groups as unknown as GroupService,
-    platformAdministrators: platform as unknown as PlatformAdministratorService,
+    groups: groups as unknown as GroupCatalogService,
+    groupAdministration: groups as unknown as GroupService,
+    organizations: platform as unknown as OrganizationService,
+    users: users as unknown as UserService,
     businessPolicies: policies as unknown as BusinessPolicyService,
     invoices: invoices as unknown as InvoiceService,
   });
-  return { app, groups, platform, policies, invoices };
+  return { app, groups, platform, users, policies, invoices };
 }
 
 const long = (length: number) => "x".repeat(length);
@@ -95,7 +103,7 @@ function expectRejected(response: Response) {
   expect(response.body.error.code).toBe("VALIDATION_ERROR");
 }
 
-describe("legacy input: group create", () => {
+describe("group create", () => {
   const cases: Case[] = [
     ["name only", { name: "A" }, { name: "A" }],
     [
@@ -158,37 +166,54 @@ describe("legacy input: group create", () => {
   });
 });
 
-describe("legacy input: group update", () => {
+describe("group permissions update", () => {
+  const flags = {
+    readInvoices: true,
+    createInvoices: false,
+    deleteOwnInvoices: true,
+    deleteOthersInvoices: false,
+  };
   const cases: Case[] = [
-    ["name", { name: "B" }, { name: "B" }],
-    ["trimmed name", { name: " B " }, { name: "B" }],
-    ["null description", { description: null }, { description: null }],
-    ["trimmed description", { description: " x " }, { description: "x" }],
+    ["all four flags", { permissions: flags }, flags],
     [
-      "blank description becomes null",
-      { description: "  " },
-      { description: null },
+      "all false",
+      {
+        permissions: {
+          readInvoices: false,
+          createInvoices: false,
+          deleteOwnInvoices: false,
+          deleteOthersInvoices: false,
+        },
+      },
+      {
+        readInvoices: false,
+        createInvoices: false,
+        deleteOwnInvoices: false,
+        deleteOthersInvoices: false,
+      },
     ],
     [
-      "both fields",
-      { name: "B", description: "d" },
-      { name: "B", description: "d" },
+      "missing flag",
+      { permissions: { ...flags, deleteOthersInvoices: undefined } },
+      "reject",
     ],
+    [
+      "string flag",
+      { permissions: { ...flags, readInvoices: "true" } },
+      "reject",
+    ],
+    ["numeric flag", { permissions: { ...flags, readInvoices: 1 } }, "reject"],
+    ["null flag", { permissions: { ...flags, readInvoices: null } }, "reject"],
+    [
+      "unknown key inside permissions",
+      { permissions: { ...flags, x: true } },
+      "reject",
+    ],
+    ["unknown top-level key", { permissions: flags, name: "B" }, "reject"],
+    ["legacy name body", { name: "B" }, "reject"],
+    ["flags at the top level", flags, "reject"],
+    ["null permissions", { permissions: null }, "reject"],
     ["empty object", {}, "reject"],
-    ["unknown key", { other: 1 }, "reject"],
-    ["known plus unknown key", { name: "B", other: 1 }, "reject"],
-    ["null name", { name: null }, "reject"],
-    ["empty name", { name: "" }, "reject"],
-    ["blank name", { name: " " }, "reject"],
-    ["name of 120", { name: long(120) }, { name: long(120) }],
-    ["name of 121", { name: long(121) }, "reject"],
-    ["numeric description", { description: 5 }, "reject"],
-    [
-      "description of 1000",
-      { description: long(1000) },
-      { description: long(1000) },
-    ],
-    ["description of 1001", { description: long(1001) }, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
   ];
@@ -204,10 +229,10 @@ describe("legacy input: group update", () => {
 
     if (expected === "reject") {
       expectRejected(response);
-      expect(groups.updateGroup).not.toHaveBeenCalled();
+      expect(groups.updatePermissions).not.toHaveBeenCalled();
     } else {
       expect(response.status).toBe(200);
-      expect(groups.updateGroup).toHaveBeenCalledWith(
+      expect(groups.updatePermissions).toHaveBeenCalledWith(
         ACTOR,
         "o1",
         "g1",
@@ -217,7 +242,7 @@ describe("legacy input: group update", () => {
   });
 });
 
-describe("legacy input: group member", () => {
+describe("group membership create", () => {
   const cases: Case[] = [
     ["userId", { userId: "u1" }, "u1"],
     ["trimmed userId", { userId: " u1 " }, "u1"],
@@ -225,6 +250,8 @@ describe("legacy input: group member", () => {
     ["blank userId", { userId: "  " }, "reject"],
     ["numeric userId", { userId: 5 }, "reject"],
     ["extra key", { userId: "u1", x: 1 }, "reject"],
+    ["permissions", { userId: "u1", permissions: {} }, "reject"],
+    ["flag", { userId: "u1", readInvoices: true }, "reject"],
     ["empty object", {}, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
@@ -235,7 +262,7 @@ describe("legacy input: group member", () => {
     const response = await send(
       app,
       "post",
-      "/api/v1/organizations/o1/groups/g1/members",
+      "/api/v1/organizations/o1/groups/g1/memberships",
       body,
     );
 
@@ -243,7 +270,7 @@ describe("legacy input: group member", () => {
       expectRejected(response);
       expect(groups.addMember).not.toHaveBeenCalled();
     } else {
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(201);
       expect(groups.addMember).toHaveBeenCalledWith(
         ACTOR,
         "o1",
@@ -254,17 +281,26 @@ describe("legacy input: group member", () => {
   });
 });
 
-describe("legacy input: organization membership", () => {
+describe("organization membership", () => {
   const create: Case[] = [
-    ["admin", { userId: "u1", role: "ADMIN" }, ["u1", "ADMIN"]],
-    ["trimmed userId", { userId: " u1 ", role: "USER" }, ["u1", "USER"]],
-    ["unknown role", { userId: "u1", role: "OWNER" }, "reject"],
-    ["lowercase role", { userId: "u1", role: "admin" }, "reject"],
-    ["missing role", { userId: "u1" }, "reject"],
-    ["missing userId", { role: "USER" }, "reject"],
-    ["blank userId", { userId: " ", role: "USER" }, "reject"],
-    ["numeric userId", { userId: 5, role: "USER" }, "reject"],
-    ["extra key", { userId: "u1", role: "USER", x: 1 }, "reject"],
+    [
+      "admin",
+      { rut: "12.345.678-5", role: "ADMIN" },
+      { rut: "123456785", role: "ADMIN" },
+    ],
+    [
+      "RUT without separators",
+      { rut: "12345678-5", role: "USER" },
+      { rut: "123456785", role: "USER" },
+    ],
+    ["invalid RUT", { rut: "11.111.111-2", role: "USER" }, "reject"],
+    ["numeric RUT", { rut: 123456785, role: "USER" }, "reject"],
+    ["unknown role", { rut: "12.345.678-5", role: "OWNER" }, "reject"],
+    ["lowercase role", { rut: "12.345.678-5", role: "admin" }, "reject"],
+    ["missing role", { rut: "12.345.678-5" }, "reject"],
+    ["missing RUT", { role: "USER" }, "reject"],
+    ["legacy userId body", { userId: "u1", role: "USER" }, "reject"],
+    ["extra key", { rut: "12.345.678-5", role: "USER", x: 1 }, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
   ];
@@ -274,7 +310,7 @@ describe("legacy input: organization membership", () => {
     const response = await send(
       app,
       "post",
-      "/api/v1/platform/organizations/o1/members",
+      "/api/v1/organizations/o1/memberships",
       body,
     );
 
@@ -286,8 +322,7 @@ describe("legacy input: organization membership", () => {
       expect(platform.createMembership).toHaveBeenCalledWith(
         ACTOR,
         "o1",
-        (expected as string[])[0],
-        (expected as string[])[1],
+        expected,
       );
     }
   });
@@ -307,7 +342,7 @@ describe("legacy input: organization membership", () => {
     const response = await send(
       app,
       "patch",
-      "/api/v1/platform/organizations/o1/members/u1",
+      "/api/v1/organizations/o1/memberships/u1",
       body,
     );
 
@@ -326,66 +361,74 @@ describe("legacy input: organization membership", () => {
   });
 });
 
-describe("legacy input: organization create", () => {
+describe("organization create", () => {
+  const admin = { firstAdminRut: "12.345.678-5" };
+  const canonical = { firstAdminRut: "123456785" };
   const cases: Case[] = [
     [
       "name and slug",
-      { name: "Org", slug: "org-1" },
-      { name: "Org", slug: "org-1" },
+      { name: "Org", slug: "org-1", ...admin },
+      { name: "Org", slug: "org-1", ...canonical },
     ],
     [
       "trims name, keeps slug",
-      { name: " Org ", slug: "org" },
-      { name: "Org", slug: "org" },
+      { name: " Org ", slug: "org", ...admin },
+      { name: "Org", slug: "org", ...canonical },
     ],
     [
       "description trimmed",
-      { name: "Org", slug: "org", description: " d " },
-      { name: "Org", slug: "org", description: "d" },
+      { name: "Org", slug: "org", description: " d ", ...admin },
+      { name: "Org", slug: "org", description: "d", ...canonical },
     ],
     [
       "blank description becomes null",
-      { name: "Org", slug: "org", description: " " },
-      { name: "Org", slug: "org", description: null },
+      { name: "Org", slug: "org", description: " ", ...admin },
+      { name: "Org", slug: "org", description: null, ...canonical },
     ],
     [
       "null description",
-      { name: "Org", slug: "org", description: null },
-      { name: "Org", slug: "org", description: null },
+      { name: "Org", slug: "org", description: null, ...admin },
+      { name: "Org", slug: "org", description: null, ...canonical },
     ],
-    ["uppercase slug", { name: "Org", slug: "Org" }, "reject"],
-    ["double dash slug", { name: "Org", slug: "a--b" }, "reject"],
-    ["leading dash slug", { name: "Org", slug: "-a" }, "reject"],
-    ["trailing dash slug", { name: "Org", slug: "a-" }, "reject"],
-    ["empty slug", { name: "Org", slug: "" }, "reject"],
-    ["padded slug", { name: "Org", slug: " org" }, "reject"],
-    ["numeric slug", { name: "Org", slug: 5 }, "reject"],
-    ["missing slug", { name: "Org" }, "reject"],
-    ["blank name", { name: " ", slug: "org" }, "reject"],
-    ["name of 121", { name: long(121), slug: "org" }, "reject"],
+    ["missing firstAdminRut", { name: "Org", slug: "org" }, "reject"],
+    [
+      "invalid firstAdminRut",
+      { name: "Org", slug: "org", firstAdminRut: "11.111.111-2" },
+      "reject",
+    ],
+    [
+      "numeric firstAdminRut",
+      { name: "Org", slug: "org", firstAdminRut: 123456785 },
+      "reject",
+    ],
+    ["uppercase slug", { name: "Org", slug: "Org", ...admin }, "reject"],
+    ["double dash slug", { name: "Org", slug: "a--b", ...admin }, "reject"],
+    ["leading dash slug", { name: "Org", slug: "-a", ...admin }, "reject"],
+    ["trailing dash slug", { name: "Org", slug: "a-", ...admin }, "reject"],
+    ["empty slug", { name: "Org", slug: "", ...admin }, "reject"],
+    ["padded slug", { name: "Org", slug: " org", ...admin }, "reject"],
+    ["numeric slug", { name: "Org", slug: 5, ...admin }, "reject"],
+    ["missing slug", { name: "Org", ...admin }, "reject"],
+    ["blank name", { name: " ", slug: "org", ...admin }, "reject"],
+    ["name of 121", { name: long(121), slug: "org", ...admin }, "reject"],
     [
       "description of 1001",
-      { name: "Org", slug: "org", description: long(1001) },
+      { name: "Org", slug: "org", description: long(1001), ...admin },
       "reject",
     ],
     [
       "numeric description",
-      { name: "Org", slug: "org", description: 1 },
+      { name: "Org", slug: "org", description: 1, ...admin },
       "reject",
     ],
-    ["extra key", { name: "Org", slug: "org", x: 1 }, "reject"],
+    ["extra key", { name: "Org", slug: "org", x: 1, ...admin }, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
   ];
 
   it.each(cases)("%s", async (_label, body, expected) => {
     const { app, platform } = harness();
-    const response = await send(
-      app,
-      "post",
-      "/api/v1/platform/organizations",
-      body,
-    );
+    const response = await send(app, "post", "/api/v1/organizations", body);
 
     if (expected === "reject") {
       expectRejected(response);
@@ -397,46 +440,45 @@ describe("legacy input: organization create", () => {
   });
 });
 
-describe("legacy input: user provisioning", () => {
-  const valid = {
-    name: " Ada ",
-    rut: "12.345.678-5",
-    organizationId: " o1 ",
-    role: "USER",
-  };
+describe("organization user provisioning", () => {
+  const valid = { name: " Ada ", rut: "12.345.678-5", role: "USER" };
   const cases: Case[] = [
     [
       "canonicalizes RUT and trims",
       valid,
-      { name: "Ada", rut: "123456785", organizationId: "o1", role: "USER" },
+      { name: "Ada", rut: "123456785", role: "USER" },
     ],
     ["invalid RUT", { ...valid, rut: "11.111.111-2" }, "reject"],
     ["numeric RUT", { ...valid, rut: 123456785 }, "reject"],
-    [
-      "missing RUT",
-      { name: "Ada", organizationId: "o1", role: "USER" },
-      "reject",
-    ],
+    ["missing RUT", { name: "Ada", role: "USER" }, "reject"],
     ["unknown role", { ...valid, role: "OWNER" }, "reject"],
-    ["blank organization", { ...valid, organizationId: " " }, "reject"],
-    ["numeric organization", { ...valid, organizationId: 5 }, "reject"],
     ["blank name", { ...valid, name: " " }, "reject"],
     ["name of 121", { ...valid, name: long(121) }, "reject"],
+    [
+      "legacy organizationId in body",
+      { ...valid, organizationId: "o1" },
+      "reject",
+    ],
     ["extra key", { ...valid, x: 1 }, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
   ];
 
   it.each(cases)("%s", async (_label, body, expected) => {
-    const { app, platform } = harness();
-    const response = await send(app, "post", "/api/v1/platform/users", body);
+    const { app, users } = harness();
+    const response = await send(
+      app,
+      "post",
+      "/api/v1/organizations/o1/users",
+      body,
+    );
 
     if (expected === "reject") {
       expectRejected(response);
-      expect(platform.provisionUser).not.toHaveBeenCalled();
+      expect(users.provisionUser).not.toHaveBeenCalled();
     } else {
       expect(response.status).toBe(201);
-      expect(platform.provisionUser).toHaveBeenCalledWith(ACTOR, expected);
+      expect(users.provisionUser).toHaveBeenCalledWith(ACTOR, "o1", expected);
     }
   });
 });

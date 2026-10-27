@@ -2,12 +2,16 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import {
+  orgsKey,
+  orgGroupsKey,
+  workspaceGroupsKey,
+} from "./features/auth/session/queryKeys";
+import { renderApp } from "./test/renderApp";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -49,6 +53,21 @@ function group(id: string) {
     members: [],
   };
 }
+// Organization-scoped shape behind the Grupos screens.
+function scopedGroup(id: string) {
+  return {
+    id: `group-${id}`,
+    organizationId: `org-${id}`,
+    name: `Group ${id}`,
+    description: null,
+    permissions: {
+      readInvoices: false,
+      createInvoices: false,
+      deleteOwnInvoices: false,
+      deleteOthersInvoices: false,
+    },
+  };
+}
 function http(admin = false) {
   let identity = "A";
   const patch = vi
@@ -58,6 +77,9 @@ function http(admin = false) {
   const groups = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () => json({ groups: [group(identity)] }));
+  const orgGroups = vi
+    .fn<() => Promise<Response>>()
+    .mockImplementation(async () => json({ groups: [scopedGroup(identity)] }));
   const discovery = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () =>
@@ -65,8 +87,11 @@ function http(admin = false) {
         organizations: [
           {
             id: `org-${identity}`,
-            name: `Organization ${identity}`,
-            groups: [group(identity)],
+            name: `Listed ${identity}`,
+            slug: `listed-${identity.toLowerCase()}`,
+            description: `Descripción ${identity}`,
+            enabled: true,
+            createdAt: "2026-10-01T00:00:00.000Z",
           },
         ],
       }),
@@ -91,20 +116,49 @@ function http(admin = false) {
         return json({ user: { id: "B" } });
       }
       if (path === "/api/v1/groups") return groups();
-      if (path === "/api/v1/platform/organizations") return discovery();
-      if (path.startsWith("/api/v1/organizations/")) return mutation();
+      if (path === "/api/v1/organizations") return discovery();
+      if (
+        /^\/api\/v1\/organizations\/[^/]+\/groups$/.test(path) &&
+        (init?.method ?? "GET") === "GET"
+      )
+        return orgGroups();
+      // The group detail also reads its members; only writes count as mutations.
+      if (path.startsWith("/api/v1/organizations/"))
+        return (init?.method ?? "GET") === "GET"
+          ? json({ memberships: [], users: [] })
+          : mutation();
       if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
       throw new Error(`Unexpected request: ${path}`);
     });
-  return { patch, mutation, groups, discovery, logout, getProfile, fetchMock };
+  return {
+    patch,
+    mutation,
+    groups,
+    orgGroups,
+    discovery,
+    logout,
+    getProfile,
+    fetchMock,
+  };
 }
 async function start() {
-  const view = render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: "Mis grupos" }));
+  const view = renderApp();
+  fireEvent.click(await screen.findByRole("link", { name: "Grupos" }));
   await screen.findByText("Group A");
   navigate("Mi perfil");
   return view;
+}
+/** Revalidates one Query entry of identity A, as a mutation or retry would. */
+function reload(
+  view: ReturnType<typeof renderApp>,
+  queryKey: readonly unknown[],
+) {
+  act(() => {
+    void view.store
+      .getSnapshot()
+      .client.invalidateQueries({ queryKey, exact: true });
+  });
 }
 async function signOut() {
   fireEvent.click(screen.getByRole("button", { name: "Salir" }));
@@ -118,12 +172,18 @@ async function signInB() {
     target: { value: "test-password-123" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Mis grupos" }));
+  fireEvent.click(await screen.findByRole("link", { name: "Grupos" }));
   await screen.findByText("Group B");
   navigate("Mi perfil");
 }
 function navigate(name: string) {
-  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(screen.getByRole("link", { name }));
+}
+/** Permissions are edited on the group detail, reached from the list. */
+function openGroup(id: string) {
+  fireEvent.click(
+    screen.getByRole("link", { name: `Ver detalle de Group ${id}` }),
+  );
 }
 function expectB() {
   navigate("Mi perfil");
@@ -134,12 +194,13 @@ function expectB() {
   expect(
     screen.getByRole("button", { name: "Guardar cambios" }),
   ).toHaveProperty("disabled", false);
-  navigate("Mis grupos");
+  navigate("Grupos");
   expect(screen.getByText("Group B")).toBeTruthy();
   expect(screen.queryByText("Group A")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
+  openGroup("B");
   expect(
-    screen.getByRole("button", { name: "Guardar grupo Group B" }),
+    screen.getByRole("button", { name: "Guardar permisos" }),
   ).toHaveProperty("disabled", false);
   navigate("Mi perfil");
 }
@@ -148,65 +209,120 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("CR007 App-owned protected reads", () => {
-  const cases = [
-    { label: "member groups", admin: false, discovery: false },
-    { label: "administrator groups", admin: true, discovery: false },
-    { label: "administrator discovery", admin: true, discovery: true },
-  ];
+type Api = ReturnType<typeof http>;
+interface ReadCase {
+  label: string;
+  admin: boolean;
+  read: (api: Api) => ReturnType<typeof vi.fn<() => Promise<Response>>>;
+  /** Destination whose screen issues the read; null = loaded with the session. */
+  destination: string | null;
+  key: readonly unknown[];
+  failure: string;
+  retry: string;
+  /** Resolves once the read's data is on screen. */
+  expectLoaded: () => Promise<unknown>;
+  /** Extra navigation from the destination to the screen that reads. */
+  drillDown?: string;
+}
 
+const showsText = (text: string) => () => screen.findByText(text);
+
+const cases: ReadCase[] = [
+  {
+    label: "workspace groups",
+    admin: false,
+    read: (api) => api.groups,
+    destination: "Grupos",
+    key: workspaceGroupsKey("A"),
+    failure: "No fue posible validar tu espacio de trabajo.",
+    retry: "Reintentar espacio de trabajo",
+    expectLoaded: showsText("Group A"),
+  },
+  {
+    label: "organization groups",
+    admin: false,
+    read: (api) => api.orgGroups,
+    destination: "Grupos",
+    key: orgGroupsKey("A", "org-A"),
+    failure: "No fue posible cargar los grupos.",
+    retry: "Reintentar grupos",
+    expectLoaded: showsText("Group A"),
+  },
+  {
+    label: "platform organizations",
+    admin: true,
+    read: (api) => api.discovery,
+    destination: "Organizaciones",
+    // The organization detail reads the platform list for its description.
+    drillDown: "Ver detalle de Organization A",
+    key: orgsKey("A"),
+    failure: "No fue posible cargar la descripción de la organización.",
+    retry: "Reintentar organización",
+    expectLoaded: () => screen.findByDisplayValue("Descripción A"),
+  },
+];
+
+async function open(testCase: ReadCase) {
+  if (testCase.destination)
+    fireEvent.click(
+      await screen.findByRole("link", { name: testCase.destination }),
+    );
+  if (testCase.drillDown)
+    fireEvent.click(
+      await screen.findByRole("link", { name: testCase.drillDown }),
+    );
+}
+
+describe("CR007 App-owned protected reads", () => {
   for (const testCase of cases) {
     for (const phase of ["initial", "reload"] as const) {
-      it(`expires the current session on ${phase} ${testCase.label} 401`, async () => {
-        const api = http(testCase.admin);
-        const read = testCase.discovery ? api.discovery : api.groups;
-        const pending = deferred();
-        if (phase === "reload") await start();
-        read.mockReturnValueOnce(pending.promise);
-        if (phase === "initial") render(<App />);
-        else {
-          navigate("Mis grupos");
-          fireEvent.click(
-            screen.getByRole("button", { name: "Eliminar grupo Group A" }),
-          );
+      /** Starts the pending read for the phase and waits until it is in flight. */
+      async function launch(api: Api, pending: ReturnType<typeof deferred>) {
+        const read = testCase.read(api);
+        const view = renderApp();
+        if (phase === "reload") {
+          await open(testCase);
+          await testCase.expectLoaded();
+          read.mockReturnValueOnce(pending.promise);
+          reload(view, testCase.key);
+        } else {
+          read.mockReturnValueOnce(pending.promise);
+          await open(testCase);
         }
         await waitFor(() =>
           expect(read).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2),
         );
+        return { read, view };
+      }
+
+      it(`expires the current session on ${phase} ${testCase.label} 401`, async () => {
+        const api = http(testCase.admin);
+        const pending = deferred();
+        const { read } = await launch(api, pending);
         expect(screen.getByRole("button", { name: "Salir" })).toBeTruthy();
-        const groupReads = api.groups.mock.calls.length;
+        const reads = read.mock.calls.length;
         await act(async () => pending.resolve(json({}, 401)));
         expect(
           await screen.findByRole("button", { name: "Iniciar sesión" }),
         ).toBeTruthy();
         expect(screen.queryByRole("navigation")).toBeNull();
         expect(screen.queryByRole("button", { name: "Salir" })).toBeNull();
-        expect(api.groups).toHaveBeenCalledTimes(groupReads);
+        expect(read).toHaveBeenCalledTimes(reads);
         expect(api.logout).not.toHaveBeenCalled();
       });
 
       it(`ignores a late ${phase} ${testCase.label} 401 after login B`, async () => {
         const api = http(testCase.admin);
-        const read = testCase.discovery ? api.discovery : api.groups;
         const pending = deferred();
-        if (phase === "reload") await start();
-        read.mockReturnValueOnce(pending.promise);
-        if (phase === "initial") render(<App />);
-        else {
-          navigate("Mis grupos");
-          fireEvent.click(
-            screen.getByRole("button", { name: "Eliminar grupo Group A" }),
-          );
-        }
-        await waitFor(() =>
-          expect(read).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2),
-        );
+        await launch(api, pending);
         await signOut();
         await signInB();
         const count = api.fetchMock.mock.calls.length;
         await act(async () => pending.resolve(json({}, 401)));
-        expectB();
+        // The late answer of A starts no request of its own...
         expect(api.fetchMock).toHaveBeenCalledTimes(count);
+        // ...and leaves B untouched (re-opening a screen may refetch by itself).
+        expectB();
       });
     }
 
@@ -214,7 +330,7 @@ describe("CR007 App-owned protected reads", () => {
       `ignores delayed initial ${testCase.label} JSON %s after login B`,
       async (outcome) => {
         const api = http(testCase.admin);
-        const read = testCase.discovery ? api.discovery : api.groups;
+        const read = testCase.read(api);
         let resolve!: (value: unknown) => void;
         let reject!: (reason: Error) => void;
         const response = json({});
@@ -225,7 +341,8 @@ describe("CR007 App-owned protected reads", () => {
           }),
         );
         read.mockResolvedValueOnce(response);
-        render(<App />);
+        renderApp();
+        await open(testCase);
         await waitFor(() => expect(parse).toHaveBeenCalledTimes(1));
         await signOut();
         await signInB();
@@ -234,21 +351,15 @@ describe("CR007 App-owned protected reads", () => {
           if (outcome === "error") reject(new Error("Old JSON failure"));
           else
             resolve(
-              testCase.discovery
-                ? {
-                    organizations: [
-                      {
-                        id: "org-A",
-                        name: "Old discovery",
-                        groups: [group("A")],
-                      },
-                    ],
-                  }
-                : { groups: [group("A")] },
+              testCase.label === "platform organizations"
+                ? { organizations: [] }
+                : testCase.label === "workspace groups"
+                  ? { groups: [group("A")] }
+                  : { groups: [scopedGroup("A")] },
             );
         });
-        expectB();
         expect(api.fetchMock).toHaveBeenCalledTimes(count);
+        expectB();
       },
     );
 
@@ -256,31 +367,21 @@ describe("CR007 App-owned protected reads", () => {
       `retains session and retry for ${testCase.label} HTTP %s`,
       async (status) => {
         const api = http(testCase.admin);
-        const read = testCase.discovery ? api.discovery : api.groups;
+        const read = testCase.read(api);
         read.mockResolvedValueOnce(json({}, status));
-        render(<App />);
-        fireEvent.click(
-          await screen.findByRole("button", {
-            name: testCase.discovery ? "Organizaciones" : "Mis grupos",
-          }),
-        );
+        renderApp();
+        await open(testCase);
         const retry = await screen.findByRole("button", {
-          name: testCase.discovery
-            ? "Reintentar organizaciones"
-            : "Reintentar grupos",
+          name: testCase.retry,
         });
-        expect(screen.getByRole("alert").textContent).toContain(
-          testCase.discovery
-            ? "No fue posible cargar las organizaciones."
-            : "No fue posible cargar los grupos.",
+        expect((await screen.findByRole("alert")).textContent).toContain(
+          testCase.failure,
         );
         expect(screen.getByRole("button", { name: "Salir" })).toBeTruthy();
         fireEvent.click(retry);
         await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-        await screen.findByText(
-          testCase.discovery ? "Organization A" : "Group A",
-        );
-        expect(screen.queryByRole("alert")).toBeNull();
+        await testCase.expectLoaded();
+        await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
         expect(api.logout).not.toHaveBeenCalled();
       },
     );
@@ -289,7 +390,7 @@ describe("CR007 App-owned protected reads", () => {
   it("does not launch protected discovery or groups for an anonymous profile", async () => {
     const api = http(true);
     api.getProfile.mockResolvedValueOnce(json({}, 401));
-    render(<App />);
+    renderApp();
     await screen.findByRole("button", { name: "Iniciar sesión" });
     expect(api.getProfile).toHaveBeenCalledTimes(1);
     expect(api.discovery).not.toHaveBeenCalled();
@@ -373,36 +474,33 @@ describe("CR-001 mounted session isolation", () => {
   );
 
   it.each([200, 401, 500])(
-    "ignores stale group mutation %s, including its reload and finally",
+    "ignores stale group mutation %s, including its refresh",
     async (status) => {
       const api = http();
       const pending = deferred();
       api.mutation.mockReturnValueOnce(pending.promise);
       await start();
-      navigate("Mis grupos");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Eliminar grupo Group A" }),
-      );
+      navigate("Grupos");
+      openGroup("A");
+      fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+      await waitFor(() => expect(api.mutation).toHaveBeenCalledTimes(1));
       await signOut();
       await signInB();
-      const count = api.groups.mock.calls.length;
+      const count = api.fetchMock.mock.calls.length;
       await act(async () => pending.resolve(json({}, status)));
+      expect(api.fetchMock).toHaveBeenCalledTimes(count);
       expectB();
-      expect(api.groups).toHaveBeenCalledTimes(count);
     },
   );
 
   it.each([200, 401, 500])(
-    "does not publish stale group reload %s into B",
+    "does not publish stale workspace group reload %s into B",
     async (status) => {
       const api = http();
       const pending = deferred();
-      await start();
+      const view = await start();
       api.groups.mockReturnValueOnce(pending.promise);
-      navigate("Mis grupos");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Eliminar grupo Group A" }),
-      );
+      reload(view, workspaceGroupsKey("A"));
       await waitFor(() => expect(api.groups).toHaveBeenCalledTimes(2));
       await signOut();
       await signInB();
@@ -410,7 +508,7 @@ describe("CR-001 mounted session isolation", () => {
         pending.resolve(json({ groups: [group("A")] }, status)),
       );
       expectB();
-      navigate("Mis grupos");
+      navigate("Grupos");
       expect(screen.getByText("Group B")).toBeTruthy();
       expect(screen.queryByText("Group A")).toBeNull();
       navigate("Facturas");
@@ -452,23 +550,27 @@ describe("CR-001 mounted session isolation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await act(async () => old.resolve(json({}, 500)));
     expect(
-      screen.getByRole("button", { name: "Guardando cambios..." }),
+      await screen.findByRole("button", { name: "Guardando cambios..." }),
     ).toHaveProperty("disabled", true);
     expect(screen.queryByRole("alert")).toBeNull();
     await act(async () => current.resolve(json({ profile: profile("B") })));
+    expect(await screen.findByText("Perfil actualizado.")).toBeTruthy();
     expectB();
-    expect(screen.getByText("Perfil actualizado.")).toBeTruthy();
   });
 
-  it("does not continue a stale discovery reload with another identity's groups", async () => {
+  it("does not continue a stale platform list reload with another identity's data", async () => {
     const api = http(true);
     const pending = deferred();
-    await start();
-    api.discovery.mockReturnValueOnce(pending.promise);
-    navigate("Mis grupos");
+    const view = await start();
+    navigate("Organizaciones");
     fireEvent.click(
-      screen.getByRole("button", { name: "Eliminar grupo Group A" }),
+      await screen.findByRole("link", {
+        name: "Ver detalle de Organization A",
+      }),
     );
+    await screen.findByDisplayValue("Descripción A");
+    api.discovery.mockReturnValueOnce(pending.promise);
+    reload(view, orgsKey("A"));
     await waitFor(() => expect(api.discovery).toHaveBeenCalledTimes(2));
     await signOut();
     await signInB();
@@ -477,14 +579,21 @@ describe("CR-001 mounted session isolation", () => {
       pending.resolve(
         json({
           organizations: [
-            { id: "org-A", name: "Old discovery", groups: [group("A")] },
+            {
+              id: "org-A",
+              name: "Old discovery",
+              slug: "old-discovery",
+              description: null,
+              enabled: true,
+              createdAt: "2026-10-01T00:00:00.000Z",
+            },
           ],
         }),
       ),
     );
-    expectB();
     expect(api.groups).toHaveBeenCalledTimes(count);
-    expect(screen.queryByText("Old discovery")).toBeNull();
+    expect(screen.queryByText("old-discovery")).toBeNull();
+    expectB();
   });
 
   it("invalidates pending profile work at logout start even when logout fails", async () => {
@@ -503,8 +612,8 @@ describe("CR-001 mounted session isolation", () => {
     );
     expect(screen.queryByText("Stale update")).toBeNull();
     await act(async () => logout.resolve(json({}, 500)));
-    expect(screen.getByText("Person A")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain(
+    expect(await screen.findByText("Person A")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toContain(
       "No fue posible cerrar",
     );
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
@@ -516,10 +625,10 @@ describe("CR-001 mounted session isolation", () => {
     const pending = deferred();
     api.mutation.mockReturnValueOnce(pending.promise);
     const view = await start();
-    navigate("Mis grupos");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Eliminar grupo Group A" }),
-    );
+    navigate("Grupos");
+    openGroup("A");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+    await waitFor(() => expect(api.mutation).toHaveBeenCalledTimes(1));
     const count = api.fetchMock.mock.calls.length;
     view.unmount();
     await act(async () => pending.resolve(json({})));
@@ -533,7 +642,7 @@ describe("CR-001 mounted session isolation", () => {
       api.getProfile
         .mockResolvedValueOnce(json({}, 401))
         .mockResolvedValueOnce(json({}, status));
-      render(<App />);
+      renderApp();
       await screen.findByRole("button", { name: "Iniciar sesión" });
       fireEvent.change(screen.getByRole("textbox", { name: "RUT" }), {
         target: { value: "123456785" },
@@ -551,8 +660,8 @@ describe("CR-001 mounted session isolation", () => {
       else {
         fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
         fireEvent.click(
-          await screen.findByRole("button", {
-            name: "Mis grupos",
+          await screen.findByRole("link", {
+            name: "Grupos",
           }),
         );
         await screen.findByText("Group B");

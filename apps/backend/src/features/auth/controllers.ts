@@ -5,7 +5,11 @@ import { parseRut } from "../../rut.js";
 import { ApiError, parseWith, sendError } from "../../http/errors.js";
 import { logEvent, requestFields } from "../../http/logging.js";
 import { AuthError, type AuthProfile, type AuthService } from "./services.js";
-import { LoginRequestSchema, PasswordChangeRequestSchema } from "./schemas.js";
+import {
+  LoginRequestSchema,
+  PasswordChangeRequestSchema,
+  ProfileUpdateSchema,
+} from "./schemas.js";
 import {
   clearSessionCookie,
   loadProfile,
@@ -164,6 +168,21 @@ export function createAuthController(
       );
   };
 
+  const updateProfile: RequestHandler = async (request, response) => {
+    const { auth: service, sessionToken } = requireSession(
+      auth,
+      request.headers.cookie,
+    );
+    const input = parseWith(
+      ProfileUpdateSchema,
+      request.body,
+      "Invalid profile update",
+    );
+    response
+      .status(200)
+      .json(profileResponse(await service.updateProfile(sessionToken, input)));
+  };
+
   const changePassword: RequestHandler = async (request, response) => {
     const { sessionToken } = requireSession(auth, request.headers.cookie);
     if (!auth?.changePassword) {
@@ -190,5 +209,5 @@ export function createAuthController(
     response.status(204).end();
   };
 
-  return { login, profile, changePassword, logout };
+  return { login, profile, updateProfile, changePassword, logout };
 }

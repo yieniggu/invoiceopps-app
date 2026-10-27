@@ -4,7 +4,7 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { hashPassword, temporaryPasswordExpired } from "./services.js";
-import { runSerializable } from "../../platform-administrator.js";
+import { runSerializable } from "../../transactions.js";
 import { parseRut } from "../../rut.js";
 import {
   MAX_PASSWORD_LENGTH,

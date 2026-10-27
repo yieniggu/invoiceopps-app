@@ -5,7 +5,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { useUnauthorized } from "../auth/ProtectedSession";
+import { useUnauthorized } from "../auth/components/ProtectedSession";
 import type { Profile } from "../profile/ProfileScreen";
 import {
   parsePolicy,
@@ -18,7 +18,7 @@ import {
   useSharedWorkspace,
   type OwnerContext,
 } from "../workspace/WorkspaceContext";
-import { protectedFetch } from "../auth/protectedFetch";
+import { protectedFetch } from "../auth/api/protectedFetch";
 
 type ListState =
   | { kind: "loading" }

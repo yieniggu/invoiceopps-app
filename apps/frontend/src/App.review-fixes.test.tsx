@@ -102,7 +102,7 @@ function http() {
 }
 function navigate(name: string) {
   fireEvent.click(
-    within(screen.getByRole("navigation")).getByRole("button", { name }),
+    within(screen.getByRole("navigation")).getByRole("link", { name }),
   );
 }
 async function start(destination: string) {

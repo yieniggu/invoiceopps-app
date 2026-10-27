@@ -22,6 +22,7 @@
     "test:recovery:contracts": "pnpm --filter @invoiceops/backend test:recovery:contracts",
     "test:recovery:http": "pnpm --filter @invoiceops/backend test:recovery:http",
     "test:recovery:postgres": "pnpm --filter @invoiceops/backend test:recovery:postgres",
+    "test:recovery:ui": "pnpm --filter @invoiceops/frontend test:recovery:ui",
     "test:recovery:unit": "pnpm --filter @invoiceops/backend test:recovery:unit",
     "test:unit": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"

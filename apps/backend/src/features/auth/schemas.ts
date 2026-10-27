@@ -111,7 +111,6 @@ export const PasswordChangeRequestSchema = z
   .strict()
   .meta({ id: "PasswordChangeRequest" });
 
-// Legacy PATCH /profile body (RP0-05 owns its final shape); not documented yet.
 export const ProfileUpdateSchema = z
   .object({
     email: z.string().nullable().optional(),
@@ -122,4 +121,5 @@ export const ProfileUpdateSchema = z
     message: "At least one field is required",
     // Unknown keys already produced an issue; do not add a second one.
     when: (payload) => payload.issues.length === 0,
-  });
+  })
+  .meta({ id: "ProfileUpdateRequest" });

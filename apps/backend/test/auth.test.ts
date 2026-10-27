@@ -5,8 +5,11 @@ import { createApp } from "../src/app.js";
 import { createAuthRateLimiter } from "../src/auth-rate-limit.js";
 import { AuthError, createAuthService, type AuthService } from "../src/auth.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
-import type { GroupService } from "../src/groups.js";
-import type { PlatformAdministratorService } from "../src/platform-administrator.js";
+import type {
+  GroupCatalogService,
+  GroupService,
+} from "../src/features/groups/services.js";
+import type { OrganizationService } from "../src/features/orgs/services.js";
 
 function createAuthServiceForHttpTest(): AuthService {
   const users = new Map<
@@ -71,7 +74,7 @@ describe("APP-02 auth HTTP contract", () => {
       async changePassword() {},
     };
     const app = createApp({ isReady: async () => true }, auth, {
-      groups: { listGroups: async () => [] } as unknown as GroupService,
+      groups: { listGroups: async () => [] } as unknown as GroupCatalogService,
     });
     const cookie = "invoiceops_session=temporary-session";
     expect(
@@ -550,6 +553,24 @@ describe("APP-03 profile HTTP contract", () => {
 
 describe("APP-04 groups HTTP contract", () => {
   const validOrigin = "http://127.0.0.1";
+  const ORG = "organization-1";
+  const FLAGS = {
+    readInvoices: true,
+    createInvoices: false,
+    deleteOwnInvoices: false,
+    deleteOthersInvoices: false,
+  };
+  const group = {
+    id: "group-2",
+    organizationId: ORG,
+    name: "Advanced topics",
+    description: null,
+    permissions: FLAGS,
+  };
+
+  const unused = () => {
+    throw new Error("not used");
+  };
 
   function createGroupApp(groupOverrides: Partial<GroupService> = {}) {
     return createApp(
@@ -574,9 +595,6 @@ describe("APP-04 groups HTTP contract", () => {
       },
       {
         groups: {
-          async listOrganizationGroups() {
-            return { groups: [], nextCursor: null };
-          },
           async listGroups() {
             return [
               {
@@ -594,27 +612,14 @@ describe("APP-04 groups HTTP contract", () => {
               },
             ];
           },
-          async createGroup(_userId, organizationId, input) {
-            return {
-              id: "created-group",
-              name: input.name,
-              description: input.description ?? null,
-              organization: { id: organizationId, name: "AI Academy" },
-              members: [],
-            };
-          },
-          async updateGroup() {
-            throw new Error("not used");
-          },
-          async deleteGroup() {
-            throw new Error("not used");
-          },
-          async addMember() {
-            throw new Error("not used");
-          },
-          async removeMember() {
-            throw new Error("not used");
-          },
+        } satisfies GroupCatalogService,
+        groupAdministration: {
+          listGroups: unused,
+          createGroup: unused,
+          updatePermissions: unused,
+          listMemberships: unused,
+          addMember: unused,
+          removeMember: unused,
           ...groupOverrides,
         } satisfies GroupService,
       },
@@ -642,172 +647,124 @@ describe("APP-04 groups HTTP contract", () => {
     });
   });
 
-  it("serves only a bounded authenticated organization catalog with no-store", async () => {
-    const organizationId = "00000000-0000-4000-8000-000000000001";
-    const listOrganizationGroups = vi
-      .fn<GroupService["listOrganizationGroups"]>()
-      .mockResolvedValue({ groups: [], nextCursor: null });
-    const app = createGroupApp({ listOrganizationGroups });
+  it("serves the organization group list to the authenticated actor only", async () => {
+    const listGroups = vi
+      .fn<GroupService["listGroups"]>()
+      .mockResolvedValue([group]);
+    const app = createGroupApp({ listGroups });
     expect(
-      (await request(app).get(`/api/v1/organizations/${organizationId}/groups`))
-        .status,
+      (await request(app).get(`/api/v1/organizations/${ORG}/groups`)).status,
     ).toBe(401);
     const response = await request(app)
-      .get(`/api/v1/organizations/${organizationId}/groups`)
+      .get(`/api/v1/organizations/${ORG}/groups`)
       .set("Cookie", "invoiceops_session=admin-session");
     expect(response.status).toBe(200);
-    expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.body).toEqual({ groups: [], nextCursor: null });
-    expect(listOrganizationGroups).toHaveBeenCalledWith(
-      "admin-1",
-      organizationId,
-      { limit: 50 },
-    );
-    for (const suffix of [
-      "?limit=0",
-      "?limit=101",
-      "?limit=1&limit=2",
-      "?limit[x]=2",
-      "?cursor=bad",
-      "?cursor=x&cursor=y",
-    ]) {
-      expect(
-        (
-          await request(app)
-            .get(`/api/v1/organizations/${organizationId}/groups${suffix}`)
-            .set("Cookie", "invoiceops_session=admin-session")
-        ).status,
-      ).toBe(400);
-    }
-    expect(listOrganizationGroups).toHaveBeenCalledOnce();
+    expect(response.body).toEqual({ groups: [group] });
+    expect(listGroups).toHaveBeenCalledOnce();
+    expect(listGroups).toHaveBeenCalledWith("admin-1", ORG);
   });
 
-  it("allows only an organization ADMIN to create a group", async () => {
-    const response = await request(createGroupApp())
-      .post("/api/v1/organizations/organization-1/groups")
+  it("creates a group on behalf of the session identity", async () => {
+    const createGroup = vi
+      .fn<GroupService["createGroup"]>()
+      .mockResolvedValue(group);
+    const response = await request(createGroupApp({ createGroup }))
+      .post(`/api/v1/organizations/${ORG}/groups`)
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
       .send({ name: "Advanced topics" });
 
     expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({
-      group: {
-        id: expect.any(String),
-        name: "Advanced topics",
-        organization: { id: "organization-1" },
-      },
+    expect(response.body).toEqual({ group });
+    expect(createGroup).toHaveBeenCalledWith("admin-1", ORG, {
+      name: "Advanced topics",
     });
   });
 
   it("registers every group mutation with scoped IDs and its success contract", async () => {
     const calls: unknown[][] = [];
-    const group = {
-      id: "group-2",
-      name: "Updated topics",
-      description: "Current curriculum",
-      organization: { id: "organization-1", name: "AI Academy" },
-      members: [{ id: "student-1", name: "Grace Hopper", rut: "123456793" }],
+    const membership = {
+      userId: "student-1",
+      groupId: "group-2",
+      organizationId: ORG,
     };
     const app = createGroupApp({
-      async updateGroup(userId, organizationId, groupId, input) {
-        calls.push(["update", userId, organizationId, groupId, input]);
+      async updatePermissions(userId, organizationId, groupId, permissions) {
+        calls.push(["update", userId, organizationId, groupId, permissions]);
         return group;
-      },
-      async deleteGroup(userId, organizationId, groupId) {
-        calls.push(["delete", userId, organizationId, groupId]);
       },
       async addMember(userId, organizationId, groupId, memberId) {
         calls.push(["add", userId, organizationId, groupId, memberId]);
-        return group;
+        return membership;
       },
       async removeMember(userId, organizationId, groupId, memberId) {
         calls.push(["remove", userId, organizationId, groupId, memberId]);
       },
     });
     const updated = await request(app)
-      .patch("/api/v1/organizations/organization-1/groups/group-2")
+      .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
-      .send({ name: " Updated topics ", description: " Current curriculum " });
+      .send({ permissions: FLAGS });
     const added = await request(app)
-      .post("/api/v1/organizations/organization-1/groups/group-2/members")
+      .post(`/api/v1/organizations/${ORG}/groups/group-2/memberships`)
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
       .send({ userId: " student-1 " });
     const removed = await request(app)
       .delete(
-        "/api/v1/organizations/organization-1/groups/group-2/members/student-1",
+        `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1`,
       )
-      .set("Host", "127.0.0.1")
-      .set("Origin", validOrigin)
-      .set("Cookie", "invoiceops_session=admin-session");
-    const deleted = await request(app)
-      .delete("/api/v1/organizations/organization-1/groups/group-2")
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session");
 
     expect(updated.status).toBe(200);
     expect(updated.body).toEqual({ group });
-    expect(added.status).toBe(200);
-    expect(added.body).toEqual({ group });
+    expect(added.status).toBe(201);
+    expect(added.body).toEqual({ membership });
     expect(removed.status).toBe(204);
-    expect(deleted.status).toBe(204);
     expect(calls).toEqual([
-      [
-        "update",
-        "admin-1",
-        "organization-1",
-        "group-2",
-        { name: "Updated topics", description: "Current curriculum" },
-      ],
-      ["add", "admin-1", "organization-1", "group-2", "student-1"],
-      ["remove", "admin-1", "organization-1", "group-2", "student-1"],
-      ["delete", "admin-1", "organization-1", "group-2"],
+      ["update", "admin-1", ORG, "group-2", FLAGS],
+      ["add", "admin-1", ORG, "group-2", "student-1"],
+      ["remove", "admin-1", ORG, "group-2", "student-1"],
     ]);
   });
 
   it("rejects cross-origin requests before every group mutation handler", async () => {
     let invoked = 0;
+    const fail = async () => {
+      invoked += 1;
+      throw new Error("must not be called");
+    };
     const app = createGroupApp({
-      async updateGroup() {
-        invoked += 1;
-        throw new Error("must not be called");
-      },
-      async deleteGroup() {
-        invoked += 1;
-        throw new Error("must not be called");
-      },
-      async addMember() {
-        invoked += 1;
-        throw new Error("must not be called");
-      },
-      async removeMember() {
-        invoked += 1;
-        throw new Error("must not be called");
-      },
+      createGroup: fail,
+      updatePermissions: fail,
+      addMember: fail,
+      removeMember: fail,
     });
     const responses = await Promise.all([
       request(app)
-        .patch("/api/v1/organizations/organization-1/groups/group-2")
+        .post(`/api/v1/organizations/${ORG}/groups`)
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ name: "Updated topics" }),
       request(app)
-        .delete("/api/v1/organizations/organization-1/groups/group-2")
+        .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
         .set("Cookie", "invoiceops_session=admin-session")
-        .set("Origin", "https://untrusted.example.test"),
+        .set("Origin", "https://untrusted.example.test")
+        .send({ permissions: FLAGS }),
       request(app)
-        .post("/api/v1/organizations/organization-1/groups/group-2/members")
+        .post(`/api/v1/organizations/${ORG}/groups/group-2/memberships`)
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ userId: "student-1" }),
       request(app)
         .delete(
-          "/api/v1/organizations/organization-1/groups/group-2/members/student-1",
+          `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1`,
         )
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test"),
@@ -830,10 +787,10 @@ describe("APP-04 groups HTTP contract", () => {
     });
 
     const unauthenticated = await request(app)
-      .patch("/api/v1/organizations/organization-1/groups/group-2")
-      .send({ name: "Updated topics" });
+      .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
+      .send({ permissions: FLAGS });
     const forbidden = await request(app)
-      .post("/api/v1/organizations/organization-1/groups/group-2/members")
+      .post(`/api/v1/organizations/${ORG}/groups/group-2/memberships`)
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
@@ -850,9 +807,12 @@ describe("APP-04 groups HTTP contract", () => {
   });
 });
 
-describe("platform membership HTTP contract", () => {
+describe("organization membership HTTP contract", () => {
   it("uses the session identity for authorized discovery and preserves CSRF checks for membership changes", async () => {
     const calls: unknown[][] = [];
+    const unused = () => {
+      throw new Error("not used");
+    };
     const app = createApp(
       { isReady: async () => true },
       {
@@ -874,23 +834,31 @@ describe("platform membership HTTP contract", () => {
         },
       },
       {
-        platformAdministrators: {
-          async transfer() {
-            throw new Error("not used");
-          },
+        organizations: {
+          createOrganization: unused,
+          listMemberships: unused,
           async listOrganizations(actorUserId) {
             calls.push(["list", actorUserId]);
             return [
               {
                 id: "organization-1",
                 name: "AI Academy",
-                groups: [],
+                slug: "ai-academy",
+                description: null,
+                enabled: true,
+                createdAt: "2026-10-26T00:00:00.000Z",
               },
             ];
           },
-          async createMembership(actorUserId, organizationId, userId, role) {
-            calls.push(["create", actorUserId, organizationId, userId, role]);
-            return { userId, organizationId, role };
+          async createMembership(actorUserId, organizationId, input) {
+            calls.push([
+              "create",
+              actorUserId,
+              organizationId,
+              input.rut,
+              input.role,
+            ]);
+            return { userId: "student-1", organizationId, role: input.role };
           },
           async changeMembershipRole(
             actorUserId,
@@ -899,44 +867,56 @@ describe("platform membership HTTP contract", () => {
             role,
           ) {
             calls.push(["change", actorUserId, organizationId, userId, role]);
-            return { userId, organizationId, role };
+            return {
+              membership: { userId, organizationId, role },
+              changed: true,
+            };
           },
           async removeMembership(actorUserId, organizationId, userId) {
             calls.push(["remove", actorUserId, organizationId, userId]);
           },
-        } satisfies PlatformAdministratorService,
+        } satisfies OrganizationService,
       },
     );
 
     const discovered = await request(app)
-      .get("/api/v1/platform/organizations")
+      .get("/api/v1/organizations")
       .set("Cookie", "invoiceops_session=platform-session");
     const created = await request(app)
-      .post("/api/v1/platform/organizations/organization-1/members")
+      .post("/api/v1/organizations/organization-1/memberships")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session")
-      .send({ userId: "student-1", role: "ADMIN" });
+      .send({ rut: "12.345.678-5", role: "ADMIN" });
     const changed = await request(app)
-      .patch("/api/v1/platform/organizations/organization-1/members/student-1")
+      .patch("/api/v1/organizations/organization-1/memberships/student-1")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session")
       .send({ role: "USER" });
     const removed = await request(app)
-      .delete("/api/v1/platform/organizations/organization-1/members/student-1")
+      .delete("/api/v1/organizations/organization-1/memberships/student-1")
       .set("Host", "127.0.0.1")
       .set("Origin", "http://127.0.0.1")
       .set("Cookie", "invoiceops_session=platform-session");
     const csrfRejected = await request(app)
-      .post("/api/v1/platform/organizations/organization-1/members")
+      .post("/api/v1/organizations/organization-1/memberships")
       .set("Cookie", "invoiceops_session=platform-session")
       .set("Origin", "https://untrusted.example.test")
-      .send({ userId: "student-2", role: "USER" });
+      .send({ rut: "12.345.678-5", role: "USER" });
 
     expect(discovered.status).toBe(200);
     expect(discovered.body).toEqual({
-      organizations: [{ id: "organization-1", name: "AI Academy", groups: [] }],
+      organizations: [
+        {
+          id: "organization-1",
+          name: "AI Academy",
+          slug: "ai-academy",
+          description: null,
+          enabled: true,
+          createdAt: "2026-10-26T00:00:00.000Z",
+        },
+      ],
     });
     expect(created.status).toBe(201);
     expect(changed.status).toBe(200);
@@ -944,7 +924,7 @@ describe("platform membership HTTP contract", () => {
     expect(csrfRejected.status).toBe(403);
     expect(calls).toEqual([
       ["list", "platform-admin-1"],
-      ["create", "platform-admin-1", "organization-1", "student-1", "ADMIN"],
+      ["create", "platform-admin-1", "organization-1", "123456785", "ADMIN"],
       ["change", "platform-admin-1", "organization-1", "student-1", "USER"],
       ["remove", "platform-admin-1", "organization-1", "student-1"],
     ]);

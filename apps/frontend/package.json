@@ -7,13 +7,16 @@
     "build": "tsc -b && vite build",
     "dev": "vite --host 127.0.0.1",
     "test": "vitest run",
+    "test:recovery:ui": "vitest run .ui.test.",
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@tanstack/react-query": "5.104.2",
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "1.61.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "react-router": "7.18.4",
     "vite": "8.2.2"
   },
   "devDependencies": {

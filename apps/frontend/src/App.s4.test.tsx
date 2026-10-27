@@ -85,7 +85,7 @@ function http(role = "USER", platform = false) {
 async function start(dashboard = false) {
   render(<App />);
   fireEvent.click(
-    await screen.findByRole("button", {
+    await screen.findByRole("link", {
       name: dashboard ? "Ir a políticas" : /^Políticas$/,
     }),
   );
@@ -126,8 +126,19 @@ async function editThreshold(value: string) {
 function submitEdit() {
   fireEvent.submit(screen.getByRole("form", { name: "Editar política" }));
 }
+// Sidebar destinations are links; "Salir" and in-screen actions stay buttons.
+const DESTINATIONS = [
+  "Panel principal",
+  "Facturas",
+  "Políticas",
+  "Organizaciones",
+  "Grupos",
+  "Mi perfil",
+];
 function navigate(name: string) {
-  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(
+    screen.getByRole(DESTINATIONS.includes(name) ? "link" : "button", { name }),
+  );
 }
 
 describe("APP12 S4 session-owned policy writes", () => {
@@ -411,7 +422,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     await act(async () =>
       pending.resolve(json({ profile: { ...api.profile, memberships: [] } })),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /^Políticas$/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
     await screen.findByText(
       "No tienes un contexto autorizado para consultar políticas.",
     );
@@ -783,7 +794,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       )
       .at(-1);
     const signal = readCall?.[1]?.signal;
-    fireEvent.click(screen.getByRole("button", { name: "Mi perfil" }));
+    fireEvent.click(screen.getByRole("link", { name: "Mi perfil" }));
     expect(signal?.aborted).toBe(true);
     await act(async () => pending.resolve(json({}, 401)));
     expect(screen.getByRole("navigation")).toBeTruthy();

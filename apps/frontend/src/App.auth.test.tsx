@@ -160,11 +160,11 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
         throw new Error("Authoritative profile request did not start");
       }
       completeProfile(jsonResponse({ profile }));
-      fireEvent.click(await screen.findByRole("button", { name: "Mi perfil" }));
+      fireEvent.click(await screen.findByRole("link", { name: "Mi perfil" }));
       expect(await screen.findByText(profile.name)).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: "Organizaciones" }));
+      fireEvent.click(screen.getByRole("link", { name: "Organizaciones" }));
       expect(await screen.findByText("AI Academy")).toBeTruthy();
-      expect(screen.getByText(/usuario/i)).toBeTruthy();
+      expect(screen.getByText(/miembro/i)).toBeTruthy();
       expect(screen.getByRole("button", { name: /^salir$/i })).toBeTruthy();
       expectJsonPost(fetchMock, "/api/v1/auth/login", {
         rut: user.rut,
@@ -298,7 +298,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
     );
     fillCredentials();
     fireEvent.click(screen.getByRole("button", { name: loginName }));
-    fireEvent.click(await screen.findByRole("button", { name: "Mi perfil" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Mi perfil" }));
     expect(await screen.findByText(profile.name)).toBeTruthy();
     expect(login).toHaveBeenCalledTimes(2);
   });

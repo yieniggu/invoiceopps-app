@@ -1,19 +1,9 @@
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { fromApiRut } from "../../lib/rut";
+import type { Profile } from "../auth/types";
+import { usePendingContact, useUpdateProfile } from "./hooks/useUpdateProfile";
 
-export type Profile = {
-  id: string;
-  name: string;
-  rut: string;
-  email: string | null;
-  username: string | null;
-  isPlatformAdministrator: boolean;
-  mustChangePassword?: boolean;
-  memberships: Array<{
-    organization: { id: string; name: string; slug: string };
-    role: string;
-  }>;
-};
+export type { Profile };
 
 export function roleLabel(role: string) {
   return role === "ADMIN"
@@ -23,25 +13,36 @@ export function roleLabel(role: string) {
       : "Rol no disponible";
 }
 
-export function ProfileScreen({
-  profile,
-  email,
-  username,
-  isSaving,
-  message,
-  onEmailChange,
-  onUsernameChange,
-  onSubmit,
-}: {
-  profile: Profile;
-  email: string;
-  username: string;
-  isSaving: boolean;
-  message?: string;
-  onEmailChange: (value: string) => void;
-  onUsernameChange: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-}) {
+export function ProfileScreen({ profile }: { profile: Profile }) {
+  const update = useUpdateProfile(profile.id);
+  // A save started before leaving this screen is still the latest intent.
+  const inFlight = usePendingContact();
+  // Form drafts are local state; the saved profile itself lives in Query.
+  const [email, setEmail] = useState(inFlight?.email ?? profile.email ?? "");
+  const [username, setUsername] = useState(
+    inFlight?.username ?? profile.username ?? "",
+  );
+  const isSaving = update.isPending || inFlight !== undefined;
+  const message = update.isSuccess
+    ? "Perfil actualizado."
+    : update.isError
+      ? "No fue posible actualizar el perfil. Intenta nuevamente."
+      : undefined;
+
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSaving) return;
+    update.mutate(
+      { email, username },
+      {
+        onSuccess: (saved) => {
+          setEmail(saved.email ?? "");
+          setUsername(saved.username ?? "");
+        },
+      },
+    );
+  };
+
   return (
     <div className="screen-grid">
       <section aria-labelledby="identity-title">
@@ -72,7 +73,7 @@ export function ProfileScreen({
             autoComplete="email"
             value={email}
             disabled={isSaving}
-            onChange={(event) => onEmailChange(event.target.value)}
+            onChange={(event) => setEmail(event.target.value)}
           />
         </label>
         <label>
@@ -81,7 +82,7 @@ export function ProfileScreen({
             autoComplete="username"
             value={username}
             disabled={isSaving}
-            onChange={(event) => onUsernameChange(event.target.value)}
+            onChange={(event) => setUsername(event.target.value)}
           />
         </label>
         <button type="submit" disabled={isSaving}>

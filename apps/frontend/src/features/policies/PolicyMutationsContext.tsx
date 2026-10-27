@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { protectedFetch } from "../auth/protectedFetch";
+import { protectedFetch } from "../auth/api/protectedFetch";
 
 export type Policy = { version: string; manualReviewThreshold: number };
 export type PolicyDraft = {

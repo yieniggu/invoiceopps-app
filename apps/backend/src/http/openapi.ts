@@ -35,15 +35,20 @@ export function buildOpenApiDocument(operations: Operation[]) {
       summary: operation.summary,
       tags: [operation.tag],
       security: operation.secured ? [{ [SESSION_SECURITY_SCHEME]: [] }] : [],
-      ...(operation.requestBody
+      ...(operation.requestBody || operation.params
         ? {
             request: {
-              body: {
-                required: true,
-                content: {
-                  "application/json": { schema: operation.requestBody },
-                },
-              },
+              ...(operation.params ? { params: operation.params } : {}),
+              ...(operation.requestBody
+                ? {
+                    body: {
+                      required: true,
+                      content: {
+                        "application/json": { schema: operation.requestBody },
+                      },
+                    },
+                  }
+                : {}),
             },
           }
         : {}),

@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -96,6 +97,27 @@ function mockHttp(anonymous = false) {
         if (url.pathname === "/api/v1/auth/profile")
           return json(anonymous ? {} : { profile }, anonymous ? 401 : 200);
         if (url.pathname === "/api/v1/groups") return json({ groups });
+        // Organization-scoped catalogue behind Mis grupos.
+        const scoped = /^\/api\/v1\/organizations\/([^/]+)\/groups$/.exec(
+          url.pathname,
+        );
+        if (scoped)
+          return json({
+            groups: groups
+              .filter((group) => group.organization.id === scoped[1])
+              .map(({ id, name, description, organization }) => ({
+                id,
+                organizationId: organization.id,
+                name,
+                description,
+                permissions: {
+                  readInvoices: false,
+                  createInvoices: false,
+                  deleteOwnInvoices: false,
+                  deleteOthersInvoices: false,
+                },
+              })),
+          });
         if (url.pathname === "/api/v1/business-policies")
           return json({ policies: [] });
         if (url.pathname === "/api/v1/invoices") return lists(url);
@@ -107,11 +129,7 @@ function mockHttp(anonymous = false) {
 }
 
 function navigate(navigation: HTMLElement, name: string) {
-  const queries = within(navigation);
-  const destination =
-    queries.queryByRole("link", { name }) ??
-    queries.getByRole("button", { name });
-  fireEvent.click(destination);
+  fireEvent.click(within(navigation).getByRole("link", { name }));
 }
 
 function selectGroupB() {
@@ -146,21 +164,18 @@ describe("APP12 S1 navigation and shared context", () => {
       "Panel principal",
       "Mi perfil",
       "Organizaciones",
-      "Mis grupos",
+      "Grupos",
       "Facturas",
       "Políticas",
     ]) {
       const queries = within(navigation);
-      expect(
-        queries.queryByRole("link", { name }) ??
-          queries.getByRole("button", { name }),
-      ).toBeTruthy();
+      expect(queries.getByRole("link", { name })).toBeTruthy();
       navigate(navigation, name);
       const heading = screen.getByRole("heading", { name, level: 1 });
       expect(document.activeElement).toBe(heading);
       expect(document.title).toBe(`${name} · InvoiceOps`);
       expect(
-        queries.getByRole("button", { name }).getAttribute("aria-current"),
+        queries.getByRole("link", { name }).getAttribute("aria-current"),
       ).toBe("page");
     }
     expect(api.unexpected).toEqual([]);
@@ -189,14 +204,11 @@ describe("APP12 S1 navigation and shared context", () => {
 
   it("removes a revoked organization and its group without reusing delayed context data", async () => {
     const api = mockHttp();
-    let currentProfile = { ...profile, isPlatformAdministrator: true };
-    let discoveryReady = false;
+    let currentProfile = { ...profile };
     const original = api.fetchMock.getMockImplementation()!;
     api.fetchMock.mockImplementation(async (input, init) => {
       if (String(input) === "/api/v1/auth/profile" && !init?.method)
         return json({ profile: currentProfile });
-      if (String(input) === "/api/v1/platform/organizations")
-        return discoveryReady ? json({ organizations: [] }) : json({}, 500);
       return original(input, init);
     });
     const pending = deferredResponse();
@@ -223,11 +235,11 @@ describe("APP12 S1 navigation and shared context", () => {
       ...currentProfile,
       memberships: [profile.memberships[0]],
     };
-    discoveryReady = true;
-    navigate(navigation, "Administración");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reintentar organizaciones" }),
-    );
+    // The authoritative refresh is the profile refetch on window focus.
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
     navigate(navigation, "Panel principal");
     await waitFor(() =>
       expect(

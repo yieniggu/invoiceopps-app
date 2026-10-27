@@ -13,6 +13,13 @@ export interface LogFields {
   prismaCode?: string;
   reason?: string;
   scope?: string;
+  /** Audit events: opaque identifiers only, never RUTs, names or secrets. */
+  feature?: string;
+  action?: string;
+  organizationId?: string;
+  groupId?: string;
+  actorUserId?: string;
+  targetUserId?: string;
 }
 
 export function logEvent(

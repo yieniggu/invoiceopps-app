@@ -349,7 +349,9 @@ describe("CR-020 mid-session ONBOARDING_REQUIRED", () => {
     await waitFor(() => expect(profileReads).toBe(2));
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(profileReads).toBe(2);
-    expect(groupReads).toBe(2);
+    // The profile refresh does not re-request the workspace catalogue (its own
+    // Query key); the single failed read stays visible as a retryable error.
+    expect(groupReads).toBe(1);
     expect(
       screen.queryByRole("heading", { name: /cambia tu contraseña temporal/i }),
     ).toBeNull();
@@ -422,7 +424,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Políticas$/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
 
     expect(
       await screen.findByRole("heading", {
@@ -468,7 +470,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
       });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Facturas$/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /^Facturas$/ }));
 
     expect(
       await screen.findByRole("heading", {
@@ -486,6 +488,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
     let profileReads = 0;
     let finishPolicies: (response: Response) => void = () => {};
     let finishLogout: (response: Response) => void = () => {};
+    let logoutRequested = false;
     mockSession({
       isPending: () => true,
       onProfileRead: () => void (profileReads += 1),
@@ -495,6 +498,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
         }),
       logout: () =>
         new Promise<Response>((resolve) => {
+          logoutRequested = true;
           finishLogout = resolve;
         }),
     });
@@ -513,8 +517,11 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Políticas$/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
     fireEvent.click(screen.getByRole("button", { name: /salir/i }));
+    // The logout request is issued once the mutation has cancelled the
+    // identity's in-flight reads.
+    await waitFor(() => expect(logoutRequested).toBe(true));
     // The policies screen reads the profile itself; only reads after the
     // logout started would be a reload.
     const readsAtLogout = profileReads;

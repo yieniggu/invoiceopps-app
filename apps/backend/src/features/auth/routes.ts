@@ -7,6 +7,7 @@ import {
   LoginResponseSchema,
   PasswordChangeRequestSchema,
   ProfileResponseSchema,
+  ProfileUpdateSchema,
 } from "./schemas.js";
 import type { AuthService } from "./services.js";
 
@@ -85,6 +86,24 @@ export function createAuthOperations(
         401: unauthenticated,
       },
       handler: controller.profile,
+    },
+    {
+      method: "patch",
+      path: "/profile",
+      summary: "Update the email and username of the authenticated profile",
+      tag: "Auth",
+      secured: true,
+      requestBody: ProfileUpdateSchema,
+      responses: {
+        200: { description: "Updated profile", schema: ProfileResponseSchema },
+        400: {
+          description: `VALIDATION_ERROR: unknown field or an empty body; ${INVALID_JSON}; ${AMBIGUOUS}`,
+          schema: ERROR,
+        },
+        401: unauthenticated,
+        403: forbiddenOrigin,
+      },
+      handler: controller.updateProfile,
     },
     {
       method: "post",

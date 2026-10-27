@@ -51,15 +51,16 @@ export default tseslint.config(
     files: ["apps/frontend/src/**/*.{ts,tsx}"],
     ignores: [
       "**/*.test.{ts,tsx}",
-      "apps/frontend/src/features/auth/protectedFetch.ts",
-      "apps/frontend/src/features/auth/AuthScreen.tsx",
+      "apps/frontend/src/features/auth/api/protectedFetch.ts",
+      // Login is the one unauthenticated call (there is no session yet).
+      "apps/frontend/src/features/auth/api/authApi.ts",
     ],
     rules: {
       "no-restricted-globals": [
         "error",
         {
           name: "fetch",
-          message: "Use protectedFetch from features/auth/protectedFetch.",
+          message: "Use protectedFetch from features/auth/api/protectedFetch.",
         },
       ],
     },

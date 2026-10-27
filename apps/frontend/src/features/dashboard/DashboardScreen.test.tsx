@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceProvider } from "../workspace/WorkspaceContext";
@@ -21,18 +22,17 @@ const profile: Profile = {
 };
 
 function renderDashboard(next: Profile = profile) {
-  const onNavigate = vi.fn();
   render(
-    <WorkspaceProvider profile={next} groups={[]}>
-      <DashboardScreen
-        profile={next}
-        contextState="loaded"
-        onNavigate={onNavigate}
-        onRetry={vi.fn()}
-      />
-    </WorkspaceProvider>,
+    <MemoryRouter>
+      <WorkspaceProvider profile={next} groups={[]}>
+        <DashboardScreen
+          profile={next}
+          contextState="loaded"
+          onRetry={vi.fn()}
+        />
+      </WorkspaceProvider>
+    </MemoryRouter>,
   );
-  return onNavigate;
 }
 
 afterEach(cleanup);
@@ -43,38 +43,30 @@ describe("DashboardScreen cards", () => {
     const titles = screen
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent);
-    expect(titles).toEqual([
-      "Facturas",
-      "Tu espacio de trabajo",
-      "Políticas",
-      "Administración",
-    ]);
+    expect(titles).toEqual(["Facturas", "Tu espacio de trabajo", "Políticas"]);
   });
 
-  it("omits Administración without authority", () => {
-    renderDashboard();
+  it("has no Administración card: people and groups live in Organizaciones and Grupos", () => {
+    renderDashboard({ ...profile, isPlatformAdministrator: true });
     expect(
       screen.queryByRole("heading", { level: 2, name: "Administración" }),
     ).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Ir a administración" }),
+      screen.queryByRole("link", { name: "Ir a administración" }),
     ).toBeNull();
   });
 
-  it("navigates from each card CTA", () => {
-    const onNavigate = renderDashboard({
-      ...profile,
-      isPlatformAdministrator: true,
-    });
-    for (const [label, destination] of [
-      ["Ir a facturas", "Facturas"],
-      ["Ver mis organizaciones", "Organizaciones"],
-      ["Ver mis grupos", "Mis grupos"],
-      ["Ir a políticas", "Políticas"],
-      ["Ir a administración", "Administración"],
+  it("links each card CTA to its URL", () => {
+    renderDashboard();
+    for (const [label, path] of [
+      ["Ir a facturas", "/facturas"],
+      ["Ver mis organizaciones", "/organizaciones"],
+      ["Ver mis grupos", "/grupos"],
+      ["Ir a políticas", "/politicas"],
     ]) {
-      fireEvent.click(screen.getByRole("button", { name: label }));
-      expect(onNavigate).toHaveBeenLastCalledWith(destination);
+      expect(
+        screen.getByRole("link", { name: label }).getAttribute("href"),
+      ).toBe(path);
     }
   });
 

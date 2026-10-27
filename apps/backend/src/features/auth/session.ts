@@ -1,5 +1,6 @@
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
+import { ApiError } from "../../http/errors.js";
 import type { AuthProfile, AuthService } from "./services.js";
 
 export const SESSION_COOKIE_NAME = "invoiceops_session";
@@ -48,4 +49,20 @@ export async function loadProfile(
   const profile = await auth.getProfile(sessionToken);
   response.locals.profile = profile;
   return profile;
+}
+
+/**
+ * The authenticated actor of a documented operation. A missing cookie or an
+ * unwired auth service answers like a missing session.
+ */
+export async function requireSessionProfile(
+  auth: AuthService | undefined,
+  request: Request,
+  response: Response,
+): Promise<AuthProfile> {
+  const sessionToken = sessionTokenFromCookie(request.headers.cookie);
+  if (!auth || !sessionToken) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Unauthenticated");
+  }
+  return loadProfile(auth, sessionToken, response);
 }

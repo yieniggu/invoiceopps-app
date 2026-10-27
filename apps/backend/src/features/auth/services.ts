@@ -8,6 +8,7 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { formatRut, parseRut } from "../../rut.js";
+import { capabilitiesFromGroup } from "../groups/invoice-permissions.js";
 import { isAcceptablePassword } from "./password-policy.js";
 
 const scryptAsync = promisify(scrypt);
@@ -235,12 +236,7 @@ export function createAuthService(
         organizationName: group.organization.name,
         groupId: group.id,
         groupName: group.name,
-        capabilities: {
-          readInvoices: group.readInvoices,
-          createInvoices: group.createInvoices,
-          deleteOwnInvoices: group.deleteOwnInvoices,
-          deleteOthersInvoices: group.deleteOthersInvoices,
-        },
+        capabilities: capabilitiesFromGroup(group),
       }))
       .sort(
         (a, b) =>

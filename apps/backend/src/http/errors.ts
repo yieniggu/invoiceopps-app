@@ -19,10 +19,17 @@ export const ERROR_CODES = [
   "FORBIDDEN",
   "FORBIDDEN_ORIGIN",
   "NOT_FOUND",
+  "USER_NOT_FOUND",
   "CONFLICT",
+  "ORGANIZATION_SLUG_CONFLICT",
+  "MEMBERSHIP_CONFLICT",
+  "LAST_ADMIN_REQUIRED",
+  "USER_CONFLICT",
+  "ORGANIZATION_MEMBERSHIP_REQUIRED",
   "RATE_LIMITED",
   "BAD_REQUEST",
   "SERVICE_UNAVAILABLE",
+  "RETRYABLE_CONFLICT",
   "INTERNAL_ERROR",
 ] as const;
 
@@ -60,6 +67,8 @@ export class ApiError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly fields?: Record<string, string>,
+    /** Extra response headers, for example Retry-After. */
+    readonly headers?: Record<string, string>,
   ) {
     super(message);
   }
@@ -148,6 +157,7 @@ export const errorHandler: ErrorRequestHandler = (
   _next,
 ) => {
   if (error instanceof ApiError) {
+    if (error.headers) response.set(error.headers);
     sendError(response, error.status, error.code, error.message, error.fields);
     return;
   }

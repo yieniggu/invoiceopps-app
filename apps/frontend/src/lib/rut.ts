@@ -1,5 +1,9 @@
 // Chilean RUT helpers. API form: "19034790-7". Display/input form:
 // "19.034.790-7". Mirrors apps/backend/src/rut.ts.
+//
+// Layout decision (RV-097): `src/lib` and `src/components` are the shared
+// layer for code used by more than one feature (RUT helpers, RutField). Domain
+// code lives under `src/features/<feature>/{api,components,hooks,screens,types}`.
 const MAX_SIGNIFICANT_CHARS = 9;
 
 /** Keep only digits and K, uppercased. */
@@ -60,6 +64,32 @@ export function nextRutInputValue(previous: string, raw: string): string {
   }
 
   return formatRutInput(raw);
+}
+
+/**
+ * Caret position in `formatted` that sits after the same significant
+ * characters (digits and K) the caret followed in `raw`. Separators and
+ * dropped leading zeros do not count, so editing mid-value keeps the caret
+ * next to the character the person was editing.
+ */
+export function caretAfterFormat(
+  raw: string,
+  rawCaret: number,
+  formatted: string,
+): number {
+  const before = cleanRut(raw.slice(0, rawCaret)).length;
+  const leadingZeros = /^0*/.exec(cleanRut(raw))?.[0].length ?? 0;
+  const significant = Math.max(0, before - Math.min(leadingZeros, before));
+  if (significant === 0) return 0;
+
+  let seen = 0;
+  for (let index = 0; index < formatted.length; index += 1) {
+    if (/[0-9K]/.test(formatted[index])) {
+      seen += 1;
+      if (seen === significant) return index + 1;
+    }
+  }
+  return formatted.length;
 }
 
 export function isValidRut(value: string): boolean {

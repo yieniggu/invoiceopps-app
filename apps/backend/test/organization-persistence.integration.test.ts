@@ -12,7 +12,12 @@ import {
 } from "../src/features/auth/bootstrap-service.js";
 import { provisionInternalUser } from "../src/internal-user-provisioning.js";
 import { createOrganizationPersistence } from "../src/organization-persistence.js";
-import { createGroupService } from "../src/groups.js";
+import {
+  createGroupCatalogService,
+  createGroupService,
+} from "../src/features/groups/services.js";
+import { createOrganizationService } from "../src/features/orgs/services.js";
+import { createUserService } from "../src/features/users/services.js";
 import { createInvoiceService } from "../src/invoices.js";
 import { createBusinessPolicyService } from "../src/business-policies.js";
 import { parsePlatformAdministratorCommand } from "../src/platform-administrator-command.js";
@@ -377,6 +382,13 @@ describe("APP-02.1 PostgreSQL session lifecycle", () => {
   });
 });
 
+const NO_FLAGS = {
+  readInvoices: false,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+
 describe("APP-04 PostgreSQL organization groups", () => {
   it("isolates groups by organization, requires an ADMIN, and prevents invalid or duplicate members", async () => {
     const firstOrganization = await persistence.createOrganization({
@@ -419,6 +431,7 @@ describe("APP-04 PostgreSQL organization groups", () => {
       ],
     });
     const groups = createGroupService(prisma);
+    const catalog = createGroupCatalogService(prisma);
 
     const zeta = await groups.createGroup(admin.id, firstOrganization.id, {
       name: "Zeta group",
@@ -426,17 +439,24 @@ describe("APP-04 PostgreSQL organization groups", () => {
     const alpha = await groups.createGroup(admin.id, firstOrganization.id, {
       name: "Alpha group",
     });
-    const populated = await groups.addMember(
+    expect(alpha.permissions).toEqual(NO_FLAGS);
+    const membership = await groups.addMember(
       admin.id,
       firstOrganization.id,
       alpha.id,
       student.id,
     );
 
-    expect(populated.members).toEqual([
-      { id: admin.id, name: "Ada Lovelace", rut: "12345678-5" },
-      { id: student.id, name: "Grace Hopper", rut: "12345679-3" },
-    ]);
+    expect(membership).toEqual({
+      userId: student.id,
+      groupId: alpha.id,
+      organizationId: firstOrganization.id,
+    });
+    expect(
+      (
+        await groups.listMemberships(admin.id, firstOrganization.id, alpha.id)
+      ).map(({ user }) => user),
+    ).toEqual([{ id: student.id, name: "Grace Hopper", rut: student.rut }]);
     await expect(
       prisma.groupMembership.create({
         data: {
@@ -448,30 +468,41 @@ describe("APP-04 PostgreSQL organization groups", () => {
     ).rejects.toMatchObject({ code: "P2003" });
     await expect(
       groups.addMember(admin.id, firstOrganization.id, alpha.id, outsider.id),
-    ).rejects.toMatchObject({ status: 404 });
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "ORGANIZATION_MEMBERSHIP_REQUIRED",
+    });
     await expect(
       groups.addMember(admin.id, firstOrganization.id, alpha.id, student.id),
-    ).rejects.toMatchObject({ status: 409 });
+    ).rejects.toMatchObject({ status: 409, code: "MEMBERSHIP_CONFLICT" });
     await expect(
       groups.createGroup(student.id, firstOrganization.id, { name: "Denied" }),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      groups.updateGroup(outsider.id, firstOrganization.id, alpha.id, {
-        name: "Denied",
-      }),
+      groups.updatePermissions(
+        outsider.id,
+        firstOrganization.id,
+        alpha.id,
+        NO_FLAGS,
+      ),
     ).rejects.toMatchObject({ status: 404 });
-    await expect(groups.listGroups(student.id)).resolves.toEqual([
+    // The creator is not a member, so only the student sees the group in the
+    // membership-based catalog.
+    await expect(catalog.listGroups(student.id)).resolves.toEqual([
       expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
     ]);
-    await expect(groups.listGroups(admin.id)).resolves.toEqual([
-      expect.objectContaining({ id: alpha.id, name: "Alpha group" }),
-      expect.objectContaining({ id: zeta.id, name: "Zeta group" }),
+    await expect(catalog.listGroups(admin.id)).resolves.toEqual([]);
+    await expect(
+      groups.listGroups(admin.id, firstOrganization.id),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: alpha.id }),
+      expect.objectContaining({ id: zeta.id }),
     ]);
   });
 });
 
-describe("Organization group catalog PostgreSQL integration", () => {
-  async function catalogFixture() {
+describe("Organization group listing PostgreSQL integration", () => {
+  async function listingFixture() {
     const organization = await persistence.createOrganization({
       name: "Catalog Academy",
       slug: "catalog-academy",
@@ -509,70 +540,35 @@ describe("Organization group catalog PostgreSQL integration", () => {
     const second = await groups.createGroup(admin.id, organization.id, {
       name: "Same name",
     });
-    await groups.removeMember(admin.id, organization.id, first.id, admin.id);
+    await groups.addMember(admin.id, organization.id, first.id, student.id);
     return { organization, foreign, admin, student, groups, first, second };
   }
-  it("catalogs groups after self removal without granting membership or exposing a roster", async () => {
+
+  it("lists every group for an ADMIN and only own groups for a USER, ordered deterministically", async () => {
     const { organization, admin, student, groups, first, second } =
-      await catalogFixture();
-    const page = await groups.listOrganizationGroups(
-      admin.id,
-      organization.id,
-      { limit: 50 },
-    );
-    expect(page.groups.map((group) => group.id).sort()).toEqual(
-      [first.id, second.id].sort(),
-    );
-    expect(page.nextCursor).toBeNull();
-    expect(Object.keys(page.groups[0]).sort()).toEqual([
-      "description",
-      "id",
-      "name",
-      "organization",
-    ]);
+      await listingFixture();
+
     expect(
-      (await groups.listGroups(admin.id)).map((group) => group.id),
-    ).toEqual([second.id]);
-    await groups.updateGroup(admin.id, organization.id, first.id, {
-      description: "Still administrable",
-    });
-    await groups.addMember(admin.id, organization.id, first.id, student.id);
-    await groups.removeMember(admin.id, organization.id, first.id, student.id);
-    await groups.deleteGroup(admin.id, organization.id, first.id);
+      (await groups.listGroups(admin.id, organization.id)).map(
+        (group) => group.id,
+      ),
+    ).toEqual([first.id, second.id].sort());
     expect(
-      (
-        await groups.listOrganizationGroups(admin.id, organization.id, {
-          limit: 50,
-        })
-      ).groups,
-    ).toHaveLength(1);
+      (await groups.listGroups(student.id, organization.id)).map(
+        (group) => group.id,
+      ),
+    ).toEqual([first.id]);
   });
-  it("enforces live ADMIN/platform singleton capability, organization existence and cross-organization cursor isolation", async () => {
+
+  it("enforces live ADMIN capability, organization membership and cross-organization isolation", async () => {
     const { organization, foreign, admin, student, groups, first } =
-      await catalogFixture();
+      await listingFixture();
     await expect(
-      groups.listOrganizationGroups(student.id, organization.id, { limit: 50 }),
+      groups.listMemberships(student.id, organization.id, first.id),
     ).rejects.toMatchObject({ status: 403 });
-    await expect(
-      groups.listOrganizationGroups(admin.id, foreign.id, { limit: 50 }),
-    ).rejects.toMatchObject({ status: 404 });
-    await designatePlatformAdministrator(student);
-    expect(
-      (
-        await groups.listOrganizationGroups(student.id, organization.id, {
-          limit: 50,
-        })
-      ).groups,
-    ).toHaveLength(2);
-    await expect(
-      groups.listOrganizationGroups(student.id, admin.id, { limit: 50 }),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      groups.listOrganizationGroups(student.id, foreign.id, {
-        limit: 50,
-        cursor: first.id,
-      }),
-    ).rejects.toMatchObject({ status: 404 });
+    await expect(groups.listGroups(admin.id, foreign.id)).rejects.toMatchObject(
+      { status: 404 },
+    );
     await prisma.organizationMembership.update({
       where: {
         userId_organizationId: {
@@ -583,41 +579,54 @@ describe("Organization group catalog PostgreSQL integration", () => {
       data: { role: OrganizationRole.USER },
     });
     await expect(
-      groups.listOrganizationGroups(admin.id, organization.id, { limit: 50 }),
+      groups.updatePermissions(admin.id, organization.id, first.id, NO_FLAGS),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      groups.updateGroup(admin.id, organization.id, first.id, {
-        name: "Denied",
-      }),
+      groups.listMemberships(admin.id, organization.id, first.id),
     ).rejects.toMatchObject({ status: 403 });
   });
-  it("paginates deterministically across duplicate names using organization-bound cursors and bounded limits", async () => {
-    const { organization, admin, groups, first, second } =
-      await catalogFixture();
-    const page = await groups.listOrganizationGroups(
-      admin.id,
-      organization.id,
-      { limit: 1 },
-    );
-    const next = await groups.listOrganizationGroups(
-      admin.id,
-      organization.id,
-      { limit: 1, cursor: page.nextCursor! },
-    );
-    expect(page.groups).toHaveLength(1);
-    expect(next.groups).toHaveLength(1);
-    expect([...page.groups, ...next.groups].map((group) => group.id)).toEqual(
-      [first.id, second.id].sort(),
-    );
-    expect(next.nextCursor).toBeNull();
+
+  it("gives the platform administrator no implicit access to groups", async () => {
+    const { organization, groups, first } = await listingFixture();
+    const platformUser = await persistence.createUser({
+      name: "Linus Torvalds",
+      rut: "12.345.670-K",
+    });
+    await designatePlatformAdministrator(platformUser);
     await expect(
-      groups.listOrganizationGroups(admin.id, organization.id, { limit: 101 }),
-    ).rejects.toMatchObject({ status: 400 });
+      groups.listGroups(platformUser.id, organization.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      groups.updatePermissions(
+        platformUser.id,
+        organization.id,
+        first.id,
+        NO_FLAGS,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });
 
 describe("PlatformAdministrator PostgreSQL integration", () => {
-  it("allows only the global administrator to create organizations and provision a temporary credential transactionally", async () => {
+  // The organization is created by the platform administrator with an
+  // explicit first ADMIN, the only way an organization gets one.
+  async function createdOrganization(
+    global: { id: string },
+    firstAdmin: { rut: string },
+    slug = "provisioned",
+  ) {
+    const created = await createOrganizationService(prisma).createOrganization(
+      global.id,
+      {
+        name: "Provisioned",
+        slug,
+        firstAdminRut: firstAdmin.rut,
+      },
+    );
+    return created.organization;
+  }
+
+  it("allows only the global administrator to create organizations and an organization ADMIN to provision a temporary credential transactionally", async () => {
     const global = await persistence.createUser({
       name: "Global",
       rut: "12.345.678-5",
@@ -626,41 +635,47 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "Organization",
       rut: "12.345.679-3",
     });
-    const service = createPlatformAdministratorService(prisma);
+    const plain = await persistence.createUser({
+      name: "Plain",
+      rut: "12.345.671-8",
+    });
+    const organizations = createOrganizationService(prisma);
+    const users = createUserService(prisma);
     await designatePlatformAdministrator(global);
     await expect(
-      service.createOrganization!(organizationAdmin.id, {
+      organizations.createOrganization(organizationAdmin.id, {
         name: "Denied",
         slug: "denied",
+        firstAdminRut: organizationAdmin.rut,
       }),
     ).rejects.toMatchObject({ status: 403 });
-    const organization = await service.createOrganization!(global.id, {
-      name: "Provisioned",
-      slug: "provisioned",
-    });
+    const organization = await createdOrganization(global, organizationAdmin);
     await prisma.organizationMembership.create({
       data: {
-        userId: organizationAdmin.id,
-        organizationId: organization.id,
-        role: OrganizationRole.ADMIN,
-      },
-    });
-    await expect(
-      service.provisionUser!(organizationAdmin.id, {
-        name: "Denied",
-        rut: "12.345.670-K",
+        userId: plain.id,
         organizationId: organization.id,
         role: OrganizationRole.USER,
-      }),
-    ).rejects.toMatchObject({ status: 403 });
-    const provisioned = await service.provisionUser!(global.id, {
-      name: "Student",
-      rut: "12.345.670-K",
-      organizationId: organization.id,
-      role: OrganizationRole.USER,
+      },
     });
+    const input = {
+      name: "Student",
+      rut: "12345670K",
+      role: OrganizationRole.USER,
+    };
+    await expect(
+      users.provisionUser(plain.id, organization.id, input),
+    ).rejects.toMatchObject({ status: 403 });
+    // The platform administrator has no membership, hence no authority here.
+    await expect(
+      users.provisionUser(global.id, organization.id, input),
+    ).rejects.toMatchObject({ status: 404 });
+    const provisioned = await users.provisionUser(
+      organizationAdmin.id,
+      organization.id,
+      input,
+    );
     const stored = await prisma.user.findUniqueOrThrow({
-      where: { id: provisioned.user.userId },
+      where: { id: provisioned.user.id },
     });
     const membership = await prisma.organizationMembership.findUniqueOrThrow({
       where: {
@@ -673,7 +688,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     const audit = await prisma.platformAdministrativeAuditEvent.findMany({
       where: { targetUserId: stored.id },
     });
-    expect(provisioned.user.rut).toBe("12345670-K");
+    expect(provisioned.user.rut).toBe("12345670K");
     expect(stored.rut).toBe("12345670K");
     expect(provisioned.temporaryPassword).toHaveLength(32);
     expect(stored.passwordHash).toMatch(/^scrypt\$/);
@@ -690,18 +705,17 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "Global",
       rut: "12.345.678-5",
     });
-    const service = createPlatformAdministratorService(prisma);
+    const organizationAdmin = await persistence.createUser({
+      name: "Organization",
+      rut: "12.345.671-8",
+    });
     await designatePlatformAdministrator(global);
-    const organization = await service.createOrganization!(global.id, {
-      name: "Provisioned",
-      slug: "provisioned",
-    });
-    const provisioned = await service.provisionUser!(global.id, {
-      name: "Student",
-      rut: "12.345.679-3",
-      organizationId: organization.id,
-      role: OrganizationRole.USER,
-    });
+    const organization = await createdOrganization(global, organizationAdmin);
+    const provisioned = await createUserService(prisma).provisionUser(
+      organizationAdmin.id,
+      organization.id,
+      { name: "Student", rut: "123456793", role: OrganizationRole.USER },
+    );
     const auth = createAuthService(prisma);
     const first = await auth.login({
       rut: "12.345.679-3",
@@ -729,7 +743,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       );
     }
     const stored = await prisma.user.findUniqueOrThrow({
-      where: { id: provisioned.user.userId },
+      where: { id: provisioned.user.id },
     });
     expect(stored.temporaryPasswordExpiresAt).toBeNull();
     expect(stored.mustChangePassword).toBe(false);
@@ -740,7 +754,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     ).toBe(1);
   });
 
-  it("discovers every organization and group without local membership only for the platform administrator", async () => {
+  it("lists every organization only for the platform administrator and grants it no group access", async () => {
     const platformUser = await persistence.createUser({
       name: "Ada Lovelace",
       rut: "12.345.678-5",
@@ -765,32 +779,37 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       },
     });
     const groups = createGroupService(prisma);
-    const platformAdministrators = createPlatformAdministratorService(prisma);
+    const organizations = createOrganizationService(prisma);
     await designatePlatformAdministrator(platformUser);
-    const group = await groups.createGroup(platformUser.id, organization.id, {
-      name: "Advanced topics",
-    });
+    const group = await groups.createGroup(
+      organizationAdministrator.id,
+      organization.id,
+      { name: "Advanced topics" },
+    );
+    const expected = {
+      id: organization.id,
+      name: "AI Academy",
+      slug: "ai-academy",
+      description: null,
+      enabled: true,
+      createdAt: organization.createdAt.toISOString(),
+    };
 
     await expect(
-      platformAdministrators.listOrganizations(unauthorizedUser.id),
-    ).rejects.toMatchObject({ status: 403 });
+      organizations.listOrganizations(unauthorizedUser.id),
+    ).resolves.toEqual([]);
     await expect(
-      platformAdministrators.listOrganizations(platformUser.id),
-    ).resolves.toEqual([
-      {
-        id: organization.id,
-        name: "AI Academy",
-        groups: [
-          {
-            id: group.id,
-            name: "Advanced topics",
-            description: null,
-            organization: { id: organization.id, name: "AI Academy" },
-            members: [],
-          },
-        ],
-      },
-    ]);
+      organizations.listOrganizations(platformUser.id),
+    ).resolves.toEqual([expected]);
+    await expect(
+      organizations.listOrganizations(organizationAdministrator.id),
+    ).resolves.toEqual([expected]);
+    await expect(
+      groups.listGroups(platformUser.id, organization.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      groups.listMemberships(platformUser.id, organization.id, group.id),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("enforces singleton bootstrap and records immutable audit events", async () => {
@@ -831,10 +850,6 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
   });
 
   it("creates, promotes, demotes, and removes memberships with exact append-only audits", async () => {
-    const platformUser = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
     const firstAdministrator = await persistence.createUser({
       name: "Grace Hopper",
       rut: "12.345.679-3",
@@ -858,32 +873,26 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         role: OrganizationRole.ADMIN,
       })),
     });
-    const platformAdministrators = createPlatformAdministratorService(prisma);
-    await designatePlatformAdministrator(platformUser);
+    const organizations = createOrganizationService(prisma);
+    const actor = firstAdministrator;
 
-    await platformAdministrators.createMembership(
-      platformUser.id,
-      organization.id,
-      member.id,
-      OrganizationRole.USER,
-    );
-    await platformAdministrators.changeMembershipRole(
-      platformUser.id,
+    await organizations.createMembership(actor.id, organization.id, {
+      rut: member.rut,
+      role: OrganizationRole.USER,
+    });
+    await organizations.changeMembershipRole(
+      actor.id,
       organization.id,
       member.id,
       OrganizationRole.ADMIN,
     );
-    await platformAdministrators.changeMembershipRole(
-      platformUser.id,
+    await organizations.changeMembershipRole(
+      actor.id,
       organization.id,
       member.id,
       OrganizationRole.USER,
     );
-    await platformAdministrators.removeMembership(
-      platformUser.id,
-      organization.id,
-      member.id,
-    );
+    await organizations.removeMembership(actor.id, organization.id, member.id);
 
     expect(
       await prisma.organizationMembership.findMany({
@@ -912,7 +921,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       expect.arrayContaining([
         {
           type: "ORGANIZATION_MEMBERSHIP_CREATED",
-          actorUserId: platformUser.id,
+          actorUserId: actor.id,
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: null,
@@ -920,7 +929,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         },
         {
           type: "ORGANIZATION_MEMBERSHIP_ROLE_CHANGED",
-          actorUserId: platformUser.id,
+          actorUserId: actor.id,
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: OrganizationRole.USER,
@@ -928,7 +937,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         },
         {
           type: "ORGANIZATION_MEMBERSHIP_ROLE_CHANGED",
-          actorUserId: platformUser.id,
+          actorUserId: actor.id,
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: OrganizationRole.ADMIN,
@@ -936,7 +945,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         },
         {
           type: "ORGANIZATION_MEMBERSHIP_REMOVED",
-          actorUserId: platformUser.id,
+          actorUserId: actor.id,
           targetUserId: member.id,
           organizationId: organization.id,
           previousRole: OrganizationRole.USER,
@@ -947,7 +956,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
   });
 
   it("rolls back membership creation when the audit insert fails", async () => {
-    const platformUser = await persistence.createUser({
+    const administrator = await persistence.createUser({
       name: "Ada Lovelace",
       rut: "12.345.678-5",
     });
@@ -959,8 +968,14 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "AI Academy",
       slug: "ai-academy",
     });
-    const platformAdministrators = createPlatformAdministratorService(prisma);
-    await designatePlatformAdministrator(platformUser);
+    await prisma.organizationMembership.create({
+      data: {
+        userId: administrator.id,
+        organizationId: organization.id,
+        role: OrganizationRole.ADMIN,
+      },
+    });
+    const organizations = createOrganizationService(prisma);
 
     try {
       await prisma.$executeRawUnsafe(`
@@ -979,12 +994,10 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         FOR EACH ROW EXECUTE FUNCTION fail_platform_membership_audit_insert();
       `);
       await expect(
-        platformAdministrators.createMembership(
-          platformUser.id,
-          organization.id,
-          member.id,
-          OrganizationRole.USER,
-        ),
+        organizations.createMembership(administrator.id, organization.id, {
+          rut: member.rut,
+          role: OrganizationRole.USER,
+        }),
       ).rejects.toThrow(/induced audit failure/);
       expect(
         await prisma.organizationMembership.findUnique({
@@ -1061,7 +1074,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     );
   });
 
-  it("rejects organization membership administration by a non-platform user", async () => {
+  it("rejects organization membership administration by non-ADMINs and by the platform administrator without membership", async () => {
     const platformUser = await persistence.createUser({
       name: "Ada Lovelace",
       rut: "12.345.678-5",
@@ -1085,40 +1098,36 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         role: OrganizationRole.USER,
       },
     });
-    const platformAdministrators = createPlatformAdministratorService(prisma);
+    const organizations = createOrganizationService(prisma);
     await designatePlatformAdministrator(platformUser);
 
-    await expect(
-      platformAdministrators.createMembership(
-        unauthorizedUser.id,
-        organization.id,
-        unauthorizedUser.id,
-        OrganizationRole.USER,
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-    await expect(
-      platformAdministrators.changeMembershipRole(
-        unauthorizedUser.id,
-        organization.id,
-        member.id,
-        OrganizationRole.ADMIN,
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-    await expect(
-      platformAdministrators.removeMembership(
-        unauthorizedUser.id,
-        organization.id,
-        member.id,
-      ),
-    ).rejects.toMatchObject({ status: 403 });
+    for (const [actor, status] of [
+      [unauthorizedUser, 404],
+      [platformUser, 404],
+      [member, 403],
+    ] as const) {
+      await expect(
+        organizations.createMembership(actor.id, organization.id, {
+          rut: unauthorizedUser.rut,
+          role: OrganizationRole.USER,
+        }),
+      ).rejects.toMatchObject({ status });
+      await expect(
+        organizations.changeMembershipRole(
+          actor.id,
+          organization.id,
+          member.id,
+          OrganizationRole.ADMIN,
+        ),
+      ).rejects.toMatchObject({ status });
+      await expect(
+        organizations.removeMembership(actor.id, organization.id, member.id),
+      ).rejects.toMatchObject({ status });
+    }
     expect(await prisma.organizationMembership.count()).toBe(1);
   });
 
   it("retains an organization ADMIN during parallel demotion and removal attempts", async () => {
-    const platformUser = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
     const firstAdministrator = await persistence.createUser({
       name: "Grace Hopper",
       rut: "12.345.679-3",
@@ -1138,23 +1147,20 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         role: OrganizationRole.ADMIN,
       })),
     });
-    const platformAdministrators = createPlatformAdministratorService(prisma);
-    await designatePlatformAdministrator(platformUser);
+    const organizations = createOrganizationService(prisma);
 
-    const demotions = await Promise.allSettled([
-      platformAdministrators.changeMembershipRole(
-        platformUser.id,
-        organization.id,
-        firstAdministrator.id,
-        OrganizationRole.USER,
+    // Each administrator acts on their own membership, so the two attempts
+    // can only both succeed by leaving the organization without an ADMIN.
+    const demotions = await Promise.allSettled(
+      [firstAdministrator, secondAdministrator].map((administrator) =>
+        organizations.changeMembershipRole(
+          administrator.id,
+          organization.id,
+          administrator.id,
+          OrganizationRole.USER,
+        ),
       ),
-      platformAdministrators.changeMembershipRole(
-        platformUser.id,
-        organization.id,
-        secondAdministrator.id,
-        OrganizationRole.USER,
-      ),
-    ]);
+    );
     expect(demotions.some((result) => result.status === "fulfilled")).toBe(
       true,
     );
@@ -1171,18 +1177,15 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       where: { organizationId: organization.id },
       data: { role: OrganizationRole.ADMIN },
     });
-    const removals = await Promise.allSettled([
-      platformAdministrators.removeMembership(
-        platformUser.id,
-        organization.id,
-        firstAdministrator.id,
+    const removals = await Promise.allSettled(
+      [firstAdministrator, secondAdministrator].map((administrator) =>
+        organizations.removeMembership(
+          administrator.id,
+          organization.id,
+          administrator.id,
+        ),
       ),
-      platformAdministrators.removeMembership(
-        platformUser.id,
-        organization.id,
-        secondAdministrator.id,
-      ),
-    ]);
+    );
     expect(removals.some((result) => result.status === "fulfilled")).toBe(true);
     expect(
       await prisma.organizationMembership.count({

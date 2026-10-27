@@ -1,5 +1,5 @@
 import type { RequestHandler, Router } from "express";
-import type { ZodType } from "zod";
+import type { ZodObject, ZodType } from "zod";
 
 import { ErrorResponseSchema } from "./errors.js";
 
@@ -47,6 +47,8 @@ export interface Operation {
   tag: string;
   /** Requires the web session cookie. */
   secured: boolean;
+  /** Path parameters; names must match the `{name}` segments of `path`. */
+  params?: ZodObject;
   requestBody?: ZodType;
   responses: Record<number, OperationResponse>;
   middleware?: RequestHandler[];
@@ -80,25 +82,6 @@ export interface LegacyRoute {
  * route can only leave it by being documented by its owning ticket.
  */
 export const LEGACY_ROUTES: ReadonlyArray<LegacyRoute> = [
-  { method: "PATCH", path: "/api/v1/profile", owner: "RP0-05" },
-  { method: "GET", path: "/api/v1/platform/organizations", owner: "RP0-06" },
-  { method: "POST", path: "/api/v1/platform/organizations", owner: "RP0-06" },
-  // Organization memberships belong to RP0-08.
-  {
-    method: "POST",
-    path: "/api/v1/platform/organizations/{organizationId}/members",
-    owner: "RP0-08",
-  },
-  {
-    method: "PATCH",
-    path: "/api/v1/platform/organizations/{organizationId}/members/{userId}",
-    owner: "RP0-08",
-  },
-  {
-    method: "DELETE",
-    path: "/api/v1/platform/organizations/{organizationId}/members/{userId}",
-    owner: "RP0-08",
-  },
   // Business-policy authority is preserved but no P0 ticket owns these
   // routes: they keep working undocumented until someone decides to retire or
   // keep them (backlog "inherited follow-ups" table, CR-019).
@@ -109,38 +92,8 @@ export const LEGACY_ROUTES: ReadonlyArray<LegacyRoute> = [
     path: "/api/v1/business-policies/{version}",
     owner: LEGACY_NO_P0,
   },
-  { method: "GET", path: "/api/v1/groups", owner: "RP0-07" },
-  {
-    method: "GET",
-    path: "/api/v1/organizations/{organizationId}/groups",
-    owner: "RP0-07",
-  },
-  {
-    method: "POST",
-    path: "/api/v1/organizations/{organizationId}/groups",
-    owner: "RP0-07",
-  },
-  {
-    method: "PATCH",
-    path: "/api/v1/organizations/{organizationId}/groups/{groupId}",
-    owner: "RP0-07",
-  },
-  {
-    method: "DELETE",
-    path: "/api/v1/organizations/{organizationId}/groups/{groupId}",
-    owner: "RP0-07",
-  },
-  {
-    method: "POST",
-    path: "/api/v1/organizations/{organizationId}/groups/{groupId}/members",
-    owner: "RP0-07",
-  },
-  {
-    method: "DELETE",
-    path: "/api/v1/organizations/{organizationId}/groups/{groupId}/members/{userId}",
-    owner: "RP0-07",
-  },
-  { method: "POST", path: "/api/v1/platform/users", owner: "RP0-08" },
+  // Kept for the policies screen; no P0 ticket reshapes it.
+  { method: "GET", path: "/api/v1/groups", owner: LEGACY_NO_P0 },
   { method: "GET", path: "/api/v1/invoices", owner: "RP0-11" },
   { method: "GET", path: "/api/v1/invoices/{invoiceId}", owner: "RP0-11" },
 ];

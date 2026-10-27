@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import "./tailwind.css";
 import { contextValue, useWorkspace } from "../workspace/WorkspaceContext";
-import { useUnauthorized } from "../auth/ProtectedSession";
+import { useUnauthorized } from "../auth/components/ProtectedSession";
 import {
   invoiceMoney as money,
   invoiceLabel,
@@ -10,7 +10,7 @@ import {
   invoiceDate,
   invoiceHttpMessage,
 } from "./invoicePresentation";
-import { protectedFetch } from "../auth/protectedFetch";
+import { protectedFetch } from "../auth/api/protectedFetch";
 
 type Profile = {
   id: string;

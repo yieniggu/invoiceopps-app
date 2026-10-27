@@ -2,16 +2,16 @@ import type { ReactNode } from "react";
 import {
   Briefcase,
   ReceiptText,
-  ShieldCheck,
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 
+import { LinkButton } from "../../components/LinkButton";
+import { PageHeader } from "../../components/PageHeader";
 import type { Profile } from "../profile/ProfileScreen";
-import type { Destination } from "../navigation/AppShell";
-import type { GroupsState } from "../groups/GroupsScreen";
+import { paths } from "../navigation/paths";
+import type { ContextState } from "../workspace/useWorkspaceGroups";
 import { useSharedWorkspace } from "../workspace/WorkspaceContext";
-import { canAdministrate } from "../admin/administrationOperations";
 
 function DashboardCard({
   id,
@@ -46,31 +46,26 @@ function DashboardCard({
 export function DashboardScreen({
   profile,
   contextState,
-  onNavigate,
   onRetry,
 }: {
   profile: Profile;
-  contextState: GroupsState["kind"];
-  onNavigate: (destination: Destination) => void;
+  contextState: ContextState;
   onRetry: () => void;
 }) {
   const { selectedContext } = useSharedWorkspace();
   return (
     <div className="screen-stack">
-      <p className="page-intro">
-        Bienvenido, {profile.name}. Elige por dónde empezar.
-      </p>
+      <PageHeader
+        title="Panel principal"
+        description={`Bienvenido, ${profile.name}. Elige por dónde empezar.`}
+      />
       <div className="dash-grid">
         <DashboardCard
           id="dashboard-invoices-title"
           icon={ReceiptText}
           title="Facturas"
           featured
-          actions={
-            <button type="button" onClick={() => onNavigate("Facturas")}>
-              Ir a facturas
-            </button>
-          }
+          actions={<LinkButton to={paths.invoices}>Ir a facturas</LinkButton>}
         >
           <p>
             Revisa las facturas de tu organización o grupo activo y abre su
@@ -83,19 +78,12 @@ export function DashboardScreen({
           title="Tu espacio de trabajo"
           actions={
             <>
-              <button
-                type="button"
-                onClick={() => onNavigate("Organizaciones")}
-              >
+              <LinkButton to={paths.organizations}>
                 Ver mis organizaciones
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => onNavigate("Mis grupos")}
-              >
+              </LinkButton>
+              <LinkButton to={paths.groups} variant="secondary">
                 Ver mis grupos
-              </button>
+              </LinkButton>
             </>
           }
         >
@@ -132,37 +120,13 @@ export function DashboardScreen({
           id="dashboard-policies-title"
           icon={SlidersHorizontal}
           title="Políticas"
-          actions={
-            <button type="button" onClick={() => onNavigate("Políticas")}>
-              Ir a políticas
-            </button>
-          }
+          actions={<LinkButton to={paths.policies}>Ir a políticas</LinkButton>}
         >
           <p>
             Consulta y versiona los umbrales de revisión de tu organización o
             grupo.
           </p>
         </DashboardCard>
-        {canAdministrate(profile) ? (
-          <DashboardCard
-            id="dashboard-admin-title"
-            icon={ShieldCheck}
-            title="Administración"
-            actions={
-              <button
-                type="button"
-                onClick={() => onNavigate("Administración")}
-              >
-                Ir a administración
-              </button>
-            }
-          >
-            <p>
-              Crea organizaciones, aprovisiona usuarios y gestiona grupos y
-              membresías.
-            </p>
-          </DashboardCard>
-        ) : null}
       </div>
     </div>
   );

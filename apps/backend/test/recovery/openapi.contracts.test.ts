@@ -160,13 +160,25 @@ describe("RP0 OpenAPI document contract", () => {
     expect(validator.version).toBe("3.1");
   });
 
-  it("documents exactly the mounted auth operations and no invoice creation", () => {
+  it("documents exactly the mounted registry operations and no invoice creation", async () => {
     const documented = enumerateOpenApiRoutes(document).map((route) =>
       routeKey(route.method, route.path),
     );
+    const legacy = new Set(
+      (await loadLegacyRoutes()).map((route) =>
+        routeKey(route.method, route.path),
+      ),
+    );
+    const mountedOperations = enumerateMountedRoutes(buildApp())
+      .map((route) => routeKey(route.method, route.path))
+      .filter((key) => key.includes(" /api/v1/") && !legacy.has(key));
 
-    expect(documented.sort()).toEqual(
-      AUTH_OPERATIONS.map(([path, method]) => routeKey(method, path)).sort(),
+    expect(documented.sort()).toEqual(mountedOperations.sort());
+    // The auth operations stay part of the document.
+    expect(documented).toEqual(
+      expect.arrayContaining(
+        AUTH_OPERATIONS.map(([path, method]) => routeKey(method, path)),
+      ),
     );
     const paths = document.paths as Record<string, Json>;
     expect(paths["/api/v1/invoices"]?.post).toBeUndefined();

@@ -5,35 +5,34 @@ import {
   type AuthRateLimiter,
 } from "./auth-rate-limit.js";
 import { AuthError, type AuthService } from "./auth.js";
-import type { DatabaseReadiness } from "./database.js";
-import { parseGroupPage, type GroupService } from "./groups.js";
+import type { Database, DatabaseReadiness } from "./database.js";
 import type { BusinessPolicyService } from "./business-policies.js";
 import type { InvoiceService } from "./invoices.js";
-import type { PlatformAdministratorService } from "./platform-administrator.js";
-import {
-  createAuthOperations,
-  profileResponse,
-} from "./features/auth/routes.js";
-import { ProfileUpdateSchema } from "./features/auth/schemas.js";
+import { createAuthOperations } from "./features/auth/routes.js";
 import {
   loadProfile,
   sessionTokenFromCookie,
 } from "./features/auth/session.js";
+import { createGroupOperations } from "./features/groups/routes.js";
 import {
-  GroupInputSchema,
-  GroupMemberInputSchema,
-  GroupUpdateSchema,
-} from "./features/groups/schemas.js";
+  createGroupService,
+  type GroupCatalogService,
+  type GroupService,
+} from "./features/groups/services.js";
 import {
   InvoiceListOptionsSchema,
   ResourceContextSchema,
 } from "./features/invoices/schemas.js";
+import { createOrganizationOperations } from "./features/orgs/routes.js";
 import {
-  OrganizationInputSchema,
-  MembershipCreateInputSchema,
-  MembershipRoleInputSchema,
-  ProvisionUserInputSchema,
-} from "./features/platform/schemas.js";
+  createOrganizationService,
+  type OrganizationService,
+} from "./features/orgs/services.js";
+import { createUserOperations } from "./features/users/routes.js";
+import {
+  createUserService,
+  type UserService,
+} from "./features/users/services.js";
 import {
   BusinessPolicyCreateSchema,
   BusinessPolicyUpdateSchema,
@@ -43,7 +42,6 @@ import {
   errorHandler,
   notFoundHandler,
   parseLegacy,
-  parseWith,
   sendError,
 } from "./http/errors.js";
 import { buildOpenApiDocument } from "./http/openapi.js";
@@ -119,10 +117,17 @@ const ONBOARDING_PATHS = new Set([
 
 export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
-  groups?: GroupService;
+  /** Backs the undocumented GET /api/v1/groups. */
+  groups?: GroupCatalogService;
+  /**
+   * Documented operations default to services built on `database.prisma`;
+   * these override them (tests inject fakes).
+   */
+  organizations?: OrganizationService;
+  users?: UserService;
+  groupAdministration?: GroupService;
   invoices?: InvoiceService;
   businessPolicies?: BusinessPolicyService;
-  platformAdministrators?: PlatformAdministratorService;
   /**
    * Reverse-proxy hops trusted for `request.ip` (AUTH_TRUST_PROXY_HOPS).
    * Undefined keeps "trust proxy" off.
@@ -131,14 +136,16 @@ export interface AppOptions {
 }
 
 export function createApp(
-  database: DatabaseReadiness,
+  database: DatabaseReadiness & Partial<Pick<Database, "prisma">>,
   auth?: AuthService,
   {
     authRateLimiter = createAuthRateLimiter(),
     groups,
+    organizations,
+    users,
+    groupAdministration,
     invoices,
     businessPolicies,
-    platformAdministrators,
     trustProxyHops,
   }: AppOptions = {},
 ) {
@@ -241,7 +248,24 @@ export function createApp(
     response.status(200).json({ status: "ok" });
   });
 
-  const operations = createAuthOperations(auth, authRateLimiter);
+  // Documented operations need the Prisma client; without it they are still
+  // mounted and documented but answer like a missing session.
+  const { prisma } = database;
+  const operations = [
+    ...createAuthOperations(auth, authRateLimiter),
+    ...createOrganizationOperations(
+      auth,
+      organizations ?? (prisma && createOrganizationService(prisma)),
+    ),
+    ...createUserOperations(
+      auth,
+      users ?? (prisma && createUserService(prisma)),
+    ),
+    ...createGroupOperations(
+      auth,
+      groupAdministration ?? (prisma && createGroupService(prisma)),
+    ),
+  ];
   const api = express.Router({ caseSensitive: true, strict: true });
   api.use((request, response, next) => {
     response.locals.routeBase = request.baseUrl;
@@ -267,22 +291,6 @@ export function createApp(
     return loadProfile(auth, sessionToken, response);
   }
 
-  api.patch("/profile", async (request, response) => {
-    const sessionToken = sessionTokenFromCookie(request.headers.cookie);
-    if (!auth || !sessionToken) {
-      throw unauthenticated();
-    }
-
-    const input = parseWith(
-      ProfileUpdateSchema,
-      request.body,
-      "Invalid profile update",
-    );
-    response
-      .status(200)
-      .json(profileResponse(await auth.updateProfile(sessionToken, input)));
-  });
-
   api.get("/groups", async (request, response) => {
     const groupService = present(groups);
     const profile = await currentProfile(request, response);
@@ -290,98 +298,6 @@ export function createApp(
       .status(200)
       .json({ groups: await groupService.listGroups(profile.id) });
   });
-
-  api.get("/platform/organizations", async (request, response) => {
-    const platform = present(platformAdministrators);
-    const profile = await currentProfile(request, response);
-    response.status(200).json({
-      organizations: await platform.listOrganizations(profile.id),
-    });
-  });
-
-  api.post("/platform/organizations", async (request, response) => {
-    const platform = present(platformAdministrators);
-    if (!platform.createOrganization) throw unauthenticated();
-    const profile = await currentProfile(request, response);
-    const organization = await platform.createOrganization(
-      profile.id,
-      parseLegacy(
-        OrganizationInputSchema,
-        request.body,
-        "Invalid organization",
-      ),
-    );
-    response.status(201).json({ organization });
-  });
-
-  api.post("/platform/users", async (request, response) => {
-    const platform = present(platformAdministrators);
-    if (!platform.provisionUser) throw unauthenticated();
-    const profile = await currentProfile(request, response);
-    const provisioned = await platform.provisionUser(
-      profile.id,
-      parseLegacy(
-        ProvisionUserInputSchema,
-        request.body,
-        "Invalid user provision",
-      ),
-    );
-    response.status(201).json(provisioned);
-  });
-
-  api.post(
-    "/platform/organizations/:organizationId/members",
-    async (request, response) => {
-      const platform = present(platformAdministrators);
-      const profile = await currentProfile(request, response);
-      const input = parseLegacy(
-        MembershipCreateInputSchema,
-        request.body,
-        "Invalid organization membership",
-      );
-      const membership = await platform.createMembership(
-        profile.id,
-        request.params.organizationId,
-        input.userId,
-        input.role,
-      );
-      response.status(201).json({ membership });
-    },
-  );
-
-  api.patch(
-    "/platform/organizations/:organizationId/members/:userId",
-    async (request, response) => {
-      const platform = present(platformAdministrators);
-      const profile = await currentProfile(request, response);
-      const input = parseLegacy(
-        MembershipRoleInputSchema,
-        request.body,
-        "Invalid organization membership",
-      );
-      const membership = await platform.changeMembershipRole(
-        profile.id,
-        request.params.organizationId,
-        request.params.userId,
-        input.role,
-      );
-      response.status(200).json({ membership });
-    },
-  );
-
-  api.delete(
-    "/platform/organizations/:organizationId/members/:userId",
-    async (request, response) => {
-      const platform = present(platformAdministrators);
-      const profile = await currentProfile(request, response);
-      await platform.removeMembership(
-        profile.id,
-        request.params.organizationId,
-        request.params.userId,
-      );
-      response.status(204).end();
-    },
-  );
 
   api.get("/invoices", async (request, response) => {
     const { context, q, cursor, limit } = parseInvoiceListQuery(request.query);
@@ -452,102 +368,6 @@ export function createApp(
         ),
       );
   });
-
-  api.get(
-    "/organizations/:organizationId/groups",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      const page = parseGroupPage(request.params.organizationId, request.query);
-      response.setHeader("Cache-Control", "no-store");
-      response
-        .status(200)
-        .json(
-          await groupService.listOrganizationGroups(
-            profile.id,
-            request.params.organizationId,
-            page,
-          ),
-        );
-    },
-  );
-
-  api.post(
-    "/organizations/:organizationId/groups",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      const group = await groupService.createGroup(
-        profile.id,
-        request.params.organizationId,
-        parseLegacy(GroupInputSchema, request.body, "Invalid group input"),
-      );
-      response.status(201).json({ group });
-    },
-  );
-
-  api.patch(
-    "/organizations/:organizationId/groups/:groupId",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      const group = await groupService.updateGroup(
-        profile.id,
-        request.params.organizationId,
-        request.params.groupId,
-        parseLegacy(GroupUpdateSchema, request.body, "Invalid group update"),
-      );
-      response.status(200).json({ group });
-    },
-  );
-
-  api.delete(
-    "/organizations/:organizationId/groups/:groupId",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      await groupService.deleteGroup(
-        profile.id,
-        request.params.organizationId,
-        request.params.groupId,
-      );
-      response.status(204).end();
-    },
-  );
-
-  api.post(
-    "/organizations/:organizationId/groups/:groupId/members",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      const group = await groupService.addMember(
-        profile.id,
-        request.params.organizationId,
-        request.params.groupId,
-        parseLegacy(
-          GroupMemberInputSchema,
-          request.body,
-          "Invalid group member",
-        ).userId,
-      );
-      response.status(200).json({ group });
-    },
-  );
-
-  api.delete(
-    "/organizations/:organizationId/groups/:groupId/members/:userId",
-    async (request, response) => {
-      const groupService = present(groups);
-      const profile = await currentProfile(request, response);
-      await groupService.removeMember(
-        profile.id,
-        request.params.organizationId,
-        request.params.groupId,
-        request.params.userId,
-      );
-      response.status(204).end();
-    },
-  );
 
   app.use(API_PREFIX, api);
   app.use(notFoundHandler);

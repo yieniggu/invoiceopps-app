@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app.js";
 import { createAuthRateLimiter } from "../../src/auth-rate-limit.js";
 import { AuthError, type AuthService } from "../../src/auth.js";
-import type { GroupService } from "../../src/groups.js";
-import type { PlatformAdministratorService } from "../../src/platform-administrator.js";
+import type {
+  GroupCatalogService,
+  GroupService,
+} from "../../src/features/groups/services.js";
+import type { OrganizationService } from "../../src/features/orgs/services.js";
 
 const COOKIE = "invoiceops_session=session-token";
 const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
@@ -124,7 +127,7 @@ describe("CR-003 case and trailing-slash variants of the API prefix", () => {
     const app = createApp(
       { isReady: async () => true },
       fakeAuth({ getProfile }),
-      { groups: groups as unknown as GroupService },
+      { groups: groups as unknown as GroupCatalogService },
     );
 
     const variant = await request(app)
@@ -397,7 +400,7 @@ describe("CR-006 trusted proxy hops and progressive RUT lockout", () => {
 });
 
 describe("CR-010 encoded or path-like identifiers", () => {
-  function platformApp() {
+  function organizationsApp() {
     const service = {
       createMembership: vi.fn(async () => ({})),
       changeMembershipRole: vi.fn(async () => ({})),
@@ -405,30 +408,28 @@ describe("CR-010 encoded or path-like identifiers", () => {
       listOrganizations: vi.fn(async () => []),
     };
     const groups = {
-      deleteGroup: vi.fn(async () => {}),
       removeMember: vi.fn(async () => {}),
     };
     const app = createApp({ isReady: async () => true }, fakeAuth(), {
-      platformAdministrators:
-        service as unknown as PlatformAdministratorService,
-      groups: groups as unknown as GroupService,
+      organizations: service as unknown as OrganizationService,
+      groupAdministration: groups as unknown as GroupService,
     });
     return { app, service, groups };
   }
 
   it.each([
-    "/api/v1/platform/organizations/o%2Fx/members/u",
-    "/api/v1/platform/organizations/o%2fx/members/u",
-    "/api/v1/platform/organizations/o/members/u%2Fx",
-    "/api/v1/platform/organizations/..%2f/members/u",
-    "/api/v1/platform/organizations/o/members/..%2F..%2Fadmin",
-    "/api/v1/platform/organizations/o/members/%2e%2e",
-    "/api/v1/platform/organizations/o%5Cx/members/u",
-    "/api/v1/platform/organizations/o/members/u/extra",
-    "/api/v1/platform/organizations//members/u",
-    "/api/v1/platform/organizations/o/members//u",
+    "/api/v1/organizations/o%2Fx/memberships/u",
+    "/api/v1/organizations/o%2fx/memberships/u",
+    "/api/v1/organizations/o/memberships/u%2Fx",
+    "/api/v1/organizations/..%2f/memberships/u",
+    "/api/v1/organizations/o/memberships/..%2F..%2Fadmin",
+    "/api/v1/organizations/o/memberships/%2e%2e",
+    "/api/v1/organizations/o%5Cx/memberships/u",
+    "/api/v1/organizations/o/memberships/u/extra",
+    "/api/v1/organizations//memberships/u",
+    "/api/v1/organizations/o/memberships//u",
   ])("answers DELETE %s with a JSON 404 and calls no service", async (path) => {
-    const { app, service } = platformApp();
+    const { app, service } = organizationsApp();
 
     const response = await request(app)
       .delete(path)
@@ -444,10 +445,10 @@ describe("CR-010 encoded or path-like identifiers", () => {
   });
 
   it("applies the same guard to group identifiers", async () => {
-    const { app, groups } = platformApp();
+    const { app, groups } = organizationsApp();
 
     const response = await request(app)
-      .delete("/api/v1/organizations/o/groups/g%2Fx/members/u")
+      .delete("/api/v1/organizations/o/groups/g%2Fx/memberships/u")
       .set(SAME_ORIGIN)
       .set("Cookie", COOKIE);
 
@@ -456,10 +457,10 @@ describe("CR-010 encoded or path-like identifiers", () => {
   });
 
   it("still serves ordinary identifiers", async () => {
-    const { app, service } = platformApp();
+    const { app, service } = organizationsApp();
 
     const response = await request(app)
-      .delete("/api/v1/platform/organizations/org-1/members/user-2")
+      .delete("/api/v1/organizations/org-1/memberships/user-2")
       .set(SAME_ORIGIN)
       .set("Cookie", COOKIE);
 
@@ -510,7 +511,7 @@ describe("CR-012 onboarding gate scope and profile reuse", () => {
     const app = createApp(
       { isReady: async () => true },
       fakeAuth({ getProfile }),
-      { groups: groups as unknown as GroupService },
+      { groups: groups as unknown as GroupCatalogService },
     );
 
     const response = await request(app)
@@ -811,7 +812,11 @@ describe("CR-024 public messages are English and codes are unchanged", () => {
           return { ...profile, mustChangePassword: true };
         },
       }),
-      { groups: { listGroups: async () => [] } as unknown as GroupService },
+      {
+        groups: {
+          listGroups: async () => [],
+        } as unknown as GroupCatalogService,
+      },
     );
     const gated = await request(pending)
       .get("/api/v1/groups")

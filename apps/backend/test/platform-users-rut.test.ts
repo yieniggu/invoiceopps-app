@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { createAuthService, type AuthService } from "../src/auth.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
-import { createPlatformAdministratorService } from "../src/platform-administrator.js";
+import { createUserService } from "../src/features/users/services.js";
 
 const ORGANIZATION_ID = "organization-1";
 const ACTOR_ID = "platform-admin-1";
@@ -38,11 +38,8 @@ function createAuthStub(): AuthService {
 function createFakePrisma() {
   const created: Array<{ data: { rut: string } }> = [];
   const transaction = {
-    platformAdministrator: {
-      findUnique: vi.fn(async () => ({ userId: ACTOR_ID })),
-    },
-    organization: {
-      findUnique: vi.fn(async () => ({ id: ORGANIZATION_ID })),
+    organizationMembership: {
+      findUnique: vi.fn(async () => ({ role: "ADMIN" })),
     },
     user: {
       create: vi.fn(async (args: { data: { name: string; rut: string } }) => {
@@ -53,6 +50,7 @@ function createFakePrisma() {
     platformAdministrativeAuditEvent: { create: vi.fn(async () => ({})) },
   };
   const prisma = {
+    organizationMembership: transaction.organizationMembership,
     $transaction: async (operation: (tx: typeof transaction) => unknown) =>
       operation(transaction),
   } as unknown as PrismaClient;
@@ -62,19 +60,14 @@ function createFakePrisma() {
 
 function provision(app: ReturnType<typeof createApp>, rut: string) {
   return request(app)
-    .post("/api/v1/platform/users")
+    .post(`/api/v1/organizations/${ORGANIZATION_ID}/users`)
     .set("Host", "127.0.0.1")
     .set("Origin", "http://127.0.0.1")
     .set("Cookie", COOKIE)
-    .send({
-      name: "Student",
-      rut,
-      organizationId: ORGANIZATION_ID,
-      role: "USER",
-    });
+    .send({ name: "Student", rut, role: "USER" });
 }
 
-describe("RV-081 POST /platform/users RUT contract", () => {
+describe("RV-081 POST /organizations/{organizationId}/users RUT contract", () => {
   it.each([
     ["wrong verification digit", "12345678-4"],
     ["leading zero body", "01234567-4"],
@@ -83,7 +76,7 @@ describe("RV-081 POST /platform/users RUT contract", () => {
   ])("answers 400 and writes nothing for %s", async (_label, rut) => {
     const { prisma, transaction } = createFakePrisma();
     const app = createApp({ isReady: async () => true }, createAuthStub(), {
-      platformAdministrators: createPlatformAdministratorService(prisma),
+      users: createUserService(prisma),
     });
 
     const response = await provision(app, rut);
@@ -92,10 +85,10 @@ describe("RV-081 POST /platform/users RUT contract", () => {
     expect(transaction.user.create).not.toHaveBeenCalled();
   });
 
-  it("stores the canonical RUT and answers with the API form", async () => {
+  it("stores and answers with the canonical RUT", async () => {
     const { prisma, created } = createFakePrisma();
     const app = createApp({ isReady: async () => true }, createAuthStub(), {
-      platformAdministrators: createPlatformAdministratorService(prisma),
+      users: createUserService(prisma),
     });
 
     const response = await provision(app, "19.034.790-7");
@@ -104,8 +97,12 @@ describe("RV-081 POST /platform/users RUT contract", () => {
     expect(created).toHaveLength(1);
     expect(created[0].data.rut).toBe("190347907");
     expect(response.body.user).toMatchObject({
+      id: "user-2",
+      rut: "190347907",
+      mustChangePassword: true,
+    });
+    expect(response.body.membership).toEqual({
       userId: "user-2",
-      rut: "19034790-7",
       organizationId: ORGANIZATION_ID,
       role: "USER",
     });

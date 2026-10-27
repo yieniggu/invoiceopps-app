@@ -50,11 +50,48 @@ function http() {
     const path = input.toString();
     if (path === "/api/v1/auth/profile") return json({ profile });
     if (path === "/api/v1/groups") return groups();
+    // Organization-scoped reads behind Mis grupos, and the self-removal that
+    // makes the workspace catalogue revalidate.
+    if (path === "/api/v1/organizations/org-A/groups")
+      return json({
+        groups: [
+          {
+            id: "group-A",
+            organizationId: "org-A",
+            name: "Grupo A",
+            description: null,
+            permissions: {
+              readInvoices: true,
+              createInvoices: false,
+              deleteOwnInvoices: false,
+              deleteOthersInvoices: false,
+            },
+          },
+        ],
+      });
+    if (path === "/api/v1/organizations/org-A/groups/group-A/memberships") {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      return json({
+        memberships: [
+          {
+            userId: "user-A",
+            groupId: "group-A",
+            organizationId: "org-A",
+            user: { id: "user-A", name: "Ada", rut: "123456785" },
+          },
+        ],
+      });
+    }
     if (
-      path === "/api/v1/organizations/org-A/groups/group-A" &&
-      init?.method === "PATCH"
+      path ===
+        "/api/v1/organizations/org-A/groups/group-A/memberships/user-A" &&
+      init?.method === "DELETE"
     )
-      return json({});
+      return new Response(null, { status: 204 });
+    if (path === "/api/v1/organizations/org-A/users")
+      return json({
+        users: [{ id: "user-A", name: "Ada", rut: "123456785", role: "ADMIN" }],
+      });
     if (path === "/api/v1/auth/logout" && init?.method === "POST")
       return new Response(null, { status: 204 });
     if (/^\/api\/v1\/invoices\?/.test(path)) {
@@ -89,10 +126,10 @@ function http() {
 }
 function navigate(name: string) {
   fireEvent.click(
-    within(screen.getByRole("navigation")).getByRole("button", { name }),
+    within(screen.getByRole("navigation")).getByRole("link", { name }),
   );
 }
-async function selectGroupAndSave(
+async function selectGroupAndLeave(
   api: ReturnType<typeof http>,
   pending: ReturnType<typeof deferred>,
 ) {
@@ -105,9 +142,14 @@ async function selectGroupAndSave(
   });
   await screen.findByText("Proveedor group-A");
   api.groups.mockReturnValueOnce(pending.promise);
-  navigate("Mis grupos");
+  navigate("Grupos");
   fireEvent.click(
-    screen.getByRole("button", { name: "Guardar grupo Grupo A" }),
+    await screen.findByRole("link", { name: "Ver detalle de Grupo A" }),
+  );
+  // Removing yourself from the group is what forces the workspace to
+  // revalidate its authorized contexts.
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Quitar a Ada del grupo" }),
   );
   await waitFor(() => expect(api.groups).toHaveBeenCalledTimes(2));
 }
@@ -138,7 +180,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     async (revoked) => {
       const api = http();
       const pending = deferred();
-      await selectGroupAndSave(api, pending);
+      await selectGroupAndLeave(api, pending);
       const boundary = api.protectedRequests.length;
       expectProtectedViewsBlocked(
         api,
@@ -187,7 +229,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
   it("keeps failed revalidation blocked and restores the intended owner only after a successful retry", async () => {
     const api = http();
     const pending = deferred();
-    await selectGroupAndSave(api, pending);
+    await selectGroupAndLeave(api, pending);
     const boundary = api.protectedRequests.length;
     await act(async () => pending.resolve(json({}, 500)));
     expectProtectedViewsBlocked(

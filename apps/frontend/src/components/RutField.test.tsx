@@ -43,9 +43,10 @@ describe("RutField", () => {
     expect(screen.queryByText("RUT inválido")).toBeNull();
     fireEvent.blur(input());
     const error = screen.getByText("RUT inválido");
-    expect(error.getAttribute("role")).toBe("alert");
+    // RV-122: a persistent polite region instead of an inserted alert.
+    expect(error.getAttribute("aria-live")).toBe("polite");
     expect(input().getAttribute("aria-invalid")).toBe("true");
-    expect(input().getAttribute("aria-describedby")).toBe(error.id);
+    expect(input().getAttribute("aria-describedby")).toContain(error.id);
   });
 
   it("shows no error after blur for a valid RUT", () => {

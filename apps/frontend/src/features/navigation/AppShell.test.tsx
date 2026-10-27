@@ -7,9 +7,11 @@ import {
   within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AppShell, SIDEBAR_COLLAPSED_KEY, type Destination } from "./AppShell";
+import { PageHeader } from "../../components/PageHeader";
+import { AppShell, SIDEBAR_COLLAPSED_KEY } from "./AppShell";
 
 // jsdom does not implement `inert`; mimic browsers so focusing inside an
 // inert subtree is a no-op. This makes focus tests prove effect ordering.
@@ -48,30 +50,22 @@ function stubMatchMedia(matches: boolean) {
 }
 
 function renderShell({
-  canAdministrate = false,
   isLoggingOut = false,
   onLogout = vi.fn(),
-  onNavigate = vi.fn(),
-  destination = "Panel principal",
-  children = <p>Contenido</p>,
+  route = "/panel",
+  children = <PageHeader title="Panel principal" />,
 }: {
   children?: ReactNode;
-  canAdministrate?: boolean;
   isLoggingOut?: boolean;
   onLogout?: () => void;
-  onNavigate?: (destination: Destination) => void;
-  destination?: Destination;
+  route?: string;
 } = {}) {
   return render(
-    <AppShell
-      destination={destination}
-      onNavigate={onNavigate}
-      canAdministrate={canAdministrate}
-      onLogout={onLogout}
-      isLoggingOut={isLoggingOut}
-    >
-      {children}
-    </AppShell>,
+    <MemoryRouter initialEntries={[route]}>
+      <AppShell onLogout={onLogout} isLoggingOut={isLoggingOut}>
+        {children}
+      </AppShell>
+    </MemoryRouter>,
   );
 }
 
@@ -93,27 +87,35 @@ afterEach(() => {
 });
 
 describe("AppShell sidebar", () => {
-  it("lists destinations in order with Mi perfil and Salir in the bottom group", () => {
-    renderShell({ canAdministrate: true });
+  it("lists destinations in order as links with Mi perfil and Salir in the bottom group", () => {
+    renderShell();
     const nav = screen.getByRole("navigation", {
       name: "Navegación principal",
     });
-    const names = within(nav)
-      .getAllByRole("button")
-      .map((button) => button.textContent);
-    expect(names).toEqual([
+    const links = within(nav)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(links).toEqual([
       "Panel principal",
       "Facturas",
       "Políticas",
       "Organizaciones",
-      "Mis grupos",
-      "Administración",
+      "Grupos",
       "Mi perfil",
-      "Salir",
     ]);
     expect(
       within(nav)
-        .getByRole("button", { name: "Panel principal" })
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Salir"]);
+    expect(
+      within(nav)
+        .getByRole("link", { name: "Panel principal" })
+        .getAttribute("href"),
+    ).toBe("/panel");
+    expect(
+      within(nav)
+        .getByRole("link", { name: "Panel principal" })
         .getAttribute("aria-current"),
     ).toBe("page");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
@@ -121,9 +123,26 @@ describe("AppShell sidebar", () => {
     );
   });
 
-  it("hides Administración without administrative authority", () => {
-    renderShell({ canAdministrate: false });
-    expect(screen.queryByRole("button", { name: "Administración" })).toBeNull();
+  it("has no Administración or Mis grupos entry", () => {
+    renderShell();
+    for (const name of ["Administración", "Mis grupos"]) {
+      expect(screen.queryByRole("link", { name })).toBeNull();
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+  });
+
+  it.each([
+    ["/organizaciones/org-1", "Organizaciones"],
+    ["/organizaciones/org-1/grupos", "Grupos"],
+    ["/organizaciones/org-1/grupos/group-1", "Grupos"],
+  ])("marks one destination for the nested URL %s", (route, expected) => {
+    const view = renderShell({ route });
+    const current = screen
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page")
+      .map((link) => link.textContent);
+    expect(current).toEqual([expected]);
+    view.unmount();
   });
 
   it("collapses, keeps accessible names and persists the preference", () => {
@@ -136,7 +155,7 @@ describe("AppShell sidebar", () => {
     const expand = screen.getByRole("button", { name: "Expandir menú" });
     expect(expand.hasAttribute("aria-expanded")).toBe(false);
     expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)).toBe("true");
-    const facturas = screen.getByRole("button", { name: "Facturas" });
+    const facturas = screen.getByRole("link", { name: "Facturas" });
     expect(facturas.getAttribute("title")).toBe("Facturas");
     first.unmount();
 
@@ -170,11 +189,19 @@ describe("AppShell sidebar", () => {
     expect((pending as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("navigates from the sidebar", () => {
-    const onNavigate = vi.fn();
-    renderShell({ onNavigate });
-    fireEvent.click(screen.getByRole("button", { name: "Facturas" }));
-    expect(onNavigate).toHaveBeenCalledWith("Facturas");
+  it("moves the current mark when a sidebar link is followed", () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("link", { name: "Facturas" }));
+    expect(
+      screen
+        .getByRole("link", { name: "Facturas" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      screen
+        .getByRole("link", { name: "Panel principal" })
+        .hasAttribute("aria-current"),
+    ).toBe(false);
   });
 
   it("opens the drawer with focus inside and closes on Escape returning focus to the trigger", () => {
@@ -191,8 +218,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("closes the drawer on backdrop click and on navigation", () => {
-    const onNavigate = vi.fn();
-    const { container } = renderShell({ onNavigate });
+    const { container } = renderShell();
     const trigger = screen.getByRole("button", { name: "Abrir menú" });
     fireEvent.click(trigger);
     const backdrop = container.querySelector(".sidebar-backdrop");
@@ -202,8 +228,7 @@ describe("AppShell sidebar", () => {
     expect(document.activeElement).toBe(trigger);
 
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Políticas" }));
-    expect(onNavigate).toHaveBeenCalledWith("Políticas");
+    fireEvent.click(screen.getByRole("link", { name: "Políticas" }));
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(
       screen.getByRole("heading", { level: 1 }),
@@ -289,7 +314,12 @@ describe("AppShell sidebar", () => {
     const onLogout = vi.fn();
     const { container } = renderShell({
       onLogout,
-      children: <p role="alert">No se pudo cerrar la sesión</p>,
+      children: (
+        <>
+          <PageHeader title="Panel principal" />
+          <p role="alert">No se pudo cerrar la sesión</p>
+        </>
+      ),
     });
     const trigger = screen.getByRole("button", { name: "Abrir menú" });
     fireEvent.click(trigger);

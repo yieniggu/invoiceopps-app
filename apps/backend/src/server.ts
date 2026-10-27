@@ -6,10 +6,9 @@ import {
 } from "./auth-rate-limit.js";
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
-import { createGroupService } from "./groups.js";
+import { createGroupCatalogService } from "./features/groups/services.js";
 import { createInvoiceService } from "./invoices.js";
 import { trustProxyHopsFromEnv } from "./http/trust-proxy.js";
-import { createPlatformAdministratorService } from "./platform-administrator.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -36,10 +35,9 @@ const trustProxyHops = trustProxyHopsFromEnv(process.env.AUTH_TRUST_PROXY_HOPS);
 const app = createApp(database, createAuthService(database.prisma), {
   authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
   trustProxyHops,
-  groups: createGroupService(database.prisma),
+  groups: createGroupCatalogService(database.prisma),
   invoices: createInvoiceService(database.prisma),
   businessPolicies: createBusinessPolicyService(database.prisma),
-  platformAdministrators: createPlatformAdministratorService(database.prisma),
 });
 
 app.listen(port, () => {
