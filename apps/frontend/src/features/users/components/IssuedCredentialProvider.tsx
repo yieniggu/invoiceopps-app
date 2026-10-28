@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
@@ -30,22 +31,30 @@ export function IssuedCredentialProvider({
 }: {
   children: ReactNode;
 }) {
-  const [issued, setIssued] = useState<{
-    credential: IssuedCredential;
-    returnFocusTo?: RefObject<HTMLElement | null>;
-  }>();
-  const present = useCallback<Present>(
-    (credential, returnFocusTo) => setIssued({ credential, returnFocusTo }),
-    [],
-  );
+  // Credentials wait their turn: a second one never replaces one the person
+  // has not confirmed yet (each is shown once and cannot be recovered).
+  const [queue, setQueue] = useState<
+    Array<{
+      id: number;
+      credential: IssuedCredential;
+      returnFocusTo?: RefObject<HTMLElement | null>;
+    }>
+  >([]);
+  const issued = queue[0];
+  const nextId = useRef(0);
+  const present = useCallback<Present>((credential, returnFocusTo) => {
+    const id = nextId.current++;
+    setQueue((waiting) => [...waiting, { id, credential, returnFocusTo }]);
+  }, []);
 
   return (
     <IssuedCredentialContext.Provider value={present}>
       {children}
       {issued ? (
         <TemporaryPasswordDialog
+          key={issued.id}
           credential={issued.credential}
-          onClose={() => setIssued(undefined)}
+          onClose={() => setQueue((waiting) => waiting.slice(1))}
           returnFocusTo={issued.returnFocusTo}
         />
       ) : null}

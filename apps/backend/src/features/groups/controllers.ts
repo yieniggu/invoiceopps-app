@@ -6,9 +6,13 @@ import type { AuthService } from "../auth/services.js";
 import { requireSessionProfile } from "../auth/session.js";
 import {
   GroupCreateRequestSchema,
+  GroupMembershipBulkCreateRequestSchema,
   GroupMembershipCreateRequestSchema,
-  GroupPermissionsUpdateRequestSchema,
 } from "./schemas.js";
+import {
+  BulkPermissionsUpdateRequestSchema,
+  PermissionsUpdateRequestSchema,
+} from "./permissions-schema.js";
 import type { GroupService } from "./services.js";
 
 function wired(service: GroupService | undefined) {
@@ -24,6 +28,7 @@ function logAudit(
     groupId: string;
     actorUserId: string;
     targetUserId?: string;
+    memberCount?: number;
   },
 ) {
   logEvent("info", `audit.group_${action}`, {
@@ -61,27 +66,30 @@ export function createGroupController(
     response.status(201).json({ group });
   };
 
-  const updatePermissions: RequestHandler = async (request, response) => {
+  const updateMemberPermissions: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
     const input = parseWith(
-      GroupPermissionsUpdateRequestSchema,
+      PermissionsUpdateRequestSchema,
       request.body,
-      "Invalid group permissions",
+      "Invalid permissions",
     );
     const organizationId = String(request.params.organizationId);
     const groupId = String(request.params.groupId);
-    const group = await wired(groups).updatePermissions(
+    const targetUserId = String(request.params.userId);
+    const membership = await wired(groups).updateMemberPermissions(
       actor.id,
       organizationId,
       groupId,
+      targetUserId,
       input.permissions,
     );
-    logAudit("permissions_updated", {
+    logAudit("member_permissions_updated", {
       organizationId,
       groupId,
       actorUserId: actor.id,
+      targetUserId,
     });
-    response.status(200).json({ group });
+    response.status(200).json({ membership });
   };
 
   const listMemberships: RequestHandler = async (request, response) => {
@@ -108,6 +116,7 @@ export function createGroupController(
       organizationId,
       groupId,
       input.userId,
+      input.permissions,
     );
     logAudit("member_added", {
       organizationId,
@@ -116,6 +125,59 @@ export function createGroupController(
       targetUserId: input.userId,
     });
     response.status(201).json({ membership });
+  };
+
+  const addMembers: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const input = parseWith(
+      GroupMembershipBulkCreateRequestSchema,
+      request.body,
+      "Invalid group memberships",
+    );
+    const organizationId = String(request.params.organizationId);
+    const groupId = String(request.params.groupId);
+    const memberships = await wired(groups).addMembers(
+      actor.id,
+      organizationId,
+      groupId,
+      input.members,
+    );
+    // One audit line for the whole batch: identifiers and a count only.
+    logAudit("members_added", {
+      organizationId,
+      groupId,
+      actorUserId: actor.id,
+      memberCount: memberships.length,
+    });
+    response.status(201).json({ memberships });
+  };
+
+  const updateMembersPermissions: RequestHandler = async (
+    request,
+    response,
+  ) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const input = parseWith(
+      BulkPermissionsUpdateRequestSchema,
+      request.body,
+      "Invalid permissions",
+    );
+    const organizationId = String(request.params.organizationId);
+    const groupId = String(request.params.groupId);
+    const memberships = await wired(groups).updateMembersPermissions(
+      actor.id,
+      organizationId,
+      groupId,
+      input.userIds,
+      input.permissions,
+    );
+    logAudit("members_permissions_updated", {
+      organizationId,
+      groupId,
+      actorUserId: actor.id,
+      memberCount: memberships.length,
+    });
+    response.status(200).json({ memberships });
   };
 
   const removeMember: RequestHandler = async (request, response) => {
@@ -141,9 +203,11 @@ export function createGroupController(
   return {
     list,
     create,
-    updatePermissions,
+    updateMemberPermissions,
     listMemberships,
     addMember,
+    addMembers,
+    updateMembersPermissions,
     removeMember,
   };
 }

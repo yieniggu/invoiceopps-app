@@ -33,6 +33,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     testTimeout: 15000,
+    // Each worker is a jsdom + React process and a test mostly waits on CPU.
+    // Four keep a 10-core development machine (which also runs Docker and
+    // PostgreSQL) from oversubscribing: stress runs with 8 workers plus 8 busy
+    // processes made the first App render of a file take several seconds and
+    // failed the first test of App.s8, session.ui and routes.ui (see the
+    // asyncUtilTimeout note in src/test/setup.ts). A plain run takes ~45 s.
     maxWorkers: 4,
     setupFiles: ["./src/test/setup.ts"],
   },

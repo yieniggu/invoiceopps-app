@@ -35,8 +35,8 @@ export function MyGroupsScreen({
           No tienes organizaciones asignadas, por eso no hay grupos que mostrar.
         </p>
       ) : (
-        profile.memberships.map(({ organization, role }) => {
-          const isAdmin = isAdminRole(role);
+        profile.memberships.map(({ organization, role, groups }) => {
+          const isAdmin = isAdminRole(role) || profile.isPlatformAdministrator;
           const titleId = `groups-${organization.id}`;
           return (
             <section key={organization.id} aria-labelledby={titleId}>
@@ -54,7 +54,11 @@ export function MyGroupsScreen({
                   </LinkButton>
                 ) : null}
               </div>
-              <GroupsList organizationId={organization.id} isAdmin={isAdmin} />
+              <GroupsList
+                organizationId={organization.id}
+                isAdmin={isAdmin}
+                memberGroups={groups}
+              />
             </section>
           );
         })

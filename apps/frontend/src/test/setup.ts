@@ -1,3 +1,4 @@
+import { configure } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 
 import { resetThemeForTests } from "../lib/theme";
@@ -23,3 +24,19 @@ const resetTheme = () => {
 };
 beforeEach(resetTheme);
 afterEach(resetTheme);
+
+/*
+ * Wall-clock bound of findBy* and waitFor (Testing Library default: 1 s).
+ *
+ * The first App render of a test file is cold (module graph, React, router,
+ * jsdom layout): 0.5-0.9 s on an idle 10-core machine and several seconds when
+ * the machine is saturated. With the default bound the first test of a file
+ * failed under load while the second passed (App.s8 "Panel principal" and "Mi
+ * perfil", session.ui, routes.ui "redirects / to the panel", group-form "creates
+ * the group"), reproduced with 8 workers plus 8 busy processes. The bound only
+ * decides how long a wait that never succeeds takes to report: a wait that can
+ * succeed returns as soon as its condition holds, so this does not slow passing
+ * runs or hide a missing wait (a condition that never becomes true still fails).
+ * Races that were real were fixed in the tests themselves (see CR-206/CR-240).
+ */
+if (typeof window !== "undefined") configure({ asyncUtilTimeout: 5000 });

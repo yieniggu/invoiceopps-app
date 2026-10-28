@@ -1,187 +1,98 @@
-import type { ReactNode } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
-
 import { BackLink } from "../../../components/BackLink";
-import { MutationFeedback } from "../../../components/MutationFeedback";
+import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
+import { QueryFeedback } from "../../../components/QueryFeedback";
 import type { Profile } from "../../auth/types";
-import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
-import { useOrganizationAccess } from "../../orgs/hooks/useOrganizationAccess";
-import type { GroupSetup } from "../api/groupSetup";
-import { GroupForm } from "../components/GroupForm";
-import { GroupMembersPanel } from "../components/GroupMembersPanel";
-import { GroupSetupRetry } from "../components/GroupSetupRetry";
-import { useGroupPermissionsDraft } from "../hooks/useGroupPermissionsDraft";
-import { useGroupsQuery } from "../hooks/useGroups";
-import type { Group } from "../types";
+import { describePermissions } from "../../permissions/types";
+import { GroupGate, type GroupContext } from "../components/GroupGate";
+import { useGroupMembersQuery } from "../hooks/useGroups";
 
-/** Navigation state handed over by the create flow. */
-export interface GroupDetailState {
-  notice?: string;
-  setup?: GroupSetup;
-}
-
+/** Summary of one group: its data, its member count and the way to its people. */
 export function GroupDetailScreen({ profile }: { profile: Profile }) {
-  const { organizationId = "", groupId = "" } = useParams();
-  const access = useOrganizationAccess(profile, organizationId);
-  if (!access.organization) {
-    return (
-      <NotFoundScreen description="No encontramos esa organización entre las tuyas." />
-    );
-  }
   return (
-    <GroupDetailLoader
-      organization={access.organization}
-      groupId={groupId}
-      isAdmin={access.isAdmin}
-    />
+    <GroupGate profile={profile}>
+      {(context) => <GroupSummary {...context} />}
+    </GroupGate>
   );
 }
 
-function GroupDetailLoader({
-  organization,
-  groupId,
-  isAdmin,
-}: {
-  organization: { id: string; name: string };
-  groupId: string;
-  isAdmin: boolean;
-}) {
-  const groups = useGroupsQuery(organization.id);
-  const group = groups.data?.find(({ id }) => id === groupId);
-  const back = (
-    <BackLink to={paths.organizationGroups(organization.id)}>
-      Grupos de {organization.name}
-    </BackLink>
-  );
-
-  if (group) {
-    return (
-      <GroupDetail
-        organization={organization}
-        group={group}
-        isAdmin={isAdmin}
-        back={back}
-        refreshFailed={groups.isError}
-        onRetry={() => void groups.refetch()}
-      />
-    );
-  }
-  if (groups.data) {
-    return (
-      <NotFoundScreen description="No encontramos ese grupo entre los que puedes ver." />
-    );
-  }
-  if (groups.isError) {
-    return (
-      <div className="screen-stack">
-        {back}
-        <PageHeader title="Grupo" />
-        <p role="alert">No fue posible cargar el grupo.</p>
-        <button type="button" onClick={() => void groups.refetch()}>
-          Reintentar grupos
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="screen-stack">
-      {back}
-      <PageHeader title="Grupo" />
-      <p role="status">Cargando grupo...</p>
-    </div>
-  );
-}
-
-function GroupDetail({
+function GroupSummary({
   organization,
   group,
-  isAdmin,
-  back,
+  canManage,
+  effective,
   refreshFailed,
-  onRetry,
-}: {
-  organization: { id: string; name: string };
-  group: Group;
-  isAdmin: boolean;
-  back: ReactNode;
-  /** The group list could not be refreshed; what is shown may be stale. */
-  refreshFailed: boolean;
-  onRetry: () => void;
-}) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const state = (location.state as GroupDetailState | null) ?? {};
-  const { update, permissions, setDraft, save } = useGroupPermissionsDraft(
-    organization.id,
-    group,
-  );
-  // The pending setup lives in the history entry, so a reload keeps it.
-  const setSetup = (setup: GroupSetup | undefined) =>
-    navigate(location.pathname, {
-      replace: true,
-      state: { ...state, setup },
-    });
+  retry,
+}: GroupContext) {
+  // The member list is admin-only; a plain member sees their own flags instead.
+  const members = useGroupMembersQuery(organization.id, group.id, canManage);
 
   return (
     <div className="screen-stack">
-      {back}
+      <BackLink to={paths.organizationGroups(organization.id)}>
+        Grupos de {organization.name}
+      </BackLink>
       <PageHeader
         eyebrow={organization.name}
         title={group.name}
         description={
-          isAdmin
-            ? "Define qué pueden hacer con las facturas las personas del grupo y quiénes lo integran."
+          canManage
+            ? "Resumen del grupo. Desde «Miembros» defines quiénes lo integran y qué pueden hacer con las facturas en él."
             : "Estos son los permisos sobre facturas que tienes por pertenecer a este grupo."
         }
+        action={
+          canManage ? (
+            <div className="header-actions">
+              <LinkButton to={paths.groupMembers(organization.id, group.id)}>
+                Miembros
+              </LinkButton>
+            </div>
+          ) : undefined
+        }
       />
-      {state.notice ? <p role="status">{state.notice}</p> : null}
       {refreshFailed ? (
         <>
           <p role="alert">
             No fue posible actualizar la lista de grupos. Tus cambios ya se
             guardaron; no repitas la operación.
           </p>
-          <button type="button" onClick={onRetry}>
+          <button type="button" onClick={retry}>
             Reintentar grupos
           </button>
         </>
       ) : null}
-      {isAdmin && state.setup ? (
-        <GroupSetupRetry
-          organizationId={organization.id}
-          groupId={group.id}
-          setup={state.setup}
-          onChange={setSetup}
-        />
-      ) : null}
-      <GroupForm
-        mode="view"
-        values={{ name: group.name, description: group.description ?? "" }}
-        permissions={permissions}
-        onPermissionsChange={setDraft}
-        permissionsEditable={isAdmin}
-        pending={update.isPending}
-        submitLabel={isAdmin ? "Guardar permisos" : undefined}
-        pendingLabel="Guardando permisos..."
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (isAdmin) save();
-        }}
-        feedback={
-          <MutationFeedback
-            isError={update.isError}
-            error={update.error}
-            isSuccess={update.isSuccess}
-            success="Permisos guardados."
-            fallback="No fue posible guardar los permisos. Intenta nuevamente."
+      <section aria-labelledby="group-summary-title">
+        <h2 id="group-summary-title">Resumen</h2>
+        <dl className="summary-list">
+          <div>
+            <dt>Nombre</dt>
+            <dd>{group.name}</dd>
+          </div>
+          <div>
+            <dt>Descripción</dt>
+            <dd>{group.description ?? "Sin descripción"}</dd>
+          </div>
+          {canManage && members.data ? (
+            <div>
+              <dt>Miembros</dt>
+              <dd>{members.data.length}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {canManage ? (
+          <QueryFeedback
+            query={members}
+            loading="Cargando miembros del grupo..."
+            error="No fue posible cargar los miembros del grupo."
+            staleError="No fue posible actualizar los miembros del grupo."
+            retryLabel="Reintentar miembros del grupo"
           />
-        }
-      />
-      {isAdmin ? (
-        <GroupMembersPanel organizationId={organization.id} group={group} />
-      ) : null}
+        ) : null}
+        {!canManage && effective ? (
+          <p className="muted">{describePermissions(effective)}</p>
+        ) : null}
+      </section>
     </div>
   );
 }

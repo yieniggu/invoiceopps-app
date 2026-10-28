@@ -132,9 +132,12 @@ describe("QueryClient identity partition (AC-09, AC-10)", () => {
       focusManager.setFocused(true);
     });
     await screen.findByText(/Bruno Díaz/);
+    // Bruno's name can first show from the refetch answer held by Ada's own
+    // client; the partition swap (and the clearing of Ada's client) happens in
+    // the effect that follows. Wait for the swap itself, not for the text.
+    await waitFor(() => expect(store.getSnapshot().identityId).toBe("user-2"));
     expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     const second = store.getSnapshot();
-    expect(second.identityId).toBe("user-2");
     expect(second.client).not.toBe(first.client);
     expect(first.client.getQueryCache().getAll()).toHaveLength(0);
   });
@@ -245,12 +248,12 @@ describe("onboarding gate (AC-10)", () => {
       "GET /api/v1/organizations/org-1/users": () =>
         errorResponse(403, "ONBOARDING_REQUIRED"),
     });
-    renderApp({ route: "/organizaciones/org-1" });
+    renderApp({ route: "/organizations/org-1/members" });
     await screen.findByRole("heading", {
       name: "Cambia tu contraseña temporal",
     });
     // The forced screen replaces whatever URL was open.
-    expect(window.location.pathname).toBe("/cambiar-contrasena");
+    expect(window.location.pathname).toBe("/change-password");
   });
 });
 
@@ -272,7 +275,7 @@ describe("401 handling", () => {
       "GET /api/v1/organizations/org-1/users": () =>
         errorResponse(401, "UNAUTHENTICATED"),
     });
-    const { store } = renderApp({ route: "/organizaciones/org-1" });
+    const { store } = renderApp({ route: "/organizations/org-1/members" });
     await screen.findByRole("heading", { name: "Iniciar sesión" });
     expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     expect(store.getSnapshot().phase).toBe("anonymous");

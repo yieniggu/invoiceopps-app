@@ -2,18 +2,27 @@ import { Navigate, Route, Routes } from "react-router";
 
 import { PageHeader } from "../../components/PageHeader";
 import type { Profile } from "../auth/types";
+import { CreateUserScreen } from "../admin/screens/CreateUserScreen";
 import { DashboardScreen } from "../dashboard/DashboardScreen";
-import { MyGroupsScreen } from "../groups/screens/MyGroupsScreen";
+import { AddGroupMembersScreen } from "../groups/screens/AddGroupMembersScreen";
+import { BulkGroupPermissionsScreen } from "../groups/screens/BulkGroupPermissionsScreen";
 import { CreateGroupScreen } from "../groups/screens/CreateGroupScreen";
 import { GroupDetailScreen } from "../groups/screens/GroupDetailScreen";
+import { GroupMemberScreen } from "../groups/screens/GroupMemberScreen";
+import { GroupMembersScreen } from "../groups/screens/GroupMembersScreen";
+import { MyGroupsScreen } from "../groups/screens/MyGroupsScreen";
 import { OrganizationGroupsScreen } from "../groups/screens/OrganizationGroupsScreen";
 import { InvoiceWorkspace } from "../invoices/InvoiceWorkspace";
 import { NotFoundScreen } from "../navigation/NotFoundScreen";
 import { paths } from "../navigation/paths";
+import { AddOrganizationMemberScreen } from "../orgs/screens/AddOrganizationMemberScreen";
+import { BulkOrganizationPermissionsScreen } from "../orgs/screens/BulkOrganizationPermissionsScreen";
 import { CreateOrganizationScreen } from "../orgs/screens/CreateOrganizationScreen";
 import { OrganizationDetailScreen } from "../orgs/screens/OrganizationDetailScreen";
+import { OrganizationMemberScreen } from "../orgs/screens/OrganizationMemberScreen";
+import { OrganizationMembersScreen } from "../orgs/screens/OrganizationMembersScreen";
 import { OrganizationsScreen } from "../orgs/screens/OrganizationsScreen";
-import { PoliciesScreen } from "../policies/PoliciesScreen";
+import { PoliciesUnavailableScreen } from "../policies/PoliciesUnavailableScreen";
 import { ProfileScreen } from "../profile/ProfileScreen";
 import { WorkspaceBoundary } from "../workspace/WorkspaceContext";
 import type {
@@ -27,7 +36,7 @@ export interface WorkspaceState {
   retry: () => void;
 }
 
-/** Facturas and Políticas need the confirmed work context before they mount. */
+/** Facturas needs the confirmed work context before it mounts. */
 function WorkspaceRoute({
   title,
   description,
@@ -69,9 +78,9 @@ export function AppRoutes({
 }) {
   return (
     <Routes>
-      <Route index element={<Navigate to={paths.panel} replace />} />
+      <Route index element={<Navigate to={paths.dashboard} replace />} />
       <Route
-        path="panel"
+        path="dashboard"
         element={
           <DashboardScreen
             profile={profile}
@@ -81,7 +90,7 @@ export function AppRoutes({
         }
       />
       <Route
-        path="facturas"
+        path="invoices"
         element={
           <WorkspaceRoute
             title="Facturas"
@@ -92,20 +101,9 @@ export function AppRoutes({
           </WorkspaceRoute>
         }
       />
+      <Route path="policies" element={<PoliciesUnavailableScreen />} />
       <Route
-        path="politicas"
-        element={
-          <WorkspaceRoute
-            title="Políticas"
-            description="Consulta y versiona los umbrales de revisión de tu organización o grupo."
-            workspace={workspace}
-          >
-            {() => <PoliciesScreen profile={profile} />}
-          </WorkspaceRoute>
-        }
-      />
-      <Route
-        path="perfil"
+        path="profile"
         element={
           <div className="screen-stack">
             <PageHeader
@@ -117,7 +115,7 @@ export function AppRoutes({
         }
       />
       <Route
-        path="organizaciones"
+        path="organizations"
         element={
           <OrganizationsScreen
             profile={profile}
@@ -127,27 +125,59 @@ export function AppRoutes({
         }
       />
       <Route
-        path="organizaciones/nueva"
+        path="organizations/new"
         element={<CreateOrganizationScreen profile={profile} />}
       />
       <Route
-        path="organizaciones/:organizationId"
+        path="organizations/:organizationId"
         element={<OrganizationDetailScreen profile={profile} />}
       />
       <Route
-        path="organizaciones/:organizationId/grupos"
+        path="organizations/:organizationId/members"
+        element={<OrganizationMembersScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/members/new"
+        element={<AddOrganizationMemberScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/members/permissions"
+        element={<BulkOrganizationPermissionsScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/members/:userId"
+        element={<OrganizationMemberScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/groups"
         element={<OrganizationGroupsScreen profile={profile} />}
       />
       <Route
-        path="organizaciones/:organizationId/grupos/nuevo"
+        path="organizations/:organizationId/groups/new"
         element={<CreateGroupScreen profile={profile} />}
       />
       <Route
-        path="organizaciones/:organizationId/grupos/:groupId"
+        path="organizations/:organizationId/groups/:groupId"
         element={<GroupDetailScreen profile={profile} />}
       />
       <Route
-        path="grupos"
+        path="organizations/:organizationId/groups/:groupId/members"
+        element={<GroupMembersScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/groups/:groupId/members/new"
+        element={<AddGroupMembersScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/groups/:groupId/members/permissions"
+        element={<BulkGroupPermissionsScreen profile={profile} />}
+      />
+      <Route
+        path="organizations/:organizationId/groups/:groupId/members/:userId"
+        element={<GroupMemberScreen profile={profile} />}
+      />
+      <Route
+        path="groups"
         element={
           <MyGroupsScreen
             profile={profile}
@@ -157,8 +187,27 @@ export function AppRoutes({
         }
       />
       <Route
-        path="cambiar-contrasena"
-        element={<Navigate to={paths.panel} replace />}
+        path="change-password"
+        element={<Navigate to={paths.dashboard} replace />}
+      />
+      <Route
+        path="admin/*"
+        element={
+          // Only the platform administrator reaches /admin; anyone else gets
+          // the same page as for any unknown URL.
+          profile.isPlatformAdministrator ? (
+            <Routes>
+              <Route
+                index
+                element={<Navigate to={paths.adminNewUser} replace />}
+              />
+              <Route path="users/new" element={<CreateUserScreen />} />
+              <Route path="*" element={<NotFoundScreen />} />
+            </Routes>
+          ) : (
+            <NotFoundScreen />
+          )
+        }
       />
       <Route path="*" element={<NotFoundScreen />} />
     </Routes>

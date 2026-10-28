@@ -16,7 +16,8 @@ type InvoiceRow = {
   id: string;
   businessId: string;
   organizationId: string;
-  groupId: string;
+  /** Null for an organization-scope invoice (never returned by the legacy group queries). */
+  groupId: string | null;
   supplierName: string;
   amountPesos: number;
   currency: Currency;
@@ -84,6 +85,11 @@ function civilDate(value: Date) {
 }
 
 export function toInvoiceDto(invoice: InvoiceRow): InvoiceDto {
+  // The legacy list and detail queries filter by group, so a row without one
+  // would be a query bug, not data to serialize.
+  if (invoice.groupId === null) {
+    throw new Error("Organization-scope invoice in a group-scoped response");
+  }
   return {
     id: invoice.id,
     businessId: invoice.businessId,

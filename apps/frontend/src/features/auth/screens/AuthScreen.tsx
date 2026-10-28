@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 
 import { ThemeToggle } from "../../../components/ThemeToggle";
+import { PasswordInput } from "../../../components/PasswordInput";
 import { RutField } from "../../../components/RutField";
 import { isValidRut } from "../../../lib/rut";
 import { isApiError } from "../api/apiError";
@@ -76,7 +77,7 @@ export function AuthScreen({
   return (
     <main className="shell" aria-labelledby="auth-title">
       <div className="shell-toolbar">
-        <ThemeToggle showLabels />
+        <ThemeToggle />
       </div>
       <p className="eyebrow">InvoiceOps</p>
       <h1 id="auth-title">Iniciar sesión</h1>
@@ -101,23 +102,20 @@ export function AuthScreen({
           inputRef={rutInput}
           required
         />
-        <label>
-          Contraseña
-          <input
-            ref={passwordInput}
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => {
-              setPassword(event.target.value);
-              setPasswordMissing(false);
-            }}
-            disabled={pending}
-            required
-            aria-invalid={passwordMissing}
-            aria-describedby="login-password-error"
-          />
-        </label>
+        <PasswordInput
+          label="Contraseña"
+          inputRef={passwordInput}
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            setPasswordMissing(false);
+          }}
+          disabled={pending}
+          required
+          aria-invalid={passwordMissing}
+          aria-describedby="login-password-error"
+        />
         <p id="login-password-error" className="field-error" aria-live="polite">
           {passwordMissing ? "Ingresa tu contraseña" : ""}
         </p>

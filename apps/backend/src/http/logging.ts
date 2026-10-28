@@ -20,6 +20,8 @@ export interface LogFields {
   groupId?: string;
   actorUserId?: string;
   targetUserId?: string;
+  /** Bulk audit events: how many memberships the batch touched. */
+  memberCount?: number;
 }
 
 export function logEvent(

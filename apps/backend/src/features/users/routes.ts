@@ -3,6 +3,7 @@ import {
   errorResponse,
   forbiddenResponse,
   notFoundResponse,
+  retryableConflictResponse,
   unauthenticatedResponse,
   validationResponse,
 } from "../../http/standard-responses.js";
@@ -18,7 +19,7 @@ import type { UserService } from "./services.js";
 
 const TAG = "Users";
 const NOT_A_MEMBER =
-  "the organization does not exist or the actor is not a member (the platform administrator has no implicit membership)";
+  "the organization does not exist or the actor is neither a member nor the platform administrator (the platform administrator administers every existing organization but has no implicit membership)";
 
 export function createUserOperations(
   auth: AuthService | undefined,
@@ -40,7 +41,9 @@ export function createUserOperations(
           schema: OrganizationUserListResponseSchema,
         },
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN lists users"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator lists users",
+        ),
         404: notFoundResponse(NOT_A_MEMBER),
       },
       handler: controller.list,
@@ -53,6 +56,7 @@ export function createUserOperations(
       secured: true,
       params: OrganizationParamsSchema,
       requestBody: UserProvisionRequestSchema,
+      largeBody: true,
       responses: {
         201: {
           description:
@@ -64,11 +68,14 @@ export function createUserOperations(
         },
         400: validationResponse("invalid or unknown body field"),
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN creates users"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator creates users",
+        ),
         404: notFoundResponse(NOT_A_MEMBER),
         409: errorResponse(
           "USER_CONFLICT: a user with that RUT already exists",
         ),
+        503: retryableConflictResponse,
       },
       handler: controller.provision,
     },

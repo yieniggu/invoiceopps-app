@@ -1,9 +1,8 @@
-import { useLocation } from "react-router";
-
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import type { Profile } from "../../auth/types";
-import { paths, type RouteNotice } from "../../navigation/paths";
+import { paths } from "../../navigation/paths";
+import { useRouteNotice } from "../../navigation/useRouteNotice";
 import type { ContextState } from "../../workspace/useWorkspaceGroups";
 import { OrganizationCard } from "../components/OrganizationCard";
 
@@ -17,7 +16,7 @@ export function OrganizationsScreen({
   contextState: ContextState;
   onRetry: () => void;
 }) {
-  const notice = (useLocation().state as RouteNotice | null)?.notice;
+  const notice = useRouteNotice();
   const hasMemberships = profile.memberships.length > 0;
 
   return (
@@ -55,7 +54,6 @@ export function OrganizationsScreen({
             <OrganizationCard
               key={organization.id}
               organization={{ ...organization, role }}
-              profileId={profile.id}
             />
           ))}
         </ul>

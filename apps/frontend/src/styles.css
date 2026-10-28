@@ -10,6 +10,8 @@
   --color-border: #d7dfed;
   /* Borders of controls (inputs, toggles): at least 3:1 against surfaces. */
   --color-border-strong: #7589a8;
+  /* Thin rules between flat page sections (no surface of their own). */
+  --color-divider: #dbe3f0;
   --color-primary: #345cc4;
   --color-primary-strong: #243b6b;
   --color-primary-soft: #eef2fa;
@@ -21,11 +23,13 @@
   --color-skeleton: #dfe5f0;
   --color-overlay: rgb(22 36 58 / 0.5);
   --color-scrim: rgb(15 23 42 / 0.55);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234a5a72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --sidebar-width: 15rem;
   --sidebar-width-collapsed: 4rem;
-  --content-max-width: 75rem;
+  --content-max-width: 90rem;
+  --content-gutter: clamp(1rem, 2vw, 1.5rem);
   color: var(--color-text);
   background: var(--color-bg);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -33,6 +37,7 @@
 
 /* Set on <html> by the inline script in index.html and by useTheme. */
 :root[data-theme="dark"] {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a8b5cc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
   color-scheme: dark;
   --focus-ring: #ffb26b;
   --color-text: #e6ebf5;
@@ -42,6 +47,7 @@
   --color-surface-muted: #1e2a44;
   --color-border: #2c3a56;
   --color-border-strong: #6f83a6;
+  --color-divider: #2a3753;
   --color-primary: #8aa9f5;
   --color-primary-strong: #bcd0ff;
   --color-primary-soft: #1a2a4d;
@@ -69,7 +75,8 @@ body {
   max-width: 44rem;
   min-height: 100vh;
   margin: 0 auto;
-  padding: clamp(2rem, 8vw, 7rem) clamp(1.5rem, 6vw, 4rem);
+  padding: clamp(4.5rem, 8vw, 7rem) clamp(1.5rem, 6vw, 4rem)
+    clamp(2rem, 8vw, 7rem);
   align-content: center;
 }
 
@@ -104,10 +111,17 @@ h2 {
   font-size: 1.25rem;
 }
 
+/* Sections and forms are flat: a heading and content on the page itself.
+   Surfaces are opt-in (.surface, .context-card, .dash-card, dialogs) so a
+   screen never stacks one surface inside another. */
 section,
 form {
   display: grid;
   gap: 0.75rem;
+}
+
+.surface,
+.shell form {
   padding: 1.25rem;
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
@@ -180,16 +194,51 @@ button:focus-visible {
   align-content: start;
   width: 100%;
   max-width: var(--content-max-width);
-  margin-inline: auto;
-  padding: clamp(1rem, 3vw, 2rem);
+  margin-inline: 0;
+  padding: clamp(1rem, 2.5vw, 1.75rem) var(--content-gutter);
   min-width: 0;
 }
 
 .screen-stack,
 .screen-grid {
   display: grid;
-  gap: 1rem;
+  gap: 1.5rem;
   min-width: 0;
+}
+
+/* Top-level page sections: a thin rule and more air, no card. */
+:is(.screen-stack, .screen-grid)
+  > :is(section, form[aria-labelledby]):not(
+    .context-card,
+    .dash-card,
+    .surface
+  ) {
+  gap: 0.75rem;
+  padding-block-start: 1.5rem;
+  border-top: 1px solid var(--color-divider);
+}
+
+/* Anything nested in a section stays flat and just gets spacing. */
+:is(section, form) > :is(section, form) {
+  margin-block-start: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.text-link {
+  color: var(--color-primary-strong);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.text-link:hover {
+  text-decoration-thickness: 2px;
 }
 
 .screen-grid {
@@ -228,7 +277,18 @@ button:focus-visible {
   padding: 1rem;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
+  background: var(--color-surface);
   min-width: 0;
+}
+
+/* One level of surface: inside a surface, repeated items are separated by a
+   rule instead of being boxed again. */
+:is(.surface, .context-card) .context-card {
+  padding: 1rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--color-divider);
+  border-radius: 0;
+  background: transparent;
 }
 
 .membership-list li,
@@ -276,10 +336,31 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* Native select restyled like the inputs: same height, border and radius, a
+   token-driven chevron instead of the platform arrow. */
 select {
+  appearance: none;
+  -webkit-appearance: none;
   min-height: 2.75rem;
   max-width: 100%;
+  padding: 0.5rem 2.5rem 0.5rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem;
+  color: var(--color-text);
   font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+select:disabled {
+  background-color: var(--color-surface-muted);
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 select:focus-visible,
@@ -312,7 +393,7 @@ a:focus-visible {
 }
 
 @media (max-width: 30rem) {
-  .app-shell :where(section, form) {
+  .app-shell :where(.surface, .context-card, .dash-card) {
     padding: 0.75rem;
   }
 }
@@ -385,8 +466,25 @@ a:focus-visible {
 .app-layout {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
   min-height: 100vh;
   align-items: start;
+}
+
+/* Sidebar on the left spanning both rows; top bar and content on the right. */
+.app-layout > .sidebar {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.app-layout > .topbar {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.app-layout > main {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .app-layout > .skip-link:focus {
@@ -401,9 +499,28 @@ a:focus-visible {
   font-weight: 700;
 }
 
-.topbar,
 .sidebar-drawer-close {
   display: none;
+}
+
+/* Top bar: on wide screens it only carries the theme toggle, top right. */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.75rem var(--content-gutter) 0;
+  min-width: 0;
+}
+
+.topbar > .icon-button,
+.topbar-brand {
+  display: none;
+}
+
+.topbar-actions {
+  display: flex;
+  margin-inline-start: auto;
 }
 
 .sidebar {
@@ -553,16 +670,41 @@ a:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .app-layout > .topbar,
+  .app-layout > main {
+    grid-column: 1;
+  }
+
+  .app-layout > .sidebar {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
   .topbar {
     position: sticky;
     top: 0;
     z-index: 20;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    justify-content: flex-start;
     padding: 0.5rem 1rem;
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
+  }
+
+  .topbar > .icon-button {
+    display: inline-flex;
+  }
+
+  .topbar-brand {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar .theme-toggle button {
+    min-width: 2.5rem;
+    padding-inline: 0.375rem;
   }
 
   .sidebar {
@@ -602,6 +744,12 @@ a:focus-visible {
   }
 }
 
+@media (max-width: 24rem) {
+  .topbar-brand {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
   .is-drawer-open .sidebar {
@@ -627,7 +775,9 @@ a:focus-visible {
   align-items: flex-start;
   gap: 0.75rem;
   padding: 1.25rem;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .dash-card h2 {
@@ -712,8 +862,8 @@ a:focus-visible {
   gap: 1rem;
   width: 100%;
   max-width: var(--content-max-width);
-  margin-inline: auto;
-  padding: clamp(1rem, 3vw, 2rem);
+  margin-inline: 0;
+  padding: clamp(1rem, 2.5vw, 1.75rem) var(--content-gutter);
 }
 
 .skeleton-cards {
@@ -822,19 +972,94 @@ a:focus-visible {
   user-select: all;
 }
 
-.permission-grid {
+/* A fieldset used only to disable its controls in one go: no box, same grid
+   and spacing as the form around it. */
+.plain-fieldset {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  min-width: 0;
   margin: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
+  padding: 0;
+  border: 0;
 }
 
-.permission-grid label {
-  display: flex;
+/* Fieldset semantics without a box: the legend is a small label. */
+.permission-grid,
+.choice-group {
+  display: grid;
   gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.permission-grid > legend,
+.choice-group > legend {
+  padding: 0;
+  margin-block-end: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.permission-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.permission-toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.5rem;
+}
+
+.permission-body[hidden] {
+  display: none;
+}
+
+.permission-body {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+/* A flag as a toggle: icon (+ turns it on, - turns it off) and label; the
+   state shows in the border and background and in aria-pressed. */
+.app-shell .permission-toggle {
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  border: 2px solid var(--color-border-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  text-align: start;
+  text-decoration: none;
+}
+
+.app-shell .permission-toggle.is-on,
+.app-shell .permission-toggle[aria-pressed="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.permission-toggle svg {
+  flex: none;
+}
+
+.permission-toggle-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-shell .permission-collapse {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 /* Page header: title, one-line description and the primary action. */
@@ -868,6 +1093,7 @@ a:focus-visible {
 
 .page-header-action {
   flex: none;
+  max-width: 100%;
 }
 
 .app-shell .muted {
@@ -945,7 +1171,7 @@ a:focus-visible {
   gap: 0.75rem;
 }
 
-/* Theme toggle: segmented icon buttons, shared by the sidebar and auth screens. */
+/* Theme toggle: segmented icon buttons, shared by the top bar and public screens. */
 .theme-toggle {
   display: inline-flex;
   gap: 0.25rem;
@@ -984,24 +1210,422 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* Public screens: the toggle sits in the top-right corner of the page. */
 .shell-toolbar {
+  position: absolute;
+  top: 0.75rem;
+  inset-inline-end: 0.75rem;
   display: flex;
-  justify-content: flex-end;
+  z-index: 10;
 }
 
-.sidebar-theme {
+/* Divider between the Admin entry and the profile and logout items. */
+.app-shell .nav-divider {
+  height: 0;
+  margin: 0.25rem 0;
+  border-top: 1px solid var(--color-border);
+  list-style: none;
+}
+
+/* Create-user wizard: current step marker. */
+.wizard-steps {
   display: flex;
-  margin-top: auto;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-muted);
+}
+
+.wizard-steps [aria-current="step"] {
+  color: var(--color-text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--color-primary);
+}
+
+.permission-editor {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* Password field: show/hide button inside the input, at its end. */
+.password-field {
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.password-field > label {
+  font-weight: 700;
+}
+
+.password-control {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.password-control > input {
+  padding-inline-end: 3rem;
+}
+
+.password-control > .password-toggle,
+.app-shell .password-control > .password-toggle[aria-pressed="true"] {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 2.75rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  text-decoration: none;
 }
 
-.sidebar-theme + .nav-group-bottom {
-  margin-top: 0;
+.password-control > .password-toggle:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-primary-soft);
 }
 
-/* The collapsed rail is 4rem wide: stack the three options. */
-@media (min-width: 769px) {
-  .is-collapsed .theme-toggle {
-    flex-direction: column;
+.password-control > .password-toggle:disabled {
+  cursor: not-allowed;
+}
+
+/* Radio / checkbox groups share the permission editor's flat fieldset. */
+.choice-group label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.choice-group input[type="radio"] {
+  flex: none;
+  width: 1.25rem;
+  min-height: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+}
+
+/* Collapsible cards (create-user wizard). */
+.collapsible-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+.app-shell .collapsible-title {
+  margin: 0;
+  min-width: 0;
+}
+
+.app-shell .collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: auto;
+  max-width: 100%;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: start;
+}
+
+.app-shell .collapse-toggle:hover {
+  background: var(--color-primary-soft);
+}
+
+.collapse-toggle svg {
+  flex: none;
+}
+
+.collapsible-summary {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.collapsible-body[hidden] {
+  display: none;
+}
+
+.collapsible-body {
+  display: grid;
+  min-width: 0;
+}
+
+/* Secondary destructive action: quiet until hovered, never a big red block. */
+.app-shell .subtle-danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.app-shell .subtle-danger-button:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  background: var(--color-primary-soft);
+}
+
+.empty-state {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: start;
+  padding: 1rem;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 0.5rem;
+}
+
+/* Sidebar item that is not available yet. */
+.app-shell .nav-item.is-disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.app-shell .nav-item.is-disabled:hover {
+  background: transparent;
+}
+
+/* Labels never break inside a word, whatever the sidebar width. */
+.nav-label,
+.nav-text {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.nav-item .nav-label {
+  white-space: nowrap;
+}
+
+/* Label with its badge underneath (the "Políticas" entry). */
+.nav-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.nav-badge {
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.375rem;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* Tabs. */
+.tabs {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-shell .tab {
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.app-shell .tab[aria-selected="true"] {
+  background: var(--color-primary-tint);
+  box-shadow: inset 0 -3px 0 var(--color-primary);
+  color: var(--color-primary-strong);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.tab-panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+/* People tables with a selection column. */
+.data-table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+}
+
+.data-table :where(th, td) {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  text-align: start;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.data-table .select-column {
+  width: 3rem;
+}
+
+.data-table input[type="checkbox"],
+.check-row input[type="checkbox"] {
+  width: 1.25rem;
+  min-height: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+}
+
+/* "Seleccionar todos": hidden next to the checkbox on wide screens (the
+   column is just a checkbox) and shown on narrow ones, see the media query. */
+.select-all {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.select-all-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.data-table tr.is-selected {
+  background: var(--color-primary-soft);
+}
+
+/*
+ * Narrow screens: a people table becomes a list of cards. Every row is a card,
+ * every cell shows its column name from data-label, and only the "select all"
+ * header cell stays visible. The table keeps its markup (real table on wide
+ * screens); nothing scrolls horizontally.
+ */
+@media (max-width: 40rem) {
+  .data-table {
+    min-width: 0;
   }
+
+  .data-table,
+  .data-table thead,
+  .data-table tbody,
+  .data-table tr {
+    display: block;
+  }
+
+  .data-table thead th:not(.select-column) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .data-table thead th.select-column {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: auto;
+    border-bottom: 0;
+    padding-inline: 0;
+  }
+
+  .data-table .select-all-text {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    font-weight: 600;
+  }
+
+  .data-table tbody tr {
+    margin-block-end: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: var(--color-surface);
+  }
+
+  .data-table tbody tr.is-selected {
+    background: var(--color-primary-soft);
+  }
+
+  .data-table tbody td {
+    display: grid;
+    grid-template-columns: minmax(5.5rem, 35%) minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    border-bottom: 0;
+  }
+
+  .data-table tbody td[data-label]::before {
+    content: attr(data-label);
+    color: var(--color-text-muted);
+    font-weight: 600;
+  }
+
+  .data-table tbody td.select-column {
+    display: flex;
+    width: auto;
+    padding-block-end: 0.5rem;
+  }
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-list,
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkbox-list {
+  display: grid;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.chip-list li {
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.375rem;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  font-size: 0.9375rem;
+}
+
+/* Name / value pairs of the organization and group summaries. */
+.summary-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
 }

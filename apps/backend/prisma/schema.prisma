@@ -48,6 +48,9 @@ enum PlatformAdministrativeAuditEventType {
   ORGANIZATION_CREATED
   USER_PROVISIONED
   PASSWORD_CHANGED
+  GROUP_MEMBERSHIP_CREATED
+  GROUP_MEMBERSHIP_REMOVED
+  MEMBERSHIP_PERMISSIONS_CHANGED
 }
 
 model User {
@@ -86,31 +89,33 @@ model Organization {
 }
 
 model OrganizationMembership {
-  id               String            @id @default(uuid())
-  userId           String
-  organizationId   String
-  role             OrganizationRole
-  user             User              @relation(fields: [userId], references: [id])
-  organization     Organization      @relation(fields: [organizationId], references: [id])
-  groupMemberships GroupMembership[]
+  id                   String            @id @default(uuid())
+  userId               String
+  organizationId       String
+  role                 OrganizationRole
+  // Invoice permissions of this user across the whole organization.
+  readInvoices         Boolean           @default(false)
+  createInvoices       Boolean           @default(false)
+  deleteOwnInvoices    Boolean           @default(false)
+  deleteOthersInvoices Boolean           @default(false)
+  user                 User              @relation(fields: [userId], references: [id])
+  organization         Organization      @relation(fields: [organizationId], references: [id])
+  groupMemberships     GroupMembership[]
 
   @@unique([userId, organizationId])
+  @@index([organizationId, role])
 }
 
 model Group {
-  id                   String                     @id @default(uuid())
-  organizationId       String
-  name                 String
-  description          String?
-  readInvoices         Boolean                    @default(false)
-  createInvoices       Boolean                    @default(false)
-  deleteOwnInvoices    Boolean                    @default(false)
-  deleteOthersInvoices Boolean                    @default(false)
-  organization         Organization               @relation(fields: [organizationId], references: [id])
-  memberships          GroupMembership[]
-  invoices             Invoice[]
-  idempotencyRecords   InvoiceIdempotencyRecord[]
-  apiTokens            ApiToken[]
+  id                 String                     @id @default(uuid())
+  organizationId     String
+  name               String
+  description        String?
+  organization       Organization               @relation(fields: [organizationId], references: [id])
+  memberships        GroupMembership[]
+  invoices           Invoice[]
+  idempotencyRecords InvoiceIdempotencyRecord[]
+  apiTokens          ApiToken[]
 
   @@unique([id, organizationId])
   @@index([organizationId, name])
@@ -121,6 +126,11 @@ model GroupMembership {
   groupId                String
   userId                 String
   organizationId         String
+  // Invoice permissions of this user inside the group only.
+  readInvoices           Boolean                @default(false)
+  createInvoices         Boolean                @default(false)
+  deleteOwnInvoices      Boolean                @default(false)
+  deleteOthersInvoices   Boolean                @default(false)
   group                  Group                  @relation(fields: [groupId, organizationId], references: [id, organizationId])
   user                   User                   @relation(fields: [userId], references: [id])
   organizationMembership OrganizationMembership @relation(fields: [userId, organizationId], references: [userId, organizationId])
@@ -144,7 +154,9 @@ model Invoice {
   id                 String                     @id @default(uuid())
   businessId         String                     @db.VarChar(80)
   organizationId     String
-  groupId            String
+  groupId            String?
+  // COALESCE(groupId, 'organization'), enforced by a CHECK in the migration.
+  scopeKey           String
   supplierName       String                     @db.VarChar(200)
   amountPesos        Int
   currency           Currency
@@ -157,21 +169,23 @@ model Invoice {
   deletedAt          DateTime?
   deletedByUserId    String?
   organization       Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  group              Group                      @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  group              Group?                     @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
   createdByUser      User                       @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   deletedByUser      User?                      @relation("InvoiceDeletedBy", fields: [deletedByUserId], references: [id], onDelete: Restrict)
   idempotencyRecords InvoiceIdempotencyRecord[]
 
   @@unique([organizationId, businessId])
-  @@unique([id, organizationId, groupId])
-  @@index([organizationId, groupId, deletedAt, createdAt(sort: Desc), id(sort: Desc)])
+  @@unique([id, organizationId, scopeKey])
+  @@index([organizationId, scopeKey, deletedAt, createdAt(sort: Desc), id(sort: Desc)])
 }
 
 model InvoiceIdempotencyRecord {
   id                 String   @id @default(uuid())
   userId             String
   organizationId     String
-  groupId            String
+  groupId            String?
+  // COALESCE(groupId, 'organization'), enforced by a CHECK in the migration.
+  scopeKey           String
   operation          String
   key                String   @db.VarChar(128)
   fingerprint        String
@@ -180,10 +194,10 @@ model InvoiceIdempotencyRecord {
   responseSnapshot   Json
   createdAt          DateTime @default(now())
   user               User     @relation(fields: [userId], references: [id], onDelete: Restrict)
-  group              Group    @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  invoice            Invoice  @relation(fields: [invoiceId, organizationId, groupId], references: [id, organizationId, groupId], onDelete: Restrict)
+  group              Group?   @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  invoice            Invoice  @relation(fields: [invoiceId, organizationId, scopeKey], references: [id, organizationId, scopeKey], onDelete: Restrict)
 
-  @@unique([userId, organizationId, groupId, operation, key])
+  @@unique([userId, organizationId, scopeKey, operation, key])
   @@index([invoiceId])
 }
 
@@ -192,7 +206,7 @@ model ApiToken {
   userId         String
   name           String
   organizationId String
-  groupId        String
+  groupId        String?
   tokenHash      String          @unique
   scopes         ApiTokenScope[]
   createdAt      DateTime        @default(now())
@@ -200,7 +214,7 @@ model ApiToken {
   revokedAt      DateTime?
   lastUsedAt     DateTime?
   user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
-  group          Group           @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  group          Group?          @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@index([userId, organizationId, groupId])
 }
@@ -229,16 +243,26 @@ model PlatformAdministrator {
 }
 
 model PlatformAdministrativeAuditEvent {
-  id             String                               @id @default(uuid())
-  type           PlatformAdministrativeAuditEventType
-  actorUserId    String
-  targetUserId   String?
-  organizationId String?
-  previousRole   OrganizationRole?
-  role           OrganizationRole?
-  createdAt      DateTime                             @default(now())
-  actor          User                                 @relation("PlatformAdministrativeAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
-  target         User?                                @relation("PlatformAdministrativeAuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  id                   String                               @id @default(uuid())
+  type                 PlatformAdministrativeAuditEventType
+  actorUserId          String
+  targetUserId         String?
+  organizationId       String?
+  groupId              String?
+  previousRole         OrganizationRole?
+  role                 OrganizationRole?
+  // The new invoice flags of a membership event (created or permissions
+  // changed); null for events that carry no flags.
+  readInvoices         Boolean?
+  createInvoices       Boolean?
+  deleteOwnInvoices    Boolean?
+  deleteOthersInvoices Boolean?
+  // True when the actor changed their own membership (self-grant is allowed
+  // but always visible in the audit trail).
+  actorIsTarget        Boolean                              @default(false)
+  createdAt            DateTime                             @default(now())
+  actor                User                                 @relation("PlatformAdministrativeAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  target               User?                                @relation("PlatformAdministrativeAuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
 
   @@index([organizationId, createdAt, id])
   @@index([targetUserId, createdAt, id])

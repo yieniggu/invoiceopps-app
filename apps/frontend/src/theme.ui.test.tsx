@@ -222,22 +222,28 @@ describe("ThemeToggle", () => {
 describe("ThemeToggle placement", () => {
   const renderShell = () =>
     render(
-      <MemoryRouter initialEntries={["/panel"]}>
+      <MemoryRouter initialEntries={["/dashboard"]}>
         <AppShell onLogout={vi.fn()} isLoggingOut={false}>
           <h1 id="page-title">Panel principal</h1>
         </AppShell>
       </MemoryRouter>,
     );
 
-  it("sits in the sidebar above Mi perfil and Salir", () => {
+  it("sits in the top bar (top-right area), not in the sidebar", () => {
     renderShell();
     const group = screen.getByRole("group", { name: "Tema" });
-    const profile = screen.getByRole("link", { name: "Mi perfil" });
-    const logout = screen.getByRole("button", { name: "Salir" });
-    expect(group.closest("aside")).not.toBeNull();
-    const before = Node.DOCUMENT_POSITION_FOLLOWING;
-    expect(group.compareDocumentPosition(profile) & before).toBeTruthy();
-    expect(group.compareDocumentPosition(logout) & before).toBeTruthy();
+    expect(group.closest("header.topbar")).not.toBeNull();
+    expect(group.closest("aside")).toBeNull();
+    expect(
+      within(screen.getByRole("complementary")).queryByRole("group", {
+        name: "Tema",
+      }),
+    ).toBeNull();
+    // The top bar precedes the page content in document order.
+    const main = screen.getByRole("main");
+    expect(
+      group.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("stays usable while the sidebar is collapsed", () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -439,7 +440,12 @@ describe("APP-04 PostgreSQL organization groups", () => {
     const alpha = await groups.createGroup(admin.id, firstOrganization.id, {
       name: "Alpha group",
     });
-    expect(alpha.permissions).toEqual(NO_FLAGS);
+    expect(alpha).toEqual({
+      id: alpha.id,
+      organizationId: firstOrganization.id,
+      name: "Alpha group",
+      description: null,
+    });
     const membership = await groups.addMember(
       admin.id,
       firstOrganization.id,
@@ -451,6 +457,7 @@ describe("APP-04 PostgreSQL organization groups", () => {
       userId: student.id,
       groupId: alpha.id,
       organizationId: firstOrganization.id,
+      permissions: NO_FLAGS,
     });
     expect(
       (
@@ -479,10 +486,11 @@ describe("APP-04 PostgreSQL organization groups", () => {
       groups.createGroup(student.id, firstOrganization.id, { name: "Denied" }),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      groups.updatePermissions(
+      groups.updateMemberPermissions(
         outsider.id,
         firstOrganization.id,
         alpha.id,
+        student.id,
         NO_FLAGS,
       ),
     ).rejects.toMatchObject({ status: 404 });
@@ -579,31 +587,47 @@ describe("Organization group listing PostgreSQL integration", () => {
       data: { role: OrganizationRole.USER },
     });
     await expect(
-      groups.updatePermissions(admin.id, organization.id, first.id, NO_FLAGS),
+      groups.updateMemberPermissions(
+        admin.id,
+        organization.id,
+        first.id,
+        student.id,
+        NO_FLAGS,
+      ),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
       groups.listMemberships(admin.id, organization.id, first.id),
     ).rejects.toMatchObject({ status: 403 });
   });
 
-  it("gives the platform administrator no implicit access to groups", async () => {
-    const { organization, groups, first } = await listingFixture();
+  it("gives the platform administrator administrative access to groups without membership", async () => {
+    const { organization, student, groups, first, second } =
+      await listingFixture();
     const platformUser = await persistence.createUser({
       name: "Linus Torvalds",
       rut: "12.345.670-K",
     });
     await designatePlatformAdministrator(platformUser);
+
     await expect(
-      groups.listGroups(platformUser.id, organization.id),
-    ).rejects.toMatchObject({ status: 404 });
+      groups
+        .listGroups(platformUser.id, organization.id)
+        .then((all) => all.map((group) => group.id)),
+    ).resolves.toEqual([first.id, second.id].sort());
+    const updated = await groups.updateMemberPermissions(
+      platformUser.id,
+      organization.id,
+      first.id,
+      student.id,
+      { ...NO_FLAGS, readInvoices: true },
+    );
+    expect(updated.permissions).toEqual({ ...NO_FLAGS, readInvoices: true });
+    // Administration is not membership: no invoice permissions result from it.
     await expect(
-      groups.updatePermissions(
-        platformUser.id,
-        organization.id,
-        first.id,
-        NO_FLAGS,
-      ),
-    ).rejects.toMatchObject({ status: 404 });
+      prisma.organizationMembership.count({
+        where: { userId: platformUser.id },
+      }),
+    ).resolves.toBe(0);
   });
 });
 
@@ -639,6 +663,21 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       name: "Plain",
       rut: "12.345.671-8",
     });
+    const foreignAdmin = await persistence.createUser({
+      name: "Foreign",
+      rut: "12.345.672-6",
+    });
+    const foreignOrganization = await persistence.createOrganization({
+      name: "Foreign Academy",
+      slug: "foreign-academy",
+    });
+    await prisma.organizationMembership.create({
+      data: {
+        userId: foreignAdmin.id,
+        organizationId: foreignOrganization.id,
+        role: OrganizationRole.ADMIN,
+      },
+    });
     const organizations = createOrganizationService(prisma);
     const users = createUserService(prisma);
     await designatePlatformAdministrator(global);
@@ -665,9 +704,9 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     await expect(
       users.provisionUser(plain.id, organization.id, input),
     ).rejects.toMatchObject({ status: 403 });
-    // The platform administrator has no membership, hence no authority here.
+    // An administrator of another organization has no authority here.
     await expect(
-      users.provisionUser(global.id, organization.id, input),
+      users.provisionUser(foreignAdmin.id, organization.id, input),
     ).rejects.toMatchObject({ status: 404 });
     const provisioned = await users.provisionUser(
       organizationAdmin.id,
@@ -690,14 +729,15 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     });
     expect(provisioned.user.rut).toBe("12345670K");
     expect(stored.rut).toBe("12345670K");
-    expect(provisioned.temporaryPassword).toHaveLength(32);
+    const generated = provisioned.temporaryPassword as string;
+    expect(generated).toHaveLength(32);
     expect(stored.passwordHash).toMatch(/^scrypt\$/);
-    expect(stored.passwordHash).not.toContain(provisioned.temporaryPassword);
+    expect(stored.passwordHash).not.toContain(generated);
     expect(stored.mustChangePassword).toBe(true);
     expect(stored.temporaryPasswordExpiresAt).toBeInstanceOf(Date);
     expect(membership.role).toBe(OrganizationRole.USER);
     expect(audit.map(({ type }) => type)).toContain("USER_PROVISIONED");
-    expect(JSON.stringify(audit)).not.toContain(provisioned.temporaryPassword);
+    expect(JSON.stringify(audit)).not.toContain(generated);
   });
 
   it("clears the temporary requirement, revokes every session and issues a rotated one after password change", async () => {
@@ -716,21 +756,22 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       organization.id,
       { name: "Student", rut: "123456793", role: OrganizationRole.USER },
     );
+    const temporaryPassword = provisioned.temporaryPassword as string;
     const auth = createAuthService(prisma);
     const first = await auth.login({
       rut: "12.345.679-3",
-      password: provisioned.temporaryPassword,
+      password: temporaryPassword,
     });
     const second = await auth.login({
       rut: "12.345.679-3",
-      password: provisioned.temporaryPassword,
+      password: temporaryPassword,
     });
     expect((await auth.getProfile(first.sessionToken)).mustChangePassword).toBe(
       true,
     );
     // RP0-04: the change revokes every session and returns a rotated one.
     const rotated = await auth.changePassword!(first.sessionToken, {
-      currentPassword: provisioned.temporaryPassword,
+      currentPassword: temporaryPassword,
       newPassword: "changed-password-123",
     });
     if (!rotated) throw new Error("expected a rotated session");
@@ -754,7 +795,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     ).toBe(1);
   });
 
-  it("lists every organization only for the platform administrator and grants it no group access", async () => {
+  it("lists every organization only for the platform administrator and grants it administrative group access without membership", async () => {
     const platformUser = await persistence.createUser({
       name: "Ada Lovelace",
       rut: "12.345.678-5",
@@ -804,12 +845,22 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     await expect(
       organizations.listOrganizations(organizationAdministrator.id),
     ).resolves.toEqual([expected]);
+    // Administrative authority only: the platform administrator administers
+    // every existing organization without being a member of it.
     await expect(
       groups.listGroups(platformUser.id, organization.id),
-    ).rejects.toMatchObject({ status: 404 });
+    ).resolves.toEqual([expect.objectContaining({ id: group.id })]);
     await expect(
       groups.listMemberships(platformUser.id, organization.id, group.id),
+    ).resolves.toEqual([]);
+    await expect(
+      groups.listGroups(platformUser.id, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      prisma.organizationMembership.count({
+        where: { userId: platformUser.id },
+      }),
+    ).resolves.toBe(0);
   });
 
   it("enforces singleton bootstrap and records immutable audit events", async () => {
@@ -1074,7 +1125,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
     );
   });
 
-  it("rejects organization membership administration by non-ADMINs and by the platform administrator without membership", async () => {
+  it("rejects organization membership administration by non-ADMINs and lets the platform administrator administer without membership", async () => {
     const platformUser = await persistence.createUser({
       name: "Ada Lovelace",
       rut: "12.345.678-5",
@@ -1103,7 +1154,6 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
 
     for (const [actor, status] of [
       [unauthorizedUser, 404],
-      [platformUser, 404],
       [member, 403],
     ] as const) {
       await expect(
@@ -1125,6 +1175,26 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       ).rejects.toMatchObject({ status });
     }
     expect(await prisma.organizationMembership.count()).toBe(1);
+
+    // The platform administrator administers every existing organization.
+    await expect(
+      organizations.createMembership(platformUser.id, organization.id, {
+        rut: unauthorizedUser.rut,
+        role: OrganizationRole.USER,
+      }),
+    ).resolves.toMatchObject({ userId: unauthorizedUser.id, role: "USER" });
+    await expect(
+      organizations.createMembership(platformUser.id, randomUUID(), {
+        rut: member.rut,
+        role: OrganizationRole.USER,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    // Still no membership of its own, hence no invoice permissions.
+    await expect(
+      prisma.organizationMembership.count({
+        where: { userId: platformUser.id },
+      }),
+    ).resolves.toBe(0);
   });
 
   it("retains an organization ADMIN during parallel demotion and removal attempts", async () => {
@@ -1209,6 +1279,7 @@ function invoiceFixture(
     businessId,
     organizationId,
     groupId,
+    scopeKey: groupId,
     supplierName: "Proveedor local",
     amountPesos: 12500,
     currency: "CLP" as const,

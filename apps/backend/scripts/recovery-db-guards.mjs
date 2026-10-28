@@ -79,15 +79,34 @@ export function sanitizeTarget(value) {
   return `${host}/${name}`;
 }
 
+/**
+ * The port of the project's local database server (LOCAL_APP_DB_PORT), when
+ * the environment configures one. Unset or blank means "no expectation": other
+ * setups (a CI service container, a socket) legitimately use another port.
+ */
+export function expectedDatabasePort(env) {
+  const raw = env?.LOCAL_APP_DB_PORT?.trim();
+  return raw ? raw : undefined;
+}
+
 export function assertRecoveryTarget(
   value,
-  { confirmReset, allowedNames = recoveryDatabaseNames } = {},
+  { confirmReset, allowedNames = recoveryDatabaseNames, expectedPort } = {},
 ) {
   const url = parseUrl(value);
   if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
     throw reject("protocol must be postgres or postgresql");
   }
   resolveHost(url);
+  // When LOCAL_APP_DB_PORT says where this project's database lives, a URL for
+  // any other port is some other server that happens to be on loopback.
+  if (
+    expectedPort !== undefined &&
+    url.hostname !== "" &&
+    (url.port || "5432") !== String(expectedPort)
+  ) {
+    throw reject(`database port must be ${expectedPort} (LOCAL_APP_DB_PORT)`);
+  }
   const databaseName = safeDecode(url.pathname.replace(/^\//, ""), null);
   if (databaseName === null) {
     throw reject("database name is not valid");

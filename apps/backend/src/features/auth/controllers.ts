@@ -37,18 +37,12 @@ export function toAuthProfileDto(profile: AuthProfile): AuthProfileDto {
         slug: membership.organization.slug,
       },
       role: membership.role,
-    })),
-    contexts: (profile.contexts ?? []).map((context) => ({
-      organizationId: context.organizationId,
-      organizationName: context.organizationName,
-      groupId: context.groupId,
-      groupName: context.groupName,
-      capabilities: {
-        readInvoices: context.capabilities.readInvoices,
-        createInvoices: context.capabilities.createInvoices,
-        deleteOwnInvoices: context.capabilities.deleteOwnInvoices,
-        deleteOthersInvoices: context.capabilities.deleteOthersInvoices,
-      },
+      permissions: { ...membership.permissions },
+      groups: membership.groups.map((group) => ({
+        group: { id: group.group.id, name: group.group.name },
+        permissions: { ...group.permissions },
+        effective: { ...group.effective },
+      })),
     })),
   };
 }

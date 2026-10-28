@@ -1,61 +1,67 @@
-import {
-  OrganizationRole,
-  Prisma,
-  type PrismaClient,
-} from "../../generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../../generated/prisma/client.js";
 import { ApiError } from "../../http/errors.js";
-import { formatRut } from "../../rut.js";
-import { isUniqueViolation, runSerializable } from "../../transactions.js";
 import {
+  isUniqueViolation,
+  runSerializable,
+  SERIALIZABLE,
+} from "../../transactions.js";
+import {
+  organizationGroupVisibility,
   requireOrganizationAdmin,
-  requireOrganizationMember,
 } from "../orgs/authority.js";
-import { lockGroup } from "./locks.js";
+import {
+  NO_INVOICE_PERMISSIONS,
+  PERMISSION_SELECT,
+  permissionsOf,
+  type InvoicePermissions,
+} from "./invoice-permissions.js";
+import {
+  auditGroupMembershipsCreated,
+  auditGroupMembershipsRemoved,
+  auditPermissionsChanged,
+} from "./membership-audit.js";
+import {
+  lockGroupMembershipForUpdate,
+  lockGroupMembershipsForUpdate,
+  lockOrganizationMembershipForShare,
+  lockOrganizationMembershipsForShare,
+} from "./locks.js";
 import type {
   GroupCreateRequest,
   GroupDto,
   GroupMembershipDto,
   GroupMembershipWithUserDto,
-  GroupPermissions,
-  GroupWithMembersResponse,
+  GroupCatalogEntry,
 } from "./types.js";
-
-const SERIALIZABLE = {
-  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-} as const;
 
 const GROUP_SELECT = {
   id: true,
   organizationId: true,
   name: true,
   description: true,
-  readInvoices: true,
-  createInvoices: true,
-  deleteOwnInvoices: true,
-  deleteOthersInvoices: true,
 } satisfies Prisma.GroupSelect;
 
-function toGroupDto(group: {
-  id: string;
+const GROUP_MEMBERSHIP_SELECT = {
+  userId: true,
+  groupId: true,
+  organizationId: true,
+  ...PERMISSION_SELECT,
+} satisfies Prisma.GroupMembershipSelect;
+
+function toGroupMembershipDto(row: {
+  userId: string;
+  groupId: string;
   organizationId: string;
-  name: string;
-  description: string | null;
   readInvoices: boolean;
   createInvoices: boolean;
   deleteOwnInvoices: boolean;
   deleteOthersInvoices: boolean;
-}): GroupDto {
+}): GroupMembershipDto {
   return {
-    id: group.id,
-    organizationId: group.organizationId,
-    name: group.name,
-    description: group.description,
-    permissions: {
-      readInvoices: group.readInvoices,
-      createInvoices: group.createInvoices,
-      deleteOwnInvoices: group.deleteOwnInvoices,
-      deleteOthersInvoices: group.deleteOthersInvoices,
-    },
+    userId: row.userId,
+    groupId: row.groupId,
+    organizationId: row.organizationId,
+    permissions: permissionsOf(row),
   };
 }
 
@@ -70,12 +76,13 @@ export interface GroupService {
     organizationId: string,
     input: GroupCreateRequest,
   ): Promise<GroupDto>;
-  updatePermissions(
+  updateMemberPermissions(
     actorUserId: string,
     organizationId: string,
     groupId: string,
-    permissions: GroupPermissions,
-  ): Promise<GroupDto>;
+    userId: string,
+    permissions: InvoicePermissions,
+  ): Promise<GroupMembershipDto>;
   listMemberships(
     actorUserId: string,
     organizationId: string,
@@ -86,7 +93,21 @@ export interface GroupService {
     organizationId: string,
     groupId: string,
     userId: string,
+    permissions?: InvoicePermissions,
   ): Promise<GroupMembershipDto>;
+  addMembers(
+    actorUserId: string,
+    organizationId: string,
+    groupId: string,
+    members: Array<{ userId: string; permissions?: InvoicePermissions }>,
+  ): Promise<GroupMembershipDto[]>;
+  updateMembersPermissions(
+    actorUserId: string,
+    organizationId: string,
+    groupId: string,
+    userIds: string[],
+    permissions: InvoicePermissions,
+  ): Promise<GroupMembershipDto[]>;
   removeMember(
     actorUserId: string,
     organizationId: string,
@@ -110,28 +131,27 @@ export function createGroupService(prisma: PrismaClient): GroupService {
 
   return {
     async listGroups(actorUserId, organizationId) {
-      const { role } = await requireOrganizationMember(
+      const visibility = await organizationGroupVisibility(
         prisma,
         actorUserId,
         organizationId,
       );
-      const groups = await prisma.group.findMany({
+      return prisma.group.findMany({
         where: {
           organizationId,
-          ...(role === OrganizationRole.ADMIN
+          ...(visibility === "all"
             ? {}
             : { memberships: { some: { userId: actorUserId } } }),
         },
         orderBy: [{ name: "asc" }, { id: "asc" }],
         select: GROUP_SELECT,
       });
-      return groups.map(toGroupDto);
     },
 
     async createGroup(actorUserId, organizationId, input) {
       await requireOrganizationAdmin(prisma, actorUserId, organizationId);
       // The creator is not added: membership is a separate, explicit action.
-      const group = await prisma.group.create({
+      return prisma.group.create({
         data: {
           organizationId,
           name: input.name,
@@ -139,10 +159,15 @@ export function createGroupService(prisma: PrismaClient): GroupService {
         },
         select: GROUP_SELECT,
       });
-      return toGroupDto(group);
     },
 
-    async updatePermissions(actorUserId, organizationId, groupId, permissions) {
+    async updateMemberPermissions(
+      actorUserId,
+      organizationId,
+      groupId,
+      userId,
+      permissions,
+    ) {
       return runSerializable(() =>
         prisma.$transaction(async (transaction) => {
           await requireOrganizationAdmin(
@@ -150,14 +175,24 @@ export function createGroupService(prisma: PrismaClient): GroupService {
             actorUserId,
             organizationId,
           );
-          await lockGroup(transaction, groupId);
           await requireGroup(transaction, organizationId, groupId);
-          const group = await transaction.group.update({
-            where: { id: groupId },
-            data: permissions,
-            select: GROUP_SELECT,
+          const locked = await lockGroupMembershipForUpdate(transaction, {
+            userId,
+            organizationId,
+            groupId,
           });
-          return toGroupDto(group);
+          if (!locked) throw notFound();
+          const updated = await transaction.groupMembership.update({
+            where: { groupId_userId: { groupId, userId } },
+            data: permissions,
+            select: GROUP_MEMBERSHIP_SELECT,
+          });
+          await auditPermissionsChanged(
+            transaction,
+            { actorUserId, organizationId, groupId },
+            [{ userId, permissions }],
+          );
+          return toGroupMembershipDto(updated);
         }, SERIALIZABLE),
       );
     },
@@ -165,7 +200,7 @@ export function createGroupService(prisma: PrismaClient): GroupService {
     async listMemberships(actorUserId, organizationId, groupId) {
       await requireOrganizationAdmin(prisma, actorUserId, organizationId);
       await requireGroup(prisma, organizationId, groupId);
-      return prisma.groupMembership.findMany({
+      const memberships = await prisma.groupMembership.findMany({
         where: { groupId, organizationId },
         orderBy: [
           { user: { name: "asc" } },
@@ -173,15 +208,17 @@ export function createGroupService(prisma: PrismaClient): GroupService {
           { userId: "asc" },
         ],
         select: {
-          userId: true,
-          groupId: true,
-          organizationId: true,
+          ...GROUP_MEMBERSHIP_SELECT,
           user: { select: { id: true, name: true, rut: true } },
         },
       });
+      return memberships.map(({ user, ...membership }) => ({
+        ...toGroupMembershipDto(membership),
+        user,
+      }));
     },
 
-    async addMember(actorUserId, organizationId, groupId, userId) {
+    async addMember(actorUserId, organizationId, groupId, userId, permissions) {
       return runSerializable(() =>
         prisma.$transaction(async (transaction) => {
           await requireOrganizationAdmin(
@@ -189,12 +226,13 @@ export function createGroupService(prisma: PrismaClient): GroupService {
             actorUserId,
             organizationId,
           );
-          await lockGroup(transaction, groupId);
           await requireGroup(transaction, organizationId, groupId);
+          // FOR SHARE on the organization membership: a concurrent removal of
+          // that membership waits for this transaction (or this one for it).
           const organizationMembership =
-            await transaction.organizationMembership.findUnique({
-              where: { userId_organizationId: { userId, organizationId } },
-              select: { userId: true },
+            await lockOrganizationMembershipForShare(transaction, {
+              userId,
+              organizationId,
             });
           if (!organizationMembership) {
             throw new ApiError(
@@ -204,10 +242,21 @@ export function createGroupService(prisma: PrismaClient): GroupService {
             );
           }
           try {
-            return await transaction.groupMembership.create({
-              data: { groupId, userId, organizationId },
-              select: { userId: true, groupId: true, organizationId: true },
+            const created = await transaction.groupMembership.create({
+              data: {
+                groupId,
+                userId,
+                organizationId,
+                ...(permissions ?? NO_INVOICE_PERMISSIONS),
+              },
+              select: GROUP_MEMBERSHIP_SELECT,
             });
+            await auditGroupMembershipsCreated(
+              transaction,
+              { actorUserId, organizationId, groupId },
+              [{ userId, permissions: permissionsOf(created) }],
+            );
+            return toGroupMembershipDto(created);
           } catch (error) {
             if (isUniqueViolation(error)) {
               throw new ApiError(
@@ -222,6 +271,108 @@ export function createGroupService(prisma: PrismaClient): GroupService {
       );
     },
 
+    async addMembers(actorUserId, organizationId, groupId, members) {
+      const userIds = members.map((member) => member.userId);
+      return runSerializable(() =>
+        prisma.$transaction(async (transaction) => {
+          await requireOrganizationAdmin(
+            transaction,
+            actorUserId,
+            organizationId,
+          );
+          await requireGroup(transaction, organizationId, groupId);
+          // All organization memberships FOR SHARE in id order; one missing
+          // user aborts the whole batch before any write.
+          const locked = await lockOrganizationMembershipsForShare(
+            transaction,
+            { organizationId, userIds },
+          );
+          if (locked.length !== userIds.length) {
+            throw new ApiError(
+              409,
+              "ORGANIZATION_MEMBERSHIP_REQUIRED",
+              "Every user must belong to the organization first",
+            );
+          }
+          try {
+            await transaction.groupMembership.createMany({
+              data: members.map((member) => ({
+                groupId,
+                userId: member.userId,
+                organizationId,
+                ...(member.permissions ?? NO_INVOICE_PERMISSIONS),
+              })),
+            });
+          } catch (error) {
+            if (isUniqueViolation(error)) {
+              throw new ApiError(
+                409,
+                "MEMBERSHIP_CONFLICT",
+                "A user already belongs to the group",
+              );
+            }
+            throw error;
+          }
+          const rows = await transaction.groupMembership.findMany({
+            where: { groupId, userId: { in: userIds } },
+            select: GROUP_MEMBERSHIP_SELECT,
+          });
+          const byUser = new Map(rows.map((row) => [row.userId, row]));
+          await auditGroupMembershipsCreated(
+            transaction,
+            { actorUserId, organizationId, groupId },
+            userIds.map((id) => ({
+              userId: id,
+              permissions: permissionsOf(byUser.get(id)!),
+            })),
+          );
+          return userIds.map((id) => toGroupMembershipDto(byUser.get(id)!));
+        }, SERIALIZABLE),
+      );
+    },
+
+    async updateMembersPermissions(
+      actorUserId,
+      organizationId,
+      groupId,
+      userIds,
+      permissions,
+    ) {
+      return runSerializable(() =>
+        prisma.$transaction(async (transaction) => {
+          await requireOrganizationAdmin(
+            transaction,
+            actorUserId,
+            organizationId,
+          );
+          await requireGroup(transaction, organizationId, groupId);
+          // Organization memberships FOR SHARE, then the group memberships
+          // FOR UPDATE, each in id order (same order as the single PUT).
+          const locked = await lockGroupMembershipsForUpdate(transaction, {
+            organizationId,
+            groupId,
+            userIds,
+          });
+          if (locked.length !== userIds.length) throw notFound();
+          await transaction.groupMembership.updateMany({
+            where: { groupId, userId: { in: userIds } },
+            data: permissions,
+          });
+          await auditPermissionsChanged(
+            transaction,
+            { actorUserId, organizationId, groupId },
+            userIds.map((id) => ({ userId: id, permissions })),
+          );
+          const rows = await transaction.groupMembership.findMany({
+            where: { groupId, userId: { in: userIds } },
+            select: GROUP_MEMBERSHIP_SELECT,
+          });
+          const byUser = new Map(rows.map((row) => [row.userId, row]));
+          return userIds.map((id) => toGroupMembershipDto(byUser.get(id)!));
+        }, SERIALIZABLE),
+      );
+    },
+
     async removeMember(actorUserId, organizationId, groupId, userId) {
       await runSerializable(() =>
         prisma.$transaction(async (transaction) => {
@@ -230,12 +381,22 @@ export function createGroupService(prisma: PrismaClient): GroupService {
             actorUserId,
             organizationId,
           );
-          await lockGroup(transaction, groupId);
           await requireGroup(transaction, organizationId, groupId);
+          const locked = await lockGroupMembershipForUpdate(transaction, {
+            userId,
+            organizationId,
+            groupId,
+          });
+          if (!locked) throw notFound();
           const result = await transaction.groupMembership.deleteMany({
             where: { groupId, userId },
           });
           if (result.count !== 1) throw notFound();
+          await auditGroupMembershipsRemoved(
+            transaction,
+            { actorUserId, organizationId },
+            [{ userId, groupId }],
+          );
         }, SERIALIZABLE),
       );
     },
@@ -244,7 +405,7 @@ export function createGroupService(prisma: PrismaClient): GroupService {
 
 /** Read-only listing behind the undocumented GET /api/v1/groups. */
 export interface GroupCatalogService {
-  listGroups(userId: string): Promise<GroupWithMembersResponse[]>;
+  listGroups(userId: string): Promise<GroupCatalogEntry[]>;
 }
 
 export function createGroupCatalogService(
@@ -259,17 +420,7 @@ export function createGroupCatalogService(
           { name: "asc" },
           { id: "asc" },
         ],
-        include: {
-          organization: { select: { id: true, name: true } },
-          memberships: {
-            orderBy: [
-              { user: { name: "asc" } },
-              { user: { rut: "asc" } },
-              { userId: "asc" },
-            ],
-            select: { user: { select: { id: true, name: true, rut: true } } },
-          },
-        },
+        include: { organization: { select: { id: true, name: true } } },
       });
 
       return groups.map((group) => ({
@@ -277,10 +428,6 @@ export function createGroupCatalogService(
         name: group.name,
         description: group.description,
         organization: group.organization,
-        members: group.memberships.map(({ user }) => ({
-          ...user,
-          rut: formatRut(user.rut),
-        })),
       }));
     },
   };

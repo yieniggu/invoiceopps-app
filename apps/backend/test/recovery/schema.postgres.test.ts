@@ -3,16 +3,9 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDatabase } from "../../src/database.js";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
-if (new URL(url).pathname !== "/invoiceops_recovery_test") {
-  throw new Error(
-    "RECOVERY_TEST_DATABASE_URL must target invoiceops_recovery_test",
-  );
-}
+const url = recoveryTestDatabaseUrl();
 
 const client = new pg.Client({ connectionString: url });
 const database = createDatabase(url);
@@ -43,20 +36,11 @@ async function createOrganization(label: string) {
   return id;
 }
 
-async function createGroup(
-  organizationId: string,
-  flags: Partial<Record<string, boolean>> = {},
-) {
+async function createGroup(organizationId: string) {
   const id = randomUUID();
-  const columns = ['"id"', '"organizationId"', '"name"'];
-  const values: unknown[] = [id, organizationId, `group-${id}`];
-  for (const [flag, value] of Object.entries(flags)) {
-    columns.push(`"${flag}"`);
-    values.push(value);
-  }
   await client.query(
-    `INSERT INTO "Group" (${columns.join(",")}) VALUES (${values.map((_, i) => `$${i + 1}`).join(",")})`,
-    values,
+    'INSERT INTO "Group" ("id","organizationId","name") VALUES ($1,$2,$3)',
+    [id, organizationId, `group-${id}`],
   );
   return id;
 }
@@ -92,8 +76,8 @@ async function insertInvoice(
     ...overrides,
   };
   await client.query(
-    `INSERT INTO "Invoice" ("id","businessId","organizationId","groupId","supplierName","amountPesos","currency","issuedOn","dueOn","businessStatus","createdByUserId","deletedAt","deletedByUserId")
-     VALUES ($1,$2,$3,$4,$5,$6,'CLP',$7,$8,'PENDING',$9,$10,$11)`,
+    `INSERT INTO "Invoice" ("id","businessId","organizationId","groupId","scopeKey","supplierName","amountPesos","currency","issuedOn","dueOn","businessStatus","createdByUserId","deletedAt","deletedByUserId")
+     VALUES ($1,$2,$3,$4,$4,$5,$6,'CLP',$7,$8,'PENDING',$9,$10,$11)`,
     [
       row.id,
       row.businessId,
@@ -166,35 +150,34 @@ describe("consolidated schema on real PostgreSQL", () => {
     expect(result.rows).toEqual([]);
   });
 
-  it("stores the four group flags defaulting to false and no member permission columns", async () => {
+  it("keeps only identity columns on Group and on GroupMembership besides the four member flags", async () => {
     const group = await client.query(
-      'SELECT "readInvoices","createInvoices","deleteOwnInvoices","deleteOthersInvoices" FROM "Group" WHERE id = $1',
-      [groupId],
+      `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='Group' ORDER BY column_name`,
     );
-    expect(group.rows[0]).toEqual({
-      readInvoices: false,
-      createInvoices: false,
-      deleteOwnInvoices: false,
-      deleteOthersInvoices: false,
-    });
+    expect(group.rows.map((row) => row.column_name)).toEqual([
+      "description",
+      "id",
+      "name",
+      "organizationId",
+    ]);
     const columns = await client.query(
       `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='GroupMembership' ORDER BY column_name`,
     );
     expect(columns.rows.map((row) => row.column_name)).toEqual([
+      "createInvoices",
+      "deleteOthersInvoices",
+      "deleteOwnInvoices",
       "groupId",
       "id",
       "organizationId",
+      "readInvoices",
       "userId",
     ]);
   });
 
-  it("members of one group share its configuration and another group keeps its own", async () => {
-    const org = await createOrganization("org-shared");
-    const shared = await createGroup(org, {
-      readInvoices: true,
-      createInvoices: true,
-    });
-    const other = await createGroup(org, { deleteOthersInvoices: true });
+  it("stores independent flags per member of one group, defaulting to false", async () => {
+    const org = await createOrganization("org-members");
+    const group = await createGroup(org);
     const memberA = await createUser("member-a");
     const memberB = await createUser("member-b");
     for (const member of [memberA, memberB]) {
@@ -202,32 +185,34 @@ describe("consolidated schema on real PostgreSQL", () => {
         'INSERT INTO "OrganizationMembership" ("id","userId","organizationId","role") VALUES ($1,$2,$3,\'USER\')',
         [randomUUID(), member, org],
       );
-      await client.query(
-        'INSERT INTO "GroupMembership" ("id","groupId","userId","organizationId") VALUES ($1,$2,$3,$4)',
-        [randomUUID(), shared, member, org],
-      );
     }
+    await client.query(
+      'INSERT INTO "GroupMembership" ("id","groupId","userId","organizationId","readInvoices","deleteOthersInvoices") VALUES ($1,$2,$3,$4,true,true)',
+      [randomUUID(), group, memberA, org],
+    );
+    await client.query(
+      'INSERT INTO "GroupMembership" ("id","groupId","userId","organizationId") VALUES ($1,$2,$3,$4)',
+      [randomUUID(), group, memberB, org],
+    );
     const result = await client.query(
-      `SELECT gm."userId", g."readInvoices", g."createInvoices", g."deleteOwnInvoices", g."deleteOthersInvoices"
-       FROM "GroupMembership" gm JOIN "Group" g ON g.id = gm."groupId" WHERE gm."groupId" = $1 ORDER BY gm."userId"`,
-      [shared],
+      `SELECT "userId","readInvoices","createInvoices","deleteOwnInvoices","deleteOthersInvoices"
+       FROM "GroupMembership" WHERE "groupId" = $1`,
+      [group],
     );
-    expect(result.rows).toHaveLength(2);
-    for (const row of result.rows) {
-      expect(row).toMatchObject({
-        readInvoices: true,
-        createInvoices: true,
-        deleteOwnInvoices: false,
-        deleteOthersInvoices: false,
-      });
-    }
-    const otherFlags = await client.query(
-      'SELECT "readInvoices","deleteOthersInvoices" FROM "Group" WHERE id = $1',
-      [other],
+    const byUser = Object.fromEntries(
+      result.rows.map((row) => [row.userId, row]),
     );
-    expect(otherFlags.rows[0]).toEqual({
-      readInvoices: false,
+    expect(byUser[memberA]).toMatchObject({
+      readInvoices: true,
+      createInvoices: false,
+      deleteOwnInvoices: false,
       deleteOthersInvoices: true,
+    });
+    expect(byUser[memberB]).toMatchObject({
+      readInvoices: false,
+      createInvoices: false,
+      deleteOwnInvoices: false,
+      deleteOthersInvoices: false,
     });
   });
 
@@ -408,8 +393,8 @@ describe("consolidated schema on real PostgreSQL", () => {
     const invoice = await insertInvoice(organizationId, groupId, userId);
     const insert = (key: string, operation = "POST:/api/v1/invoices") =>
       client.query(
-        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
-         VALUES ($1,$2,$3,$4,$5,$6,'fp',1,$7,'{"ok":true}'::jsonb)`,
+        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","scopeKey","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
+         VALUES ($1,$2,$3,$4,$4,$5,$6,'fp',1,$7,'{"ok":true}'::jsonb)`,
         [
           randomUUID(),
           userId,
@@ -426,8 +411,8 @@ describe("consolidated schema on real PostgreSQL", () => {
     await insert(key, "OTHER");
     await expectCode(
       client.query(
-        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
-         VALUES ($1,$2,$3,$4,'op','k','fp',1,$5,'{}'::jsonb)`,
+        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","scopeKey","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
+         VALUES ($1,$2,$3,$4,$4,'op','k','fp',1,$5,'{}'::jsonb)`,
         [randomUUID(), userId, otherOrganizationId, groupId, invoice.id],
       ),
       FK_VIOLATION,
@@ -439,8 +424,8 @@ describe("consolidated schema on real PostgreSQL", () => {
     const invoice = await insertInvoice(organizationId, groupId, userId);
     await expectCode(
       client.query(
-        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
-         VALUES ($1,$2,$3,$4,'op',$5,'fp',1,$6,'{}'::jsonb)`,
+        `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","scopeKey","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
+         VALUES ($1,$2,$3,$4,$4,'op',$5,'fp',1,$6,'{}'::jsonb)`,
         [
           randomUUID(),
           userId,
@@ -524,5 +509,375 @@ describe("consolidated schema on real PostgreSQL", () => {
       "invoices:delete-own",
       "invoices:delete-others",
     ]);
+  });
+});
+
+// RP0-22: membership-level permissions and optional group scope.
+const PERMISSION_COLUMNS = [
+  "readInvoices",
+  "createInvoices",
+  "deleteOwnInvoices",
+  "deleteOthersInvoices",
+];
+
+async function columnInfo(table: string, column: string) {
+  const result = await client.query(
+    `SELECT is_nullable, data_type, column_default FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2`,
+    [table, column],
+  );
+  return result.rows[0] as
+    | { is_nullable: string; data_type: string; column_default: string | null }
+    | undefined;
+}
+
+async function insertScopedInvoice(
+  scopedOrganizationId: string,
+  scopedGroupId: string | null,
+  createdByUserId: string,
+  overrides: { businessId?: string; scopeKey?: string } = {},
+) {
+  const id = randomUUID();
+  const businessId = overrides.businessId ?? `FAC-${randomUUID()}`;
+  const scopeKey = overrides.scopeKey ?? scopedGroupId ?? "organization";
+  await client.query(
+    `INSERT INTO "Invoice" ("id","businessId","organizationId","groupId","scopeKey","supplierName","amountPesos","currency","issuedOn","dueOn","businessStatus","createdByUserId")
+     VALUES ($1,$2,$3,$4,$5,'Proveedor local',12500,'CLP','2026-10-25','2026-11-25','PENDING',$6)`,
+    [
+      id,
+      businessId,
+      scopedOrganizationId,
+      scopedGroupId,
+      scopeKey,
+      createdByUserId,
+    ],
+  );
+  return { id, businessId, scopeKey };
+}
+
+async function insertScopedRecord(input: {
+  userId: string;
+  organizationId: string;
+  groupId: string | null;
+  scopeKey?: string;
+  operation?: string;
+  key: string;
+  invoiceId: string;
+}) {
+  await client.query(
+    `INSERT INTO "InvoiceIdempotencyRecord" ("id","userId","organizationId","groupId","scopeKey","operation","key","fingerprint","fingerprintVersion","invoiceId","responseSnapshot")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'fp',1,$8,'{"ok":true}'::jsonb)`,
+    [
+      randomUUID(),
+      input.userId,
+      input.organizationId,
+      input.groupId,
+      input.scopeKey ?? input.groupId ?? "organization",
+      input.operation ?? "POST:/api/v1/invoices",
+      input.key,
+      input.invoiceId,
+    ],
+  );
+}
+
+async function uniqueIndexColumns(table: string) {
+  const result = await client.query(
+    `SELECT i.indexrelid::regclass::text AS name,
+            array_agg(a.attname::text ORDER BY k.ord) AS columns
+       FROM pg_index i
+       JOIN pg_class c ON c.oid = i.indrelid
+       CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+      WHERE c.relname = $1 AND i.indisunique
+      GROUP BY i.indexrelid`,
+    [table],
+  );
+  return result.rows.map((row) => row.columns as string[]);
+}
+
+describe("RP0-22 schema: membership permissions", () => {
+  it("removes the four flags from Group", async () => {
+    for (const column of PERMISSION_COLUMNS) {
+      expect(await columnInfo("Group", column)).toBeUndefined();
+    }
+  });
+
+  it.each(["OrganizationMembership", "GroupMembership"])(
+    "stores four NOT NULL boolean flags defaulting to false on %s",
+    async (table) => {
+      for (const column of PERMISSION_COLUMNS) {
+        const info = await columnInfo(table, column);
+        expect(info, `${table}.${column} must exist`).toBeDefined();
+        expect(info).toMatchObject({
+          is_nullable: "NO",
+          data_type: "boolean",
+          column_default: "false",
+        });
+      }
+    },
+  );
+});
+
+describe("B3b-FIX schema: audit payload and admin lookup index", () => {
+  it("stores nullable flag columns and a NOT NULL actorIsTarget on the audit table", async () => {
+    for (const column of PERMISSION_COLUMNS) {
+      expect(
+        await columnInfo("PlatformAdministrativeAuditEvent", column),
+      ).toMatchObject({ is_nullable: "YES", data_type: "boolean" });
+    }
+    expect(
+      await columnInfo("PlatformAdministrativeAuditEvent", "actorIsTarget"),
+    ).toMatchObject({
+      is_nullable: "NO",
+      data_type: "boolean",
+      column_default: "false",
+    });
+  });
+
+  it("indexes OrganizationMembership by (organizationId, role) for the last-admin count", async () => {
+    const result = await client.query(
+      `SELECT indexdef FROM pg_indexes
+       WHERE tablename = 'OrganizationMembership'
+         AND indexname = 'OrganizationMembership_organizationId_role_idx'`,
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.indexdef).toContain('("organizationId", role)');
+  });
+
+  it("accepts the new audit event types", async () => {
+    const result = await client.query(
+      `SELECT unnest(enum_range(NULL::"PlatformAdministrativeAuditEventType"))::text AS value`,
+    );
+    const values = result.rows.map((row) => row.value);
+    expect(values).toEqual(
+      expect.arrayContaining([
+        "MEMBERSHIP_PERMISSIONS_CHANGED",
+        "GROUP_MEMBERSHIP_CREATED",
+        "GROUP_MEMBERSHIP_REMOVED",
+      ]),
+    );
+  });
+});
+
+describe("RP0-22 schema: optional group scope on Invoice", () => {
+  it("makes groupId nullable and adds a NOT NULL text scopeKey", async () => {
+    expect(await columnInfo("Invoice", "groupId")).toMatchObject({
+      is_nullable: "YES",
+    });
+    expect(await columnInfo("Invoice", "scopeKey")).toMatchObject({
+      is_nullable: "NO",
+      data_type: "text",
+    });
+  });
+
+  it("allows an organization-scope invoice with NULL groupId", async () => {
+    const org = await createOrganization("org-scope");
+    const row = await insertScopedInvoice(org, null, userId);
+    const stored = await client.query(
+      'SELECT "groupId","scopeKey" FROM "Invoice" WHERE id = $1',
+      [row.id],
+    );
+    expect(stored.rows[0]).toEqual({ groupId: null, scopeKey: "organization" });
+  });
+
+  it("stores the group id as scopeKey for a group invoice", async () => {
+    const row = await insertScopedInvoice(organizationId, groupId, userId);
+    const stored = await client.query(
+      'SELECT "scopeKey" FROM "Invoice" WHERE id = $1',
+      [row.id],
+    );
+    expect(stored.rows[0].scopeKey).toBe(groupId);
+  });
+
+  it("rejects a scopeKey that differs from COALESCE(groupId, 'organization')", async () => {
+    await expectCode(
+      insertScopedInvoice(organizationId, groupId, userId, {
+        scopeKey: "organization",
+      }),
+      CHECK_VIOLATION,
+    );
+    await expectCode(
+      insertScopedInvoice(organizationId, null, userId, {
+        scopeKey: groupId,
+      }),
+      CHECK_VIOLATION,
+    );
+  });
+
+  it("still rejects a group from another organization (composite FK)", async () => {
+    await expectCode(
+      insertScopedInvoice(otherOrganizationId, groupId, userId),
+      FK_VIOLATION,
+    );
+  });
+
+  it("keeps businessId unique across organization scope and group scope", async () => {
+    const org = await createOrganization("org-unique");
+    const group = await createGroup(org);
+    const businessId = `ACROSS-${randomUUID()}`;
+    await insertScopedInvoice(org, null, userId, { businessId });
+    await expectCode(
+      insertScopedInvoice(org, group, userId, { businessId }),
+      UNIQUE_VIOLATION,
+    );
+    await expectCode(
+      insertScopedInvoice(org, null, userId, { businessId }),
+      UNIQUE_VIOLATION,
+    );
+    const other = `ACROSS-${randomUUID()}`;
+    await insertScopedInvoice(org, group, userId, { businessId: other });
+    await expectCode(
+      insertScopedInvoice(org, null, userId, { businessId: other }),
+      UNIQUE_VIOLATION,
+    );
+  });
+
+  it("has a unique constraint on (id, organizationId, scopeKey)", async () => {
+    const indexes = await uniqueIndexColumns("Invoice");
+    expect(indexes).toContainEqual(["id", "organizationId", "scopeKey"]);
+  });
+});
+
+describe("RP0-22 schema: idempotency records with optional group scope", () => {
+  it("makes groupId nullable and adds a NOT NULL scopeKey", async () => {
+    expect(
+      await columnInfo("InvoiceIdempotencyRecord", "groupId"),
+    ).toMatchObject({ is_nullable: "YES" });
+    expect(
+      await columnInfo("InvoiceIdempotencyRecord", "scopeKey"),
+    ).toMatchObject({ is_nullable: "NO", data_type: "text" });
+  });
+
+  it("conflicts for two NULL-group records with the same user, organization, operation and key", async () => {
+    const org = await createOrganization("org-idem-null");
+    const invoice = await insertScopedInvoice(org, null, userId);
+    const key = `key-${randomUUID()}`;
+    const record = {
+      userId,
+      organizationId: org,
+      groupId: null,
+      key,
+      invoiceId: invoice.id,
+    };
+    await insertScopedRecord(record);
+    await expectCode(insertScopedRecord(record), UNIQUE_VIOLATION);
+    await insertScopedRecord({ ...record, operation: "OTHER" });
+  });
+
+  it("does not conflict between organization scope and a group scope with the same key", async () => {
+    const org = await createOrganization("org-idem-mixed");
+    const group = await createGroup(org);
+    const orgInvoice = await insertScopedInvoice(org, null, userId);
+    const groupInvoice = await insertScopedInvoice(org, group, userId);
+    const key = `key-${randomUUID()}`;
+    await insertScopedRecord({
+      userId,
+      organizationId: org,
+      groupId: null,
+      key,
+      invoiceId: orgInvoice.id,
+    });
+    await insertScopedRecord({
+      userId,
+      organizationId: org,
+      groupId: group,
+      key,
+      invoiceId: groupInvoice.id,
+    });
+  });
+
+  it("has a unique constraint on (userId, organizationId, scopeKey, operation, key)", async () => {
+    const indexes = await uniqueIndexColumns("InvoiceIdempotencyRecord");
+    expect(indexes).toContainEqual([
+      "userId",
+      "organizationId",
+      "scopeKey",
+      "operation",
+      "key",
+    ]);
+  });
+
+  it("rejects a scopeKey that differs from COALESCE(groupId, 'organization')", async () => {
+    const org = await createOrganization("org-idem-check");
+    const invoice = await insertScopedInvoice(org, null, userId);
+    await expectCode(
+      insertScopedRecord({
+        userId,
+        organizationId: org,
+        groupId: null,
+        scopeKey: "something-else",
+        key: `key-${randomUUID()}`,
+        invoiceId: invoice.id,
+      }),
+      CHECK_VIOLATION,
+    );
+  });
+
+  it("rejects a record whose scope differs from the scope of its invoice", async () => {
+    const org = await createOrganization("org-idem-fk");
+    const group = await createGroup(org);
+    const groupInvoice = await insertScopedInvoice(org, group, userId);
+    const orgInvoice = await insertScopedInvoice(org, null, userId);
+    await expectCode(
+      insertScopedRecord({
+        userId,
+        organizationId: org,
+        groupId: null,
+        key: `key-${randomUUID()}`,
+        invoiceId: groupInvoice.id,
+      }),
+      FK_VIOLATION,
+    );
+    await expectCode(
+      insertScopedRecord({
+        userId,
+        organizationId: org,
+        groupId: group,
+        key: `key-${randomUUID()}`,
+        invoiceId: orgInvoice.id,
+      }),
+      FK_VIOLATION,
+    );
+  });
+
+  it("rejects a dangling invoiceId with NULL groupId", async () => {
+    await expectCode(
+      insertScopedRecord({
+        userId,
+        organizationId,
+        groupId: null,
+        key: `key-${randomUUID()}`,
+        invoiceId: randomUUID(),
+      }),
+      FK_VIOLATION,
+    );
+  });
+});
+
+describe("RP0-22 schema: ApiToken optional group scope", () => {
+  const insertToken = (
+    tokenOrganizationId: string,
+    tokenGroupId: string | null,
+  ) =>
+    client.query(
+      `INSERT INTO "ApiToken" ("id","userId","name","organizationId","groupId","tokenHash","scopes","createdAt","expiresAt")
+       VALUES ($1,$2,'cli',$3,$4,$5,ARRAY['invoices:read']::"ApiTokenScope"[],'2026-10-25T00:00:00Z','2026-11-01T00:00:00Z')`,
+      [
+        randomUUID(),
+        userId,
+        tokenOrganizationId,
+        tokenGroupId,
+        `h-${randomUUID()}`,
+      ],
+    );
+
+  it("makes groupId nullable and accepts an organization-scope token", async () => {
+    expect(await columnInfo("ApiToken", "groupId")).toMatchObject({
+      is_nullable: "YES",
+    });
+    await insertToken(organizationId, null);
+  });
+
+  it("still rejects a group from another organization (composite FK)", async () => {
+    await expectCode(insertToken(otherOrganizationId, groupId), FK_VIOLATION);
   });
 });

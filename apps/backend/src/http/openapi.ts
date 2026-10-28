@@ -7,6 +7,7 @@ import { ErrorResponseSchema } from "./errors.js";
 import {
   API_PREFIX,
   COMMON_ERROR_RESPONSES,
+  LARGE_BODY_PAYLOAD_RESPONSE,
   type Operation,
 } from "./registry.js";
 import { AuthProfileSchema } from "../features/auth/schemas.js";
@@ -55,6 +56,7 @@ export function buildOpenApiDocument(operations: Operation[]) {
       responses: Object.fromEntries(
         Object.entries({
           ...COMMON_ERROR_RESPONSES,
+          ...(operation.largeBody ? { 413: LARGE_BODY_PAYLOAD_RESPONSE } : {}),
           ...operation.responses,
         }).map(([status, response]) => [
           status,

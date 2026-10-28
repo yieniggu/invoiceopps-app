@@ -7,16 +7,9 @@ import { createApp } from "../../src/app.js";
 import { AuthError, createAuthService, hashPassword } from "../../src/auth.js";
 import { createDatabase } from "../../src/database.js";
 import { formatRut } from "../../src/rut.js";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
-if (new URL(url).pathname !== "/invoiceops_recovery_test") {
-  throw new Error(
-    "RECOVERY_TEST_DATABASE_URL must target invoiceops_recovery_test",
-  );
-}
+const url = recoveryTestDatabaseUrl();
 
 const client = new pg.Client({ connectionString: url });
 const lockClient = new pg.Client({ connectionString: url });
@@ -118,57 +111,60 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("RP0-04 profile contexts", () => {
-  it("lists only enabled organizations with both memberships, using group flags", async () => {
+describe("RP0-22 profile memberships with permissions", () => {
+  const NONE = {
+    readInvoices: false,
+    createInvoices: false,
+    deleteOwnInvoices: false,
+    deleteOthersInvoices: false,
+  };
+  const mk = (name: string, enabled = true) =>
+    prisma.organization.create({
+      data: { name, slug: `${name}-${randomUUID()}`, enabled },
+    });
+
+  it("lists organizations, own flags, groups with their own flags and the effective OR", async () => {
     const user = await createUser("correct-horse-battery");
-    const mk = (name: string, enabled = true) =>
-      prisma.organization.create({
-        data: { name, slug: `${name}-${randomUUID()}`, enabled },
-      });
-    const [orgA, orgDisabled, orgNoMembership] = [
-      await mk("Alpha"),
-      await mk("Disabled", false),
-      await mk("NoMembership"),
-    ];
-    for (const org of [orgA, orgDisabled]) {
-      await prisma.organizationMembership.create({
-        data: { userId: user.id, organizationId: org.id, role: "USER" },
-      });
-    }
-    const group = (
-      organizationId: string,
-      name: string,
-      flags: Record<string, boolean> = {},
-    ) => prisma.group.create({ data: { organizationId, name, ...flags } });
-    const readCreate = await group(orgA.id, "Beta", {
-      readInvoices: true,
-      createInvoices: true,
+    const orgA = await mk("Alpha");
+    const orgDisabled = await mk("Disabled", false);
+    await prisma.organizationMembership.create({
+      data: {
+        userId: user.id,
+        organizationId: orgA.id,
+        role: "USER",
+        readInvoices: true,
+      },
     });
-    const deleters = await group(orgA.id, "Alpha group", {
-      deleteOwnInvoices: true,
-      deleteOthersInvoices: true,
+    await prisma.organizationMembership.create({
+      data: {
+        userId: user.id,
+        organizationId: orgDisabled.id,
+        role: "ADMIN",
+        readInvoices: true,
+        createInvoices: true,
+      },
     });
-    const notJoined = await group(orgA.id, "Not joined", {
-      readInvoices: true,
-    });
-    const inDisabled = await group(orgDisabled.id, "Hidden", {
-      readInvoices: true,
-    });
-    const noOrgMembership = await group(orgNoMembership.id, "Orphan", {
-      readInvoices: true,
-    });
-    for (const g of [readCreate, deleters, inDisabled]) {
-      await prisma.groupMembership.create({
+    const group = (organizationId: string, name: string) =>
+      prisma.group.create({ data: { organizationId, name } });
+    const beta = await group(orgA.id, "Beta");
+    const alpha = await group(orgA.id, "Alpha group");
+    await group(orgA.id, "Not joined");
+    const hidden = await group(orgDisabled.id, "Hidden");
+    const join = (
+      g: { id: string; organizationId: string },
+      flags: Record<string, boolean>,
+    ) =>
+      prisma.groupMembership.create({
         data: {
           groupId: g.id,
           userId: user.id,
           organizationId: g.organizationId,
+          ...flags,
         },
       });
-    }
-    // Group membership without organization membership is impossible through
-    // the FK; the group simply stays out of the contexts.
-    expect(notJoined.id).not.toBe(noOrgMembership.id);
+    await join(beta, { createInvoices: true });
+    await join(alpha, { deleteOwnInvoices: true, deleteOthersInvoices: true });
+    await join(hidden, { deleteOwnInvoices: true });
 
     const login = await auth.login({
       rut: user.rut,
@@ -176,32 +172,92 @@ describe("RP0-04 profile contexts", () => {
     });
     const profile = await auth.getProfile(login.sessionToken);
 
-    expect(profile.contexts).toEqual([
+    expect(profile).not.toHaveProperty("contexts");
+    expect(profile.memberships).toEqual([
       {
-        organizationId: orgA.id,
-        organizationName: "Alpha",
-        groupId: deleters.id,
-        groupName: "Alpha group",
-        capabilities: {
-          readInvoices: false,
-          createInvoices: false,
-          deleteOwnInvoices: true,
-          deleteOthersInvoices: true,
-        },
+        organization: { id: orgA.id, name: "Alpha", slug: orgA.slug },
+        role: "USER",
+        permissions: { ...NONE, readInvoices: true },
+        groups: [
+          {
+            group: { id: alpha.id, name: "Alpha group" },
+            permissions: {
+              ...NONE,
+              deleteOwnInvoices: true,
+              deleteOthersInvoices: true,
+            },
+            effective: {
+              readInvoices: true,
+              createInvoices: false,
+              deleteOwnInvoices: true,
+              deleteOthersInvoices: true,
+            },
+          },
+          {
+            group: { id: beta.id, name: "Beta" },
+            permissions: { ...NONE, createInvoices: true },
+            effective: {
+              ...NONE,
+              readInvoices: true,
+              createInvoices: true,
+            },
+          },
+        ],
       },
       {
-        organizationId: orgA.id,
-        organizationName: "Alpha",
-        groupId: readCreate.id,
-        groupName: "Beta",
-        capabilities: {
-          readInvoices: true,
-          createInvoices: true,
-          deleteOwnInvoices: false,
-          deleteOthersInvoices: false,
+        organization: {
+          id: orgDisabled.id,
+          name: "Disabled",
+          slug: orgDisabled.slug,
         },
+        role: "ADMIN",
+        permissions: { ...NONE, readInvoices: true, createInvoices: true },
+        groups: [
+          {
+            group: { id: hidden.id, name: "Hidden" },
+            permissions: { ...NONE, deleteOwnInvoices: true },
+            // A disabled organization grants nothing.
+            effective: NONE,
+          },
+        ],
       },
     ]);
+  });
+
+  it("reports an all-false effective set while onboarding is pending", async () => {
+    const user = await createUser("temporary-password-1", {
+      temporaryExpiresInMs: 2 * HOUR,
+    });
+    const org = await mk("Onboarding");
+    await prisma.organizationMembership.create({
+      data: {
+        userId: user.id,
+        organizationId: org.id,
+        role: "USER",
+        readInvoices: true,
+      },
+    });
+    const g = await prisma.group.create({
+      data: { organizationId: org.id, name: "G" },
+    });
+    await prisma.groupMembership.create({
+      data: {
+        groupId: g.id,
+        userId: user.id,
+        organizationId: org.id,
+        createInvoices: true,
+      },
+    });
+
+    const login = await auth.login({
+      rut: user.rut,
+      password: "temporary-password-1",
+    });
+    const profile = await auth.getProfile(login.sessionToken);
+
+    expect(profile.mustChangePassword).toBe(true);
+    expect(profile.memberships[0]?.permissions.readInvoices).toBe(true);
+    expect(profile.memberships[0]?.groups[0]?.effective).toEqual(NONE);
   });
 });
 

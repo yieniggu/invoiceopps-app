@@ -1,3 +1,4 @@
+import { membership } from "../../test/transport";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,10 +15,7 @@ const profile: Profile = {
   username: null,
   isPlatformAdministrator: false,
   memberships: [
-    {
-      organization: { id: "org-1", name: "Academia", slug: "academia" },
-      role: "USER",
-    },
+    membership({ id: "org-1", name: "Academia", slug: "academia" }, "USER"),
   ],
 };
 
@@ -59,15 +57,21 @@ describe("DashboardScreen cards", () => {
   it("links each card CTA to its URL", () => {
     renderDashboard();
     for (const [label, path] of [
-      ["Ir a facturas", "/facturas"],
-      ["Ver mis organizaciones", "/organizaciones"],
-      ["Ver mis grupos", "/grupos"],
-      ["Ir a políticas", "/politicas"],
+      ["Ir a facturas", "/invoices"],
+      ["Ver mis organizaciones", "/organizations"],
+      ["Ver mis grupos", "/groups"],
     ]) {
       expect(
         screen.getByRole("link", { name: label }).getAttribute("href"),
       ).toBe(path);
     }
+  });
+
+  it("shows the Políticas card as coming soon, without a link", () => {
+    renderDashboard();
+    const card = screen.getByRole("region", { name: "Políticas" });
+    expect(card.textContent).toContain("Próximamente");
+    expect(screen.queryByRole("link", { name: /políticas/i })).toBeNull();
   });
 
   it("shows the active context details inside the workspace card", () => {

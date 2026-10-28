@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
+import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password-policy.js";
 
 export const LoginRequestSchema = z
@@ -35,27 +36,23 @@ export const AuthProfileSchema = z
           slug: z.string(),
         }),
         role: z.enum(OrganizationRole),
+        permissions: InvoicePermissionsSchema.meta({
+          description: "Flags of the organization membership alone.",
+        }),
+        groups: z.array(
+          z.object({
+            group: z.object({ id: z.string(), name: z.string() }),
+            permissions: InvoicePermissionsSchema.meta({
+              description: "Flags of the group membership alone.",
+            }),
+            effective: InvoicePermissionsSchema.meta({
+              description:
+                "Organization flags OR group flags (all false while the organization is disabled or onboarding is pending). Presentation only: the server decides.",
+            }),
+          }),
+        ),
       }),
     ),
-    contexts: z
-      .array(
-        z.object({
-          organizationId: z.string(),
-          organizationName: z.string(),
-          groupId: z.string(),
-          groupName: z.string(),
-          capabilities: z.object({
-            readInvoices: z.boolean(),
-            createInvoices: z.boolean(),
-            deleteOwnInvoices: z.boolean(),
-            deleteOthersInvoices: z.boolean(),
-          }),
-        }),
-      )
-      .meta({
-        description:
-          "Groups of enabled organizations where the user has both memberships; capabilities are the group flags.",
-      }),
   })
   .meta({
     id: "AuthProfile",
@@ -72,20 +69,29 @@ export const AuthProfileSchema = z
           {
             organization: { id: "org-1", name: "Acme", slug: "acme" },
             role: "USER",
-          },
-        ],
-        contexts: [
-          {
-            organizationId: "org-1",
-            organizationName: "Acme",
-            groupId: "group-1",
-            groupName: "Finance",
-            capabilities: {
+            permissions: {
               readInvoices: true,
               createInvoices: false,
               deleteOwnInvoices: false,
               deleteOthersInvoices: false,
             },
+            groups: [
+              {
+                group: { id: "group-1", name: "Finance" },
+                permissions: {
+                  readInvoices: false,
+                  createInvoices: true,
+                  deleteOwnInvoices: false,
+                  deleteOthersInvoices: false,
+                },
+                effective: {
+                  readInvoices: true,
+                  createInvoices: true,
+                  deleteOwnInvoices: false,
+                  deleteOthersInvoices: false,
+                },
+              },
+            ],
           },
         ],
       },

@@ -12,16 +12,9 @@ import {
   createBootstrapService,
 } from "../../src/features/auth/bootstrap-service.js";
 import { formatRut } from "../../src/rut.js";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
-if (new URL(url).pathname !== "/invoiceops_recovery_test") {
-  throw new Error(
-    "RECOVERY_TEST_DATABASE_URL must target invoiceops_recovery_test",
-  );
-}
+const url = recoveryTestDatabaseUrl();
 
 const client = new pg.Client({ connectionString: url });
 const database = createDatabase(url);
@@ -329,7 +322,7 @@ describe("RP0-03 bootstrap against PostgreSQL", () => {
 });
 
 describe("RP0-03 bootstrapped administrator over HTTP", () => {
-  it("logs in with the temporary password and sees no invoice contexts", async () => {
+  it("logs in with the temporary password and sees no memberships or invoice permissions", async () => {
     const rut = randomRut();
     await createBootstrapService(prisma).bootstrap({
       name: "Ada Lovelace",
@@ -353,7 +346,7 @@ describe("RP0-03 bootstrapped administrator over HTTP", () => {
       isPlatformAdministrator: true,
       memberships: [],
     });
-    expect(profile.body.profile.contexts ?? []).toEqual([]);
+    expect(profile.body.profile).not.toHaveProperty("contexts");
 
     const blocked = await request(app)
       .get("/api/v1/groups")
@@ -393,7 +386,6 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
       data: {
         organizationId: organization.id,
         name: "Finance",
-        readInvoices: true,
       },
     });
     await prisma.groupMembership.create({
@@ -401,6 +393,7 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
         groupId: group.id,
         userId: author.id,
         organizationId: organization.id,
+        readInvoices: true,
       },
     });
     const businessId = `FAC-${randomUUID()}`;
@@ -409,6 +402,7 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
         businessId,
         organizationId: organization.id,
         groupId: group.id,
+        scopeKey: group.id,
         supplierName: "Proveedor local",
         amountPesos: 12500,
         currency: "CLP",
@@ -473,6 +467,6 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
       isPlatformAdministrator: true,
       memberships: [],
     });
-    expect(profile.body.profile.contexts).toEqual([]);
+    expect(profile.body.profile).not.toHaveProperty("contexts");
   });
 });

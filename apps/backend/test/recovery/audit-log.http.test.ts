@@ -53,17 +53,11 @@ function capture() {
     info.mock.calls.map(([line]) => JSON.parse(String(line)) as object);
 }
 
-const group = {
-  id: GROUP,
-  organizationId: ORG,
-  name: "Secretname group",
-  description: null,
-  permissions: {
-    readInvoices: true,
-    createInvoices: false,
-    deleteOwnInvoices: false,
-    deleteOthersInvoices: false,
-  },
+const permissions = {
+  readInvoices: true,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
 };
 
 function appWith(overrides: {
@@ -79,6 +73,8 @@ function appWith(overrides: {
 const send = (app: ReturnType<typeof appWith>) => {
   const agent = request(app);
   return {
+    put: (path: string) =>
+      agent.put(`/api/v1${path}`).set(SAME_ORIGIN).set("Cookie", COOKIE),
     patch: (path: string) =>
       agent.patch(`/api/v1${path}`).set(SAME_ORIGIN).set("Cookie", COOKIE),
     post: (path: string) =>
@@ -89,27 +85,73 @@ const send = (app: ReturnType<typeof appWith>) => {
 };
 
 describe("CR-111 structured audit logs", () => {
-  it("logs a group permission update with identifiers only", async () => {
+  it("logs a group membership permission update with identifiers only", async () => {
     const lines = capture();
-    const app = appWith({ groups: { updatePermissions: async () => group } });
+    const app = appWith({
+      groups: {
+        updateMemberPermissions: async () => ({
+          userId: USER,
+          groupId: GROUP,
+          organizationId: ORG,
+          permissions,
+        }),
+      },
+    });
 
     const response = await send(app)
-      .patch(`/organizations/${ORG}/groups/${GROUP}`)
-      .send({ permissions: group.permissions });
+      .put(
+        `/organizations/${ORG}/groups/${GROUP}/memberships/${USER}/permissions`,
+      )
+      .send({ permissions });
 
     expect(response.status).toBe(200);
     expect(lines()).toContainEqual(
       expect.objectContaining({
         level: "info",
-        event: "audit.group_permissions_updated",
+        event: "audit.group_member_permissions_updated",
         feature: "groups",
-        action: "permissions_updated",
+        action: "member_permissions_updated",
         organizationId: ORG,
         groupId: GROUP,
         actorUserId: ACTOR,
+        targetUserId: USER,
       }),
     );
-    expect(JSON.stringify(lines())).not.toMatch(/Secretname|123456785/);
+    expect(JSON.stringify(lines())).not.toMatch(
+      /Secretname|123456785|readInvoices/,
+    );
+  });
+
+  it("logs an organization membership permission update with identifiers only", async () => {
+    const lines = capture();
+    const app = appWith({
+      organizations: {
+        updateMembershipPermissions: async () => ({
+          userId: USER,
+          organizationId: ORG,
+          role: "USER",
+          permissions,
+        }),
+      },
+    });
+
+    const response = await send(app)
+      .put(`/organizations/${ORG}/memberships/${USER}/permissions`)
+      .send({ permissions });
+
+    expect(response.status).toBe(200);
+    expect(lines()).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        event: "audit.org_member_permissions_updated",
+        feature: "organizations",
+        action: "member_permissions_updated",
+        organizationId: ORG,
+        actorUserId: ACTOR,
+        targetUserId: USER,
+      }),
+    );
+    expect(JSON.stringify(lines())).not.toMatch(/123456785|readInvoices/);
   });
 
   it("logs group membership add and remove", async () => {
@@ -120,6 +162,7 @@ describe("CR-111 structured audit logs", () => {
           userId: USER,
           groupId: GROUP,
           organizationId: ORG,
+          permissions,
         }),
         removeMember: async () => {},
       },

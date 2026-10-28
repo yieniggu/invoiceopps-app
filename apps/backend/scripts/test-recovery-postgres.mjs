@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertRecoveryTarget,
+  expectedDatabasePort,
   testDatabaseName as testDatabase,
 } from "./recovery-db-guards.mjs";
 import { runRecoveryReset } from "./recovery-local-reset.mjs";
@@ -27,6 +28,7 @@ export async function runRecoveryPostgresTests({
   assertRecoveryTarget(url, {
     confirmReset: testDatabase,
     allowedNames: [testDatabase],
+    expectedPort: expectedDatabasePort(env),
   });
   await reset({
     argv: [

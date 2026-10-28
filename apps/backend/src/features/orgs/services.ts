@@ -5,19 +5,39 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { ApiError } from "../../http/errors.js";
-import { isUniqueViolation, runSerializable } from "../../transactions.js";
-import { lockOrganizationGroups } from "../groups/locks.js";
-import { requireOrganizationAdmin } from "./authority.js";
+import {
+  isUniqueViolation,
+  runSerializable,
+  SERIALIZABLE,
+} from "../../transactions.js";
+import {
+  lockMembershipCascadeForUpdate,
+  lockOrganizationMembershipForUpdate,
+  lockOrganizationMembershipsForUpdate,
+} from "../groups/locks.js";
+import {
+  NO_INVOICE_PERMISSIONS,
+  PERMISSION_SELECT,
+  permissionsOf,
+  type InvoicePermissions,
+} from "../groups/invoice-permissions.js";
+import {
+  auditGroupMembershipsRemoved,
+  auditPermissionsChanged,
+} from "../groups/membership-audit.js";
+import {
+  isPlatformAdministrator,
+  organizationGroupVisibility,
+  requireOrganizationAdmin,
+} from "./authority.js";
 import type {
   MembershipDto,
   MembershipWithUserDto,
+  OrganizationBasicDto,
+  OrganizationCountsDto,
   OrganizationCreateRequest,
   OrganizationDto,
 } from "./types.js";
-
-const SERIALIZABLE = {
-  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-} as const;
 
 const ORGANIZATION_SELECT = {
   id: true,
@@ -32,7 +52,25 @@ const MEMBERSHIP_SELECT = {
   userId: true,
   organizationId: true,
   role: true,
+  ...PERMISSION_SELECT,
 } satisfies Prisma.OrganizationMembershipSelect;
+
+function toMembershipDto(row: {
+  userId: string;
+  organizationId: string;
+  role: OrganizationRole;
+  readInvoices: boolean;
+  createInvoices: boolean;
+  deleteOwnInvoices: boolean;
+  deleteOthersInvoices: boolean;
+}): MembershipDto {
+  return {
+    userId: row.userId,
+    organizationId: row.organizationId,
+    role: row.role,
+    permissions: permissionsOf(row),
+  };
+}
 
 function toOrganizationDto(organization: {
   id: string;
@@ -59,6 +97,13 @@ export interface OrganizationService {
     actorUserId: string,
     input: OrganizationCreateRequest,
   ): Promise<{ organization: OrganizationDto; membership: MembershipDto }>;
+  getOrganization(
+    actorUserId: string,
+    organizationId: string,
+  ): Promise<{
+    organization: OrganizationBasicDto;
+    summary: OrganizationCountsDto;
+  }>;
   listMemberships(
     actorUserId: string,
     organizationId: string,
@@ -66,7 +111,11 @@ export interface OrganizationService {
   createMembership(
     actorUserId: string,
     organizationId: string,
-    input: { rut: string; role: OrganizationRole },
+    input: {
+      rut: string;
+      role: OrganizationRole;
+      permissions?: InvoicePermissions;
+    },
   ): Promise<MembershipDto>;
   changeMembershipRole(
     actorUserId: string,
@@ -74,6 +123,18 @@ export interface OrganizationService {
     userId: string,
     role: OrganizationRole,
   ): Promise<{ membership: MembershipDto; changed: boolean }>;
+  updateMembershipPermissions(
+    actorUserId: string,
+    organizationId: string,
+    userId: string,
+    permissions: InvoicePermissions,
+  ): Promise<MembershipDto>;
+  updateMembershipsPermissions(
+    actorUserId: string,
+    organizationId: string,
+    userIds: string[],
+    permissions: InvoicePermissions,
+  ): Promise<MembershipDto[]>;
   removeMembership(
     actorUserId: string,
     organizationId: string,
@@ -84,17 +145,6 @@ export interface OrganizationService {
 export function createOrganizationService(
   prisma: PrismaClient,
 ): OrganizationService {
-  async function isPlatformAdministrator(
-    database: Prisma.TransactionClient,
-    userId: string,
-  ) {
-    const administrator = await database.platformAdministrator.findUnique({
-      where: { id: 1 },
-      select: { userId: true },
-    });
-    return administrator?.userId === userId;
-  }
-
   async function requireOtherAdministrator(
     transaction: Prisma.TransactionClient,
     organizationId: string,
@@ -174,16 +224,58 @@ export function createOrganizationService(
               targetUserId: firstAdmin.id,
               organizationId: organization.id,
               role: OrganizationRole.ADMIN,
+              ...NO_INVOICE_PERMISSIONS,
+              actorIsTarget: actorUserId === firstAdmin.id,
             },
           ],
         });
-        return { organization: toOrganizationDto(organization), membership };
+        return {
+          organization: toOrganizationDto(organization),
+          membership: toMembershipDto(membership),
+        };
       });
+    },
+
+    async getOrganization(actorUserId, organizationId) {
+      // Any member or the platform administrator; everybody else gets 404.
+      const visibility = await organizationGroupVisibility(
+        prisma,
+        actorUserId,
+        organizationId,
+      );
+      // One query: both counts come with the organization (no N+1).
+      const organization = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          _count: {
+            select: {
+              memberships: true,
+              groups:
+                visibility === "all"
+                  ? true
+                  : {
+                      where: { memberships: { some: { userId: actorUserId } } },
+                    },
+            },
+          },
+        },
+      });
+      if (!organization) throw new ApiError(404, "NOT_FOUND", "Not found");
+      const { _count, ...basic } = organization;
+      return {
+        organization: basic,
+        summary: { memberCount: _count.memberships, groupCount: _count.groups },
+      };
     },
 
     async listMemberships(actorUserId, organizationId) {
       await requireOrganizationAdmin(prisma, actorUserId, organizationId);
-      return prisma.organizationMembership.findMany({
+      // One query: group names come with the memberships (no N+1).
+      const memberships = await prisma.organizationMembership.findMany({
         where: { organizationId },
         orderBy: [
           { user: { name: "asc" } },
@@ -193,8 +285,24 @@ export function createOrganizationService(
         select: {
           ...MEMBERSHIP_SELECT,
           user: { select: { id: true, name: true, rut: true } },
+          groupMemberships: {
+            orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
+            select: {
+              ...PERMISSION_SELECT,
+              group: { select: { id: true, name: true } },
+            },
+          },
         },
       });
+      return memberships.map(({ user, groupMemberships, ...membership }) => ({
+        ...toMembershipDto(membership),
+        user,
+        groups: groupMemberships.map(({ group, ...flags }) => ({
+          groupId: group.id,
+          name: group.name,
+          permissions: permissionsOf(flags),
+        })),
+      }));
     },
 
     async createMembership(actorUserId, organizationId, input) {
@@ -217,6 +325,7 @@ export function createOrganizationService(
                 userId: user.id,
                 organizationId,
                 role: input.role,
+                ...(input.permissions ?? NO_INVOICE_PERMISSIONS),
               },
               select: MEMBERSHIP_SELECT,
             });
@@ -227,9 +336,11 @@ export function createOrganizationService(
                 targetUserId: user.id,
                 organizationId,
                 role: input.role,
+                ...permissionsOf(membership),
+                actorIsTarget: actorUserId === user.id,
               },
             });
-            return membership;
+            return toMembershipDto(membership);
           } catch (error) {
             if (isUniqueViolation(error)) {
               throw new ApiError(
@@ -252,19 +363,19 @@ export function createOrganizationService(
             actorUserId,
             organizationId,
           );
-          await lockOrganizationGroups(transaction, organizationId);
+          await lockMembershipCascadeForUpdate(transaction, {
+            userId,
+            organizationId,
+          });
           const membership =
             await transaction.organizationMembership.findUnique({
               where: { userId_organizationId: { userId, organizationId } },
-              select: { role: true },
+              select: MEMBERSHIP_SELECT,
             });
           if (!membership) throw membershipNotFound();
           // Same role: nothing is written, so callers must not report a change.
           if (membership.role === role)
-            return {
-              membership: { userId, organizationId, role },
-              changed: false,
-            };
+            return { membership: toMembershipDto(membership), changed: false };
           if (membership.role === OrganizationRole.ADMIN) {
             await requireOtherAdministrator(transaction, organizationId);
           }
@@ -282,9 +393,83 @@ export function createOrganizationService(
               organizationId,
               previousRole: membership.role,
               role,
+              actorIsTarget: actorUserId === userId,
             },
           });
-          return { membership: updated, changed: true };
+          return { membership: toMembershipDto(updated), changed: true };
+        }, SERIALIZABLE),
+      );
+    },
+
+    async updateMembershipPermissions(
+      actorUserId,
+      organizationId,
+      userId,
+      permissions,
+    ) {
+      return runSerializable(() =>
+        prisma.$transaction(async (transaction) => {
+          await requireOrganizationAdmin(
+            transaction,
+            actorUserId,
+            organizationId,
+          );
+          const locked = await lockOrganizationMembershipForUpdate(
+            transaction,
+            { userId, organizationId },
+          );
+          if (!locked) throw membershipNotFound();
+          const updated = await transaction.organizationMembership.update({
+            where: { userId_organizationId: { userId, organizationId } },
+            data: permissions,
+            select: MEMBERSHIP_SELECT,
+          });
+          await auditPermissionsChanged(
+            transaction,
+            { actorUserId, organizationId },
+            [{ userId, permissions }],
+          );
+          return toMembershipDto(updated);
+        }, SERIALIZABLE),
+      );
+    },
+
+    async updateMembershipsPermissions(
+      actorUserId,
+      organizationId,
+      userIds,
+      permissions,
+    ) {
+      return runSerializable(() =>
+        prisma.$transaction(async (transaction) => {
+          await requireOrganizationAdmin(
+            transaction,
+            actorUserId,
+            organizationId,
+          );
+          // Every membership FOR UPDATE in id order (the single PUT is the
+          // one-element case of this order). All or nothing: a user who is
+          // not a member aborts the transaction before any write.
+          const locked = await lockOrganizationMembershipsForUpdate(
+            transaction,
+            { organizationId, userIds },
+          );
+          if (locked.length !== userIds.length) throw membershipNotFound();
+          await transaction.organizationMembership.updateMany({
+            where: { organizationId, userId: { in: userIds } },
+            data: permissions,
+          });
+          await auditPermissionsChanged(
+            transaction,
+            { actorUserId, organizationId },
+            userIds.map((id) => ({ userId: id, permissions })),
+          );
+          const rows = await transaction.organizationMembership.findMany({
+            where: { organizationId, userId: { in: userIds } },
+            select: MEMBERSHIP_SELECT,
+          });
+          const byUser = new Map(rows.map((row) => [row.userId, row]));
+          return userIds.map((id) => toMembershipDto(byUser.get(id)!));
         }, SERIALIZABLE),
       );
     },
@@ -297,9 +482,13 @@ export function createOrganizationService(
             actorUserId,
             organizationId,
           );
-          // Group rows first, in id order, so removal serializes with group
-          // configuration and membership changes of this organization.
-          await lockOrganizationGroups(transaction, organizationId);
+          // Organization membership first, then this user's group memberships
+          // in id order: removal serializes with permission and membership
+          // changes of that user.
+          await lockMembershipCascadeForUpdate(transaction, {
+            userId,
+            organizationId,
+          });
           const membership =
             await transaction.organizationMembership.findUnique({
               where: { userId_organizationId: { userId, organizationId } },
@@ -310,6 +499,13 @@ export function createOrganizationService(
             await requireOtherAdministrator(transaction, organizationId);
           }
 
+          // The cascade is audited per group: the rows are locked above, so
+          // the list below is exactly what the delete removes.
+          const removedGroups = await transaction.groupMembership.findMany({
+            where: { userId, organizationId },
+            orderBy: { groupId: "asc" },
+            select: { groupId: true },
+          });
           await transaction.groupMembership.deleteMany({
             where: { userId, organizationId },
           });
@@ -323,8 +519,14 @@ export function createOrganizationService(
               targetUserId: userId,
               organizationId,
               previousRole: membership.role,
+              actorIsTarget: actorUserId === userId,
             },
           });
+          await auditGroupMembershipsRemoved(
+            transaction,
+            { actorUserId, organizationId },
+            removedGroups.map(({ groupId }) => ({ userId, groupId })),
+          );
         }, SERIALIZABLE),
       );
     },

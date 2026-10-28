@@ -10,15 +10,33 @@ const SERIALIZABLE_OPERATIONS = [
   ["post", "/api/v1/organizations/{organizationId}/memberships"],
   ["patch", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
   ["delete", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
-  ["patch", "/api/v1/organizations/{organizationId}/groups/{groupId}"],
+  [
+    "put",
+    "/api/v1/organizations/{organizationId}/memberships/{userId}/permissions",
+  ],
+  ["put", "/api/v1/organizations/{organizationId}/memberships/permissions"],
+  [
+    "put",
+    "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships/{userId}/permissions",
+  ],
   [
     "post",
     "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships",
   ],
   [
+    "post",
+    "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships/bulk",
+  ],
+  [
+    "put",
+    "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships/permissions",
+  ],
+  [
     "delete",
     "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships/{userId}",
   ],
+  ["post", "/api/v1/organizations/{organizationId}/users"],
+  ["post", "/api/v1/admin/users"],
 ] as const;
 
 describe("CR-102 RETRYABLE_CONFLICT contract", () => {

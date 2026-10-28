@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -19,7 +20,7 @@ const profile = {
   email: null,
   username: null,
   isPlatformAdministrator: false,
-  memberships: [{ organization, role: "USER" }],
+  memberships: [{ organization, role: "USER", ...ACCESS_NONE }],
 };
 const groups = [
   {

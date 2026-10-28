@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -8,6 +9,16 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { openPolicies } from "./test/policiesRoute";
+
+// Políticas is disabled in the product; the screen is kept unrouted. This
+// suite keeps testing it through the test-only route (see test/policiesRoute).
+vi.mock("./features/session/AppRoutes", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("./features/session/AppRoutes")>();
+  const { withPoliciesRoute: wrap } = await import("./test/policiesRoute");
+  return { ...original, AppRoutes: wrap(original.AppRoutes) };
+});
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -29,7 +40,11 @@ function http(role = "USER", platform = false) {
     username: null,
     isPlatformAdministrator: platform,
     memberships: [
-      { organization: { id: "org", name: "Academia", slug: "academy" }, role },
+      {
+        organization: { id: "org", name: "Academia", slug: "academy" },
+        role,
+        ...ACCESS_NONE,
+      },
     ],
   };
   const groups = [
@@ -82,13 +97,12 @@ function http(role = "USER", platform = false) {
     });
   return { profile, read, write, profileRead, fetchMock, logout };
 }
-async function start(dashboard = false) {
+async function start() {
+  // Every test starts from the root, whatever URL the previous one left.
+  window.history.replaceState(null, "", "/");
   render(<App />);
-  fireEvent.click(
-    await screen.findByRole("link", {
-      name: dashboard ? "Ir a políticas" : /^Políticas$/,
-    }),
-  );
+  await screen.findByRole("heading", { name: "Panel principal" });
+  await openPolicies();
 }
 async function loaded() {
   await screen.findByRole("button", { name: `Editar ${policy.version}` });
@@ -130,7 +144,6 @@ function submitEdit() {
 const DESTINATIONS = [
   "Panel principal",
   "Facturas",
-  "Políticas",
   "Organizaciones",
   "Grupos",
   "Mi perfil",
@@ -155,7 +168,7 @@ describe("APP12 S4 session-owned policy writes", () => {
       expect(api.write.mock.calls[0][0].method).toBe("PATCH");
       if (route === "destination") {
         navigate("Mi perfil");
-        navigate("Políticas");
+        await openPolicies();
       } else {
         group();
         await loaded();
@@ -199,7 +212,7 @@ describe("APP12 S4 session-owned policy writes", () => {
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     navigate("Mi perfil");
     await act(async () => pending.resolve(json({})));
-    navigate("Políticas");
+    await openPolicies();
     await editThreshold("0.2");
     await act(async () => submitEdit());
     expect(api.write).toHaveBeenCalledTimes(1);
@@ -237,7 +250,7 @@ describe("APP12 S4 session-owned policy writes", () => {
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     navigate("Mi perfil");
     api.read.mockReturnValueOnce(reading.promise);
-    navigate("Políticas");
+    await openPolicies();
     await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
     await act(async () => pending.resolve(json({}, 500)));
     await act(async () =>
@@ -348,7 +361,7 @@ describe("APP12 S4 session-owned policy writes", () => {
       });
       navigate("Iniciar sesión");
       await screen.findByRole("navigation");
-      navigate("Políticas");
+      await openPolicies();
       await editThreshold("0.2");
       submitEdit();
       await waitFor(() => expect(api.write).toHaveBeenCalledTimes(2));
@@ -377,7 +390,7 @@ describe("APP12 S4 session-owned policy writes", () => {
     await loaded();
     draft("0.4", "UNSENT");
     navigate("Mi perfil");
-    navigate("Políticas");
+    await openPolicies();
     await loaded();
     expect(screen.getByLabelText("Versión de política")).toHaveProperty(
       "value",
@@ -394,11 +407,11 @@ describe("APP12 S4 session-owned policy writes", () => {
 });
 
 describe("APP12 S4 policy HTTP workflow", () => {
-  it("opens from Dashboard, scopes the exact GET and distinguishes loading from empty", async () => {
+  it("opens the policies route, scopes the exact GET and distinguishes loading from empty", async () => {
     const api = http();
     const pending = deferred<Response>();
     api.read.mockReturnValueOnce(pending.promise);
-    await start(true);
+    await start();
     await screen.findByText("Cargando políticas...");
     expect(
       screen.queryByText("No hay políticas para este propietario."),
@@ -417,12 +430,14 @@ describe("APP12 S4 policy HTTP workflow", () => {
     const api = http();
     const pending = deferred<Response>();
     api.profileRead.mockReturnValueOnce(pending.promise);
+    window.history.replaceState(null, "", "/");
     render(<App />);
     expect(api.read).not.toHaveBeenCalled();
     await act(async () =>
       pending.resolve(json({ profile: { ...api.profile, memberships: [] } })),
     );
-    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
+    await screen.findByRole("heading", { name: "Panel principal" });
+    await openPolicies();
     await screen.findByText(
       "No tienes un contexto autorizado para consultar políticas.",
     );
@@ -804,6 +819,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     api.profile.memberships.push({
       organization: { id: "org-B", name: "Academia B", slug: "b" },
       role: "USER",
+      ...ACCESS_NONE,
     });
     await start();
     await loaded();

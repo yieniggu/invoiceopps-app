@@ -5,6 +5,7 @@ import type {
   Organization,
   OrganizationMember,
   OrganizationRole,
+  OrganizationSummary,
 } from "../types";
 
 const base = (organizationId: string) =>
@@ -20,6 +21,9 @@ export const createOrganization = (input: CreateOrganizationInput) =>
     method: "POST",
     body: input,
   }).then(({ organization }) => ({ organizationId: organization.id }));
+
+export const getOrganization = (organizationId: string, signal?: AbortSignal) =>
+  apiRequest<OrganizationSummary>(base(organizationId), { signal });
 
 export const listMemberships = (organizationId: string, signal?: AbortSignal) =>
   apiRequest<{ memberships: OrganizationMember[] }>(

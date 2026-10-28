@@ -1,9 +1,17 @@
-import type { RequestHandler, Router } from "express";
+import express, { type RequestHandler, type Router } from "express";
 import type { ZodObject, ZodType } from "zod";
 
 import { ErrorResponseSchema } from "./errors.js";
 
 export const API_PREFIX = "/api/v1";
+
+/** JSON body limit of every operation unless it opts into the large one. */
+export const JSON_BODY_LIMIT = "16kb";
+/**
+ * Limit of the operations flagged `largeBody`: batches of up to 200 members
+ * with their own permissions (about 33 kB) and the platform user creation.
+ */
+export const LARGE_JSON_BODY_LIMIT = "64kb";
 
 export interface OperationResponse {
   description: string;
@@ -18,8 +26,8 @@ export interface OperationResponse {
  * the OpenAPI generator, so HTTP behaviour and documentation cannot drift.
  */
 /**
- * Statuses any operation can return regardless of its handler: the 16 kB JSON
- * body limit (413), an unsupported body charset or encoding (415)
+ * Statuses any operation can return regardless of its handler: the JSON body
+ * limit (413, 16 kB; operations flagged `largeBody` document 64 kB), an unsupported body charset or encoding (415)
  * and an unexpected failure (500). The generator merges them
  * under every operation's own responses, which win on a conflict.
  */
@@ -40,7 +48,7 @@ export const COMMON_ERROR_RESPONSES: Record<number, OperationResponse> = {
 };
 
 export interface Operation {
-  method: "get" | "post" | "patch" | "delete";
+  method: "get" | "post" | "put" | "patch" | "delete";
   /** OpenAPI-style path relative to API_PREFIX, for example "/auth/login". */
   path: string;
   summary: string;
@@ -51,8 +59,41 @@ export interface Operation {
   params?: ZodObject;
   requestBody?: ZodType;
   responses: Record<number, OperationResponse>;
+  /** Accepts a JSON body up to LARGE_JSON_BODY_LIMIT instead of 16 kB. */
+  largeBody?: boolean;
   middleware?: RequestHandler[];
   handler: RequestHandler;
+}
+
+/** 413 documented by the operations that accept the large JSON body. */
+export const LARGE_BODY_PAYLOAD_RESPONSE: OperationResponse = {
+  description: "PAYLOAD_TOO_LARGE: the JSON body exceeds 64 kB",
+  schema: ErrorResponseSchema,
+};
+
+/**
+ * JSON body parser with one limit per operation: 16 kB globally, 64 kB only
+ * for the operations flagged `largeBody` (matched by method and exact path
+ * template, so no other route ever gets the larger limit).
+ */
+export function createJsonBodyParser(operations: Operation[]): RequestHandler {
+  const standard = express.json({ limit: JSON_BODY_LIMIT });
+  const large = express.json({ limit: LARGE_JSON_BODY_LIMIT });
+  const largeRoutes = operations
+    .filter((operation) => operation.largeBody)
+    .map((operation) => ({
+      method: operation.method.toUpperCase(),
+      pattern: new RegExp(
+        `^${API_PREFIX}${operation.path.replace(/\{\w+\}/g, "[^/]+")}$`,
+      ),
+    }));
+  return (request, response, next) => {
+    const isLarge = largeRoutes.some(
+      (route) =>
+        route.method === request.method && route.pattern.test(request.path),
+    );
+    (isLarge ? large : standard)(request, response, next);
+  };
 }
 
 export function mountOperations(router: Router, operations: Operation[]) {

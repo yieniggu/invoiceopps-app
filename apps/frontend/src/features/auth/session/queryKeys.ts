@@ -14,6 +14,13 @@ export const orgsKey = (identityId: string) =>
 const orgScope = (identityId: string, organizationId: string) =>
   [...identity(identityId), "org", organizationId] as const;
 
+/**
+ * Summary of one organization. This key is a prefix of every other key of the
+ * organization, so it is only ever invalidated with `exact: true`.
+ */
+export const orgKey = (identityId: string, organizationId: string) =>
+  orgScope(identityId, organizationId);
+
 export const orgMembershipsKey = (identityId: string, organizationId: string) =>
   [...orgScope(identityId, organizationId), "memberships"] as const;
 

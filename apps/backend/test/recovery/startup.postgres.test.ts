@@ -3,11 +3,9 @@ import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
+const url = recoveryTestDatabaseUrl();
 
 async function freePort() {
   return new Promise<number>((resolvePort, reject) => {

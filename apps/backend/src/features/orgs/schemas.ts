@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
 import { parseRut } from "../../rut.js";
+import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
 
 const name = z.string().trim().min(1).max(120);
 const role = z.enum(OrganizationRole);
@@ -47,7 +48,12 @@ export const OrganizationCreateRequestSchema = z
   .meta({ id: "OrganizationCreateRequest" });
 
 export const MembershipCreateRequestSchema = z
-  .object({ rut: RutInputSchema, role })
+  .object({
+    rut: RutInputSchema,
+    role,
+    // Absent means every flag false.
+    permissions: InvoicePermissionsSchema.optional(),
+  })
   .strict()
   .meta({ id: "MembershipCreateRequest" });
 
@@ -72,6 +78,7 @@ export const MembershipSchema = z
     userId: z.string(),
     organizationId: z.string(),
     role: z.enum(OrganizationRole),
+    permissions: InvoicePermissionsSchema,
   })
   .meta({ id: "Membership" });
 
@@ -79,8 +86,17 @@ export const UserSummarySchema = z
   .object({ id: z.string(), name: z.string(), rut: z.string() })
   .meta({ id: "UserSummary" });
 
+export const MembershipGroupSchema = z
+  .object({
+    groupId: z.string(),
+    name: z.string(),
+    permissions: InvoicePermissionsSchema,
+  })
+  .meta({ id: "MembershipGroup" });
+
 export const MembershipWithUserSchema = MembershipSchema.extend({
   user: UserSummarySchema,
+  groups: z.array(MembershipGroupSchema),
 }).meta({ id: "MembershipWithUser" });
 
 export const OrganizationListResponseSchema = z
@@ -98,3 +114,34 @@ export const MembershipListResponseSchema = z
 export const MembershipResponseSchema = z
   .object({ membership: MembershipSchema })
   .meta({ id: "MembershipResponse" });
+
+export const OrganizationBasicSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+    description: z.string().nullable(),
+  })
+  .meta({ id: "OrganizationBasic" });
+
+export const OrganizationCountsSchema = z
+  .object({
+    memberCount: z.number().int().nonnegative(),
+    groupCount: z.number().int().nonnegative(),
+  })
+  .meta({
+    id: "OrganizationCounts",
+    description:
+      "memberCount is every member; groupCount is every group for an ADMIN and the platform administrator, only own groups for a plain member",
+  });
+
+export const OrganizationDetailResponseSchema = z
+  .object({
+    organization: OrganizationBasicSchema,
+    summary: OrganizationCountsSchema,
+  })
+  .meta({ id: "OrganizationDetailResponse" });
+
+export const MembershipsResponseSchema = z
+  .object({ memberships: z.array(MembershipSchema) })
+  .meta({ id: "MembershipsResponse" });

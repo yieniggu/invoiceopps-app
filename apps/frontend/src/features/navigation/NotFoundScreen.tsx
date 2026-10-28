@@ -12,7 +12,7 @@ export function NotFoundScreen({
     <div className="screen-stack">
       <PageHeader title="Página no encontrada" description={description} />
       <div className="action-row">
-        <LinkButton to={paths.panel}>Ir al panel principal</LinkButton>
+        <LinkButton to={paths.dashboard}>Ir al panel principal</LinkButton>
       </div>
     </div>
   );

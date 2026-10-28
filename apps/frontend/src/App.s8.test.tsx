@@ -1,3 +1,4 @@
+import { membership } from "./test/transport";
 import {
   cleanup,
   fireEvent,
@@ -9,6 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { Profile } from "./features/profile/ProfileScreen";
 import type { InvoiceDetail } from "./features/invoices/InvoiceWorkspace";
+import { openPolicies } from "./test/policiesRoute";
+
+// Políticas is disabled in the product; the screen is kept unrouted. This
+// suite keeps testing it through the test-only route (see test/policiesRoute).
+vi.mock("./features/session/AppRoutes", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("./features/session/AppRoutes")>();
+  const { withPoliciesRoute } = await import("./test/policiesRoute");
+  return { ...original, AppRoutes: withPoliciesRoute(original.AppRoutes) };
+});
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -51,7 +62,9 @@ function http({
     email: null,
     username: null,
     isPlatformAdministrator: platform,
-    memberships: member ? [{ organization, role }] : [],
+    memberships: member
+      ? [membership(organization, role as "ADMIN" | "USER")]
+      : [],
   };
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
@@ -105,6 +118,11 @@ function http({
               createdAt,
             },
           ],
+        });
+      if (url.pathname === `/api/v1/organizations/${organization.id}`)
+        return json({
+          organization: { ...organization, description: null },
+          summary: { memberCount: 1, groupCount: 1 },
         });
       if (url.pathname === `/api/v1/organizations/${organization.id}/groups`)
         return json({
@@ -171,6 +189,12 @@ async function navigate(name: string) {
   const nav = await screen.findByRole("navigation", {
     name: "Navegación principal",
   });
+  if (name === "Políticas") {
+    // Disabled in the sidebar (not a link): opened through the test route.
+    await openPolicies();
+    expect(screen.getByRole("heading", { level: 1, name })).toBeTruthy();
+    return;
+  }
   fireEvent.click(within(nav).getByRole("link", { name }));
   expect(screen.getByRole("heading", { level: 1, name })).toBeTruthy();
   expect(
@@ -240,22 +264,20 @@ describe("APP12 S8 global acceptance characterization", () => {
     fireEvent.click(
       await screen.findByRole("link", { name: "Ver detalle de Academia S8" }),
     );
-    await screen.findByRole("heading", {
-      level: 2,
-      name: "Miembros de la organización",
-    });
+    await screen.findByRole("heading", { level: 2, name: "Resumen" });
     expect(
       screen.getByRole("heading", { level: 1, name: "Academia S8" }),
     ).toBeTruthy();
     semantics();
+    fireEvent.click(screen.getByRole("link", { name: "Miembros" }));
+    await screen.findByRole("heading", { level: 1, name: "Miembros" });
+    await screen.findByText("Esta organización no tiene miembros.");
+    semantics();
     await navigate("Grupos");
     fireEvent.click(
-      await screen.findByRole("link", { name: "Ver detalle de Equipo S8" }),
+      await screen.findByRole("link", { name: "Ver grupo Equipo S8" }),
     );
-    await screen.findByRole("heading", {
-      level: 2,
-      name: "Información del grupo",
-    });
+    await screen.findByRole("heading", { level: 2, name: "Resumen" });
     expect(
       screen.getByRole("heading", { level: 1, name: "Equipo S8" }),
     ).toBeTruthy();
@@ -288,13 +310,14 @@ describe("APP12 S8 global acceptance characterization", () => {
     semantics();
   });
 
-  it("carries a selected group from policies to the invoice detail", async () => {
+  it("carries a group selected in Facturas to policies and the invoice detail", async () => {
     const requests = http();
     render(<App />);
-    await navigate("Grupos");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Trabajar con Equipo S8" }),
-    );
+    await navigate("Facturas");
+    // The owner is chosen in the Facturas selector (no per-group button).
+    fireEvent.change(await screen.findByLabelText("Propietario"), {
+      target: { value: `${organization.id}:group:${id(3)}` },
+    });
     await navigate("Políticas");
     await screen.findByRole("heading", { name: "s8-policy" });
     expect(

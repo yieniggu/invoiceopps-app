@@ -1,3 +1,4 @@
+import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -26,6 +27,7 @@ const profile = {
   memberships: organizations.map((organization) => ({
     organization,
     role: "USER",
+    ...ACCESS_NONE,
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -53,7 +55,7 @@ function http(current = profile, membershipGroups = groups) {
   const readGroups = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () => json({ groups: membershipGroups }));
-  // Organization-scoped catalogue behind Mis grupos (permissions, no members).
+  // Organization-scoped catalogue behind Mis grupos (no permissions, no members).
   const readOrgGroups = vi
     .fn<(organizationId: string) => Promise<Response>>()
     .mockImplementation(async (organizationId) =>
@@ -65,13 +67,22 @@ function http(current = profile, membershipGroups = groups) {
             organizationId,
             name: group.name,
             description: group.description,
-            permissions: {
-              readInvoices: false,
-              createInvoices: false,
-              deleteOwnInvoices: false,
-              deleteOthersInvoices: false,
-            },
           })),
+      }),
+    );
+  const readMembers = vi
+    .fn<() => Promise<Response>>()
+    .mockImplementation(async () =>
+      json({
+        memberships: [
+          {
+            userId: "person",
+            groupId: "group-0",
+            organizationId: "org-A",
+            permissions: NO_PERMISSIONS,
+            user: { id: "person", name: "Ada", rut: "123456785" },
+          },
+        ],
       }),
     );
   const fetchMock = vi
@@ -117,33 +128,45 @@ function http(current = profile, membershipGroups = groups) {
         ) &&
         method === "GET"
       )
-        return json({
-          memberships: [
-            {
-              userId: "person",
-              groupId: "group-0",
-              organizationId: "org-A",
-              user: { id: "person", name: "Ada", rut: "123456785" },
-            },
-          ],
-        });
+        return readMembers();
       if (path.startsWith("/api/v1/organizations/")) return mutation();
       if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
       throw new Error(`Unexpected request: ${path}`);
     });
-  return { patch, mutation, readGroups, readOrgGroups, fetchMock };
+  return {
+    patch,
+    mutation,
+    readGroups,
+    readOrgGroups,
+    readMembers,
+    fetchMock,
+  };
 }
 function navigate(name: string) {
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("link", { name }),
   );
 }
-/** Permissions and members are managed on the group detail, not the list. */
+/** The workspace owner is chosen in the Facturas / Políticas selector. */
+async function chooseOwner(value: string) {
+  fireEvent.change(await screen.findByLabelText("Propietario"), {
+    target: { value },
+  });
+}
+/** The group summary, opened from the group card. */
 async function openGroup(name: string) {
   fireEvent.click(
-    await screen.findByRole("link", { name: `Ver detalle de ${name}` }),
+    await screen.findByRole("link", { name: `Ver grupo ${name}` }),
   );
+  await screen.findByRole("heading", { level: 1, name });
+}
+/** Permissions live on the person's page: group, then Miembros, then person. */
+async function openGroupMember(group: string, member: string) {
+  await openGroup(group);
+  fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+  fireEvent.click(await screen.findByRole("link", { name: member }));
+  await screen.findByRole("heading", { level: 1, name: member });
 }
 async function start(name = "Panel principal") {
   render(<App />);
@@ -170,8 +193,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       screen.getByRole("heading", { name: "Organizaciones", level: 1 }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Usar Academia B" }),
+      screen.getByRole("link", { name: "Ver detalle de Academia B" }),
     ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /^Usar (Academia|Organización)/ }),
+    ).toBeNull();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
         /^\/api\/v1\/invoices\?/.test(path.toString()),
@@ -211,22 +237,26 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     expect(
       screen.getByRole("textbox", { name: "Correo electrónico" }),
     ).toHaveProperty("value", "nuevo@example.test");
-    expect(api.fetchMock).toHaveBeenLastCalledWith(
-      "/api/v1/profile",
-      expect.objectContaining({
-        body: JSON.stringify({
-          email: "nuevo@example.test",
-          username: "nuevo",
+    // The one save that was sent (not "the last call": other reads may follow).
+    expect(
+      api.fetchMock.mock.calls.filter(([path]) => path === "/api/v1/profile"),
+    ).toEqual([
+      [
+        "/api/v1/profile",
+        expect.objectContaining({
+          body: JSON.stringify({
+            email: "nuevo@example.test",
+            username: "nuevo",
+          }),
         }),
-      }),
-    );
+      ],
+    ]);
   });
 
-  it("selects only the current user's individual context from an actual organization and propagates it to the invoice workspace", async () => {
+  it("selects only the current user's individual context from the invoice workspace selector and propagates it", async () => {
     const api = http();
-    await start("Organizaciones");
-    const use = await screen.findByRole("button", { name: "Usar Academia B" });
-    fireEvent.click(use);
+    await start("Facturas");
+    await chooseOwner("org-B:user:person");
     navigate("Panel principal");
     expect(
       screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
@@ -243,20 +273,20 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
         ),
       ).toBe(true),
     );
-    expect(
-      api.fetchMock.mock.calls
-        .filter(([path]) => /^\/api\/v1\/invoices\?/.test(path.toString()))
-        .every(([path]) => path.toString().includes("organizationId=org-B")),
-    ).toBe(true);
+    // The selector moved the workspace from the default owner to Academia B.
+    const invoiceReads = api.fetchMock.mock.calls
+      .map(([path]) => path.toString())
+      .filter((path) => /^\/api\/v1\/invoices\?/.test(path));
+    expect(invoiceReads.at(-1)).toContain("organizationId=org-B");
   });
 
-  it("selects a loaded membership group and retains that context on the dashboard and invoices", async () => {
+  it("selects a loaded membership group in the invoice owner selector and retains that context on the dashboard and invoices", async () => {
     const api = http();
-    await start("Grupos");
-    // Groups are listed per organization: Equipo 1 sits in Academia B's section.
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Trabajar con Equipo 1" }),
-    );
+    await start("Facturas");
+    // The owner is chosen only in the Facturas selector: there is no
+    // per-group "Trabajar con" button any more.
+    await chooseOwner("org-B:group:group-1");
+    expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
     navigate("Panel principal");
     expect(
       screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
@@ -296,7 +326,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       ),
     ).toBe(false);
     expect(
-      screen.queryByRole("button", { name: "Usar Organización externa" }),
+      screen.queryByRole("button", { name: /^Usar (Academia|Organización)/ }),
     ).toBeNull();
     navigate("Grupos");
     // Platform authority lists organizations; it opens no groups of them.
@@ -304,7 +334,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       await screen.findByText(/No tienes organizaciones asignadas/),
     ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "Trabajar con Equipo externo" }),
+      screen.queryByRole("link", { name: "Ver grupo Equipo externo" }),
     ).toBeNull();
     expect(api.readOrgGroups).not.toHaveBeenCalled();
     navigate("Panel principal");
@@ -336,41 +366,51 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       await screen.findByRole("button", { name: "Reintentar grupos" }),
     );
     expect(
-      await screen.findByRole("button", { name: "Trabajar con Equipo 0" }),
+      await screen.findByRole("link", { name: "Ver grupo Equipo 0" }),
     ).toBeTruthy();
   });
 
-  it("keeps a failed permission draft, names the pending action and announces the successful save", async () => {
+  it("keeps a failed member permission draft, names the pending action and announces the successful save", async () => {
     const api = http({
       ...profile,
-      memberships: [{ organization: organizations[0], role: "ADMIN" }],
+      memberships: [
+        { organization: organizations[0], role: "ADMIN", ...ACCESS_NONE },
+      ],
     });
     const change = pending<Response>();
     api.mutation.mockReturnValueOnce(change.promise);
     await start("Grupos");
-    await openGroup("Equipo 0");
+    await openGroupMember("Equipo 0", "Ada");
     const editor = await screen.findByRole("group", {
-      name: "Permisos sobre facturas",
+      name: "Permisos en el grupo «Equipo 0» — Ada",
     });
-    const create = within(editor).getByRole("checkbox", {
+    const create = within(editor).getByRole("button", {
       name: "Crear facturas",
     });
+    const save = screen.getByRole("button", {
+      name: "Guardar permisos de Ada",
+    });
+    expect(save).toHaveProperty("disabled", true);
     fireEvent.click(create);
-    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
-    expect(
-      await screen.findByRole("button", { name: "Guardando permisos..." }),
-    ).toHaveProperty("disabled", true);
-    await act(async () => change.resolve(json({}, 403)));
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "No fue posible guardar los permisos. Intenta nuevamente.",
+    expect(save).toHaveProperty("disabled", false);
+    fireEvent.click(save);
+    expect((await screen.findByText("Guardando…")).getAttribute("role")).toBe(
+      "status",
     );
-    expect(create).toHaveProperty("checked", true);
-    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
-    expect(await screen.findByText("Permisos guardados.")).toBeTruthy();
+    expect(save).toHaveProperty("disabled", true);
+    await act(async () => change.resolve(json({}, 403)));
+    expect(
+      await screen.findByText(
+        "No fue posible guardar los permisos. Tus cambios siguen en pantalla; intenta nuevamente.",
+      ),
+    ).toBeTruthy();
+    expect(create.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(save);
+    expect(await screen.findByText("Permisos guardados")).toBeTruthy();
     expect(api.fetchMock).toHaveBeenCalledWith(
-      "/api/v1/organizations/org-A/groups/group-0",
+      "/api/v1/organizations/org-A/groups/group-0/memberships/person/permissions",
       expect.objectContaining({
-        method: "PATCH",
+        method: "PUT",
         body: JSON.stringify({
           permissions: {
             readInvoices: false,
@@ -390,30 +430,44 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       method: "POST",
       path: "/api/v1/organizations/org-A/groups",
       body: { name: "Nuevo equipo" },
-      done: "Grupo «Nuevo equipo» creado.",
+      done: "Grupo creado. Agrega a sus miembros.",
     },
     {
       action: "add",
-      button: "Agregar al grupo",
+      button: "Agregar 1 persona al grupo",
       method: "POST",
-      path: "/api/v1/organizations/org-A/groups/group-0/memberships",
-      body: { userId: "new-member" },
-      done: "Persona agregada al grupo.",
+      path: "/api/v1/organizations/org-A/groups/group-0/memberships/bulk",
+      body: {
+        members: [
+          {
+            userId: "new-member",
+            permissions: {
+              readInvoices: false,
+              createInvoices: false,
+              deleteOwnInvoices: false,
+              deleteOthersInvoices: false,
+            },
+          },
+        ],
+      },
+      done: "1 persona agregada al grupo.",
     },
     {
       action: "remove",
-      button: "Quitar a Ada del grupo",
+      button: "Confirmar quitar a Ada",
       method: "DELETE",
       path: "/api/v1/organizations/org-A/groups/group-0/memberships/person",
       body: undefined,
-      done: "Persona quitada del grupo.",
+      done: "Se quitó a Ada del grupo.",
     },
   ])(
     "preserves the $action group contract and prevents a second pending mutation",
     async ({ action, button, method, path, body, done }) => {
       const api = http({
         ...profile,
-        memberships: [{ organization: organizations[0], role: "ADMIN" }],
+        memberships: [
+          { organization: organizations[0], role: "ADMIN", ...ACCESS_NONE },
+        ],
       });
       const mutation = pending<Response>();
       api.mutation.mockReturnValueOnce(mutation.promise);
@@ -428,17 +482,30 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
           await screen.findByRole("textbox", { name: "Nombre del grupo" }),
           { target: { value: "Nuevo equipo" } },
         );
-      } else {
+      } else if (action === "add") {
         await openGroup("Equipo 0");
-        await screen.findByRole("group", { name: "Permisos sobre facturas" });
+        fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+        fireEvent.click(
+          await screen.findByRole("link", { name: "Agregar miembros" }),
+        );
+        fireEvent.click(await screen.findByRole("checkbox", { name: /Nuevo/ }));
+      } else {
+        await openGroupMember("Equipo 0", "Ada");
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Quitar a Ada del grupo" }),
+        );
       }
       const control = await screen.findByRole("button", { name: button });
-      if (action === "add")
-        await screen.findByRole("option", { name: "Nuevo" });
       fireEvent.click(control);
       // The pending state is derived from the mutation: it paints one tick later.
-      await waitFor(() => expect(control).toHaveProperty("disabled", true));
-      fireEvent.click(control);
+      const guard =
+        action === "remove"
+          ? await screen.findByRole("button", {
+              name: "Quitar a Ada del grupo",
+            })
+          : control;
+      await waitFor(() => expect(guard).toHaveProperty("disabled", true));
+      fireEvent.click(guard);
       expect(api.mutation).toHaveBeenCalledTimes(1);
       const request = api.fetchMock.mock.calls.find(
         ([input, init]) => input.toString() === path && init?.method === method,
@@ -449,48 +516,54 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       expect(request?.[1]?.body).toBe(
         body === undefined ? undefined : JSON.stringify(body),
       );
-      // The created group is answered with an existing id, so its detail opens.
+      // The created group is answered with an existing id, so its screen opens.
       await act(async () =>
         mutation.resolve(
           json(action === "create" ? { group: { id: "group-0" } } : {}),
         ),
       );
       await screen.findByText(done);
-      // The write invalidates this organization's groups, which refetch once more.
+      // The write refreshes what it changed: the organization's groups after
+      // creating one, the group's memberships after adding or removing.
       await waitFor(() =>
-        expect(api.readOrgGroups.mock.calls.length).toBeGreaterThanOrEqual(2),
+        expect(
+          (action === "create" ? api.readOrgGroups : api.readMembers).mock.calls
+            .length,
+        ).toBeGreaterThanOrEqual(2),
       );
     },
   );
 
-  it("distinguishes a committed mutation from a failed refresh and retries only the read", async () => {
+  it("distinguishes a committed permission save from a failed refresh and retries only the read", async () => {
     const api = http({
       ...profile,
-      memberships: [{ organization: organizations[0], role: "ADMIN" }],
+      memberships: [
+        { organization: organizations[0], role: "ADMIN", ...ACCESS_NONE },
+      ],
     });
     await start("Grupos");
-    await openGroup("Equipo 0");
-    await screen.findByRole("group", { name: "Permisos sobre facturas" });
-    api.readOrgGroups.mockResolvedValueOnce(json({}, 500));
-    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
-    // The confirmed write stays visible while the refresh fails.
-    expect(await screen.findByText("Permisos guardados.")).toBeTruthy();
-    expect(
-      await screen.findByText(
-        "No fue posible actualizar la lista de grupos. Tus cambios ya se guardaron; no repitas la operación.",
-      ),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Reintentar grupos" }));
-    await waitFor(() =>
-      expect(
-        screen.queryByText(
-          "No fue posible actualizar la lista de grupos. Tus cambios ya se guardaron; no repitas la operación.",
-        ),
-      ).toBeNull(),
+    await openGroupMember("Equipo 0", "Ada");
+    const editor = await screen.findByRole("group", {
+      name: "Permisos en el grupo «Equipo 0» — Ada",
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Leer facturas" }),
     );
+    api.readMembers.mockResolvedValueOnce(json({}, 500));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Guardar permisos de Ada" }),
+    );
+    // The confirmed write stays visible while the refresh fails.
+    expect(await screen.findByText("Permisos guardados")).toBeTruthy();
+    const stale =
+      "No fue posible actualizar los datos del miembro. Tus cambios ya se guardaron; no repitas la operación.";
+    expect(await screen.findByText(stale)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar miembro" }));
+    await waitFor(() => expect(screen.queryByText(stale)).toBeNull());
     expect(api.mutation).toHaveBeenCalledTimes(1);
-    // List, detail mount, refresh after the write, and the single retried read.
-    expect(api.readOrgGroups).toHaveBeenCalledTimes(4);
+    // Summary count, members table, member page mount, the refresh after the
+    // write (500) and the single retried read.
+    expect(api.readMembers).toHaveBeenCalledTimes(5);
   });
 
   it("keeps a membership-free identity honest and does not manufacture group or invoice data", async () => {
@@ -519,7 +592,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
   it("preserves native validation for contact and group fields before any mutation", async () => {
     const api = http({
       ...profile,
-      memberships: [{ organization: organizations[0], role: "ADMIN" }],
+      memberships: [
+        { organization: organizations[0], role: "ADMIN", ...ACCESS_NONE },
+      ],
     });
     await start("Mi perfil");
     fireEvent.change(
@@ -570,9 +645,6 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       screen.getByRole("button", { name: "Reintentar espacio de trabajo" }),
     ).toBeTruthy();
     navigate("Organizaciones");
-    expect(
-      screen.getByRole("button", { name: "Usar Academia B" }),
-    ).toHaveProperty("disabled", true);
     expect(screen.getByRole("alert").textContent).toBe(
       "No fue posible cargar el contexto de las organizaciones.",
     );
@@ -581,12 +653,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
         name: "Reintentar contexto organizacional",
       }),
     );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Usar Academia B" }),
-      ).toHaveProperty("disabled", false),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Usar Academia B" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    navigate("Facturas");
+    await chooseOwner("org-B:user:person");
     navigate("Panel principal");
     expect(
       screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
@@ -607,13 +676,14 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
         ([path]) => path.toString() === "/api/v1/organizations",
       ),
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Usar Academia B" }));
+    navigate("Facturas");
+    await chooseOwner("org-B:user:person");
     navigate("Grupos");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Trabajar con Equipo 1" }),
-    );
     expect(
-      screen.queryByRole("button", { name: "Trabajar con Equipo externo" }),
+      await screen.findByRole("link", { name: "Ver grupo Equipo 1" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("link", { name: "Ver grupo Equipo externo" }),
     ).toBeNull();
     navigate("Facturas");
     await screen.findByText("No hay facturas para este propietario.");
@@ -633,7 +703,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       {
         ...profile,
         name: longName,
-        memberships: [{ organization, role: "ADMIN" }],
+        memberships: [{ organization, role: "ADMIN", ...ACCESS_NONE }],
       },
       [{ ...groups[0], name: longName, organization }],
     );
@@ -654,7 +724,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     if (!card) throw new Error("Missing group card");
     expect(getComputedStyle(card).minWidth).toBe("0px");
     expect(
-      screen.getByRole("link", { name: `Ver detalle de ${longName}` }),
+      screen.getByRole("link", { name: `Ver grupo ${longName}` }),
     ).toBeTruthy();
   });
 });

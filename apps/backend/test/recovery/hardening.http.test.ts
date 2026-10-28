@@ -835,7 +835,7 @@ describe("CR-024 public messages are English and codes are unchanged", () => {
       .send({ currentPassword: "old-password-123", newPassword: "short" });
 
     expect(response.body.error.fields.newPassword).toBe(
-      "The new password must have at least 12 characters",
+      "The new password must have at least 8 characters",
     );
   });
 
@@ -872,8 +872,8 @@ describe("CR-007 password bounds are enforced by the schema", () => {
   it.each([
     ["a 256 character new password", "x".repeat(256), 204],
     ["a 257 character new password", "x".repeat(257), 400],
-    ["an 11 character new password", "x".repeat(11), 400],
-    ["a 12 character new password", "x".repeat(12), 204],
+    ["a 7 character new password", "x".repeat(7), 400],
+    ["an 8 character new password", "x".repeat(8), 204],
   ])("change-password with %s", async (_label, newPassword, status) => {
     const app = createApp({ isReady: async () => true }, fakeAuth());
     const response = await request(app)

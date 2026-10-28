@@ -79,18 +79,52 @@ export function profileFixture(overrides: Record<string, unknown> = {}) {
     mustChangePassword: false,
     isPlatformAdministrator: false,
     memberships: [],
-    contexts: [],
     ...overrides,
   };
 }
 
+export const ALL_PERMISSIONS = {
+  readInvoices: true,
+  createInvoices: true,
+  deleteOwnInvoices: true,
+  deleteOthersInvoices: true,
+};
+export const NO_PERMISSIONS = {
+  readInvoices: false,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+
+/** Spread into raw profile memberships that do not care about v2 flags. */
+export const ACCESS_NONE = {
+  permissions: NO_PERMISSIONS,
+  groups: [] as never[],
+};
+
+/** Profile membership (v2): organization flags plus the groups with their
+ * direct and effective flags. */
 export function membership(
   organization: { id: string; name: string; slug?: string },
   role: "ADMIN" | "USER" = "USER",
+  extra: {
+    permissions?: typeof NO_PERMISSIONS;
+    groups?: Array<{
+      group: { id: string; name: string };
+      permissions?: typeof NO_PERMISSIONS;
+      effective?: typeof NO_PERMISSIONS;
+    }>;
+  } = {},
 ) {
   return {
     organization: { slug: organization.id, ...organization },
     role,
+    permissions: extra.permissions ?? NO_PERMISSIONS,
+    groups: (extra.groups ?? []).map((entry) => ({
+      group: entry.group,
+      permissions: entry.permissions ?? NO_PERMISSIONS,
+      effective: entry.effective ?? entry.permissions ?? NO_PERMISSIONS,
+    })),
   };
 }
 

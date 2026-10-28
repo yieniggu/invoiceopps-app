@@ -1,4 +1,5 @@
 import type { OrganizationRole } from "../../auth/types";
+import type { InvoicePermissions } from "../../permissions/types";
 
 export interface OrganizationUser {
   id: string;
@@ -7,10 +8,34 @@ export interface OrganizationUser {
   role: OrganizationRole;
 }
 
+/** A group a new user joins, with the flags they get in it. */
+export interface UserGroupInput {
+  groupId: string;
+  permissions: InvoicePermissions;
+}
+
+/** Organization-scoped provisioning (POST /organizations/{o}/users). */
 export interface ProvisionUserInput {
   name: string;
   rut: string;
   role: OrganizationRole;
+  permissions: InvoicePermissions;
+  groups: UserGroupInput[];
+}
+
+/** One organization of a platform-created user. */
+export interface UserMembershipInput {
+  organizationId: string;
+  role: OrganizationRole;
+  permissions: InvoicePermissions;
+  groups: UserGroupInput[];
+}
+
+/** Platform provisioning (POST /admin/users): 0..50 organizations. */
+export interface CreateUserInput {
+  name: string;
+  rut: string;
+  memberships: UserMembershipInput[];
 }
 
 /** What the server shows once; it only ever travels to the dialog callback. */
@@ -23,5 +48,5 @@ export interface IssuedCredential {
 /** The only thing a provisioning mutation resolves with. */
 export interface ProvisionedUser {
   userId: string;
-  role: OrganizationRole;
+  name: string;
 }

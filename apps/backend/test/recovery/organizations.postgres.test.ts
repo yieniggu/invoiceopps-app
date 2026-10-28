@@ -7,16 +7,9 @@ import { createApp } from "../../src/app.js";
 import { createAuthService, hashPassword } from "../../src/auth.js";
 import { createDatabase } from "../../src/database.js";
 import { formatRut } from "../../src/rut.js";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
-if (new URL(url).pathname !== "/invoiceops_recovery_test") {
-  throw new Error(
-    "RECOVERY_TEST_DATABASE_URL must target invoiceops_recovery_test",
-  );
-}
+const url = recoveryTestDatabaseUrl();
 
 const client = new pg.Client({ connectionString: url });
 const database = createDatabase(url);
@@ -24,6 +17,13 @@ const prisma = database.prisma;
 const auth = createAuthService(prisma);
 const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
 const PASSWORD = "correct-horse-battery";
+const NO_FLAGS = {
+  readInvoices: false,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+const MISSING_ORG = "00000000-0000-4000-8000-000000000000";
 
 // Single wiring point: the organizations feature must be reachable from the
 // same createApp(database, auth) call the other PostgreSQL suites use.
@@ -72,7 +72,7 @@ async function cookieFor(user: TestUser) {
 }
 
 function call(
-  method: "get" | "post" | "patch" | "delete",
+  method: "get" | "post" | "patch" | "put" | "delete",
   path: string,
   cookie: string | undefined,
   body?: unknown,
@@ -175,6 +175,7 @@ describe("RP0-06 POST /organizations", () => {
       userId: firstAdmin.id,
       organizationId: response.body.organization.id,
       role: "ADMIN",
+      permissions: NO_FLAGS,
     });
     const memberships = await prisma.organizationMembership.findMany({
       where: { organizationId: response.body.organization.id },
@@ -270,55 +271,76 @@ describe("RP0-08 authority matrix", () => {
     const admin = await makeUser();
     const member = await makeUser();
     const outsider = await makeUser();
+    const newcomer = await makeUser();
     await join(admin.id, org.id, "ADMIN");
     await join(member.id, org.id, "USER");
     const target = await makeUser();
     await join(target.id, org.id, "USER");
-    return { org, admin, member, outsider, target };
+    return { org, admin, member, outsider, newcomer, target };
   }
+  type S = Awaited<ReturnType<typeof scenario>>;
 
+  // `platformStatus` is the outcome for the platform administrator over an
+  // existing organization: administrative authority without membership.
   const operations = [
     {
       label: "GET memberships",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
-        call("get", `/organizations/${s.org.id}/memberships`, cookie),
+      platformStatus: 200,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
+        call("get", `/organizations/${orgId}/memberships`, cookie),
     },
     {
       label: "POST memberships",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
-        call("post", `/organizations/${s.org.id}/memberships`, cookie, {
-          rut: formatRut(randomRut()),
+      platformStatus: 201,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
+        call("post", `/organizations/${orgId}/memberships`, cookie, {
+          rut: s.newcomer.rut,
           role: "USER",
         }),
     },
     {
       label: "PATCH membership",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
+      platformStatus: 200,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
         call(
           "patch",
-          `/organizations/${s.org.id}/memberships/${s.target.id}`,
+          `/organizations/${orgId}/memberships/${s.target.id}`,
           cookie,
           { role: "ADMIN" },
         ),
     },
     {
+      label: "PUT membership permissions",
+      platformStatus: 200,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
+        call(
+          "put",
+          `/organizations/${orgId}/memberships/${s.target.id}/permissions`,
+          cookie,
+          { permissions: NO_FLAGS },
+        ),
+    },
+    {
       label: "DELETE membership",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
+      platformStatus: 204,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
         call(
           "delete",
-          `/organizations/${s.org.id}/memberships/${s.target.id}`,
+          `/organizations/${orgId}/memberships/${s.target.id}`,
           cookie,
         ),
     },
     {
       label: "GET users",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
-        call("get", `/organizations/${s.org.id}/users`, cookie),
+      platformStatus: 200,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
+        call("get", `/organizations/${orgId}/users`, cookie),
     },
     {
       label: "POST users",
-      send: (s: Awaited<ReturnType<typeof scenario>>, cookie: string) =>
-        call("post", `/organizations/${s.org.id}/users`, cookie, {
+      platformStatus: 201,
+      send: (s: S, cookie: string, orgId = s.org.id) =>
+        call("post", `/organizations/${orgId}/users`, cookie, {
           name: "Someone",
           rut: formatRut(randomRut()),
           role: "USER",
@@ -327,7 +349,7 @@ describe("RP0-08 authority matrix", () => {
   ];
 
   it.each(operations)(
-    "$label: non-member and platform administrator get 404, USER member gets 403",
+    "$label: non-member gets 404 and USER member gets 403 without mutations",
     async ({ send }) => {
       const s = await scenario();
 
@@ -335,15 +357,10 @@ describe("RP0-08 authority matrix", () => {
       expect(outsider.status).toBe(404);
       expect(outsider.body.error.code).toBe("NOT_FOUND");
 
-      const platformResponse = await send(s, platformCookie);
-      expect(platformResponse.status).toBe(404);
-      expect(platformResponse.body.error.code).toBe("NOT_FOUND");
-
       const member = await send(s, await cookieFor(s.member));
       expect(member.status).toBe(403);
       expect(member.body.error.code).toBe("FORBIDDEN");
 
-      // Nothing was mutated by the rejected calls.
       expect(
         await prisma.organizationMembership.count({
           where: { organizationId: s.org.id },
@@ -351,6 +368,30 @@ describe("RP0-08 authority matrix", () => {
       ).toBe(3);
     },
   );
+
+  it.each(operations)(
+    "$label: the platform administrator is allowed over an existing organization and gets 404 over a missing one",
+    async ({ send, platformStatus }) => {
+      const s = await scenario();
+
+      const missing = await send(s, platformCookie, MISSING_ORG);
+      expect(missing.status).toBe(404);
+      expect(missing.body.error.code).toBe("NOT_FOUND");
+
+      const allowed = await send(s, platformCookie);
+      expect(allowed.status).toBe(platformStatus);
+    },
+  );
+
+  it("gives the platform administrator no membership from administering", async () => {
+    const s = await scenario();
+    await call("get", `/organizations/${s.org.id}/memberships`, platformCookie);
+    expect(
+      await prisma.organizationMembership.count({
+        where: { organizationId: s.org.id, userId: platform.id },
+      }),
+    ).toBe(0);
+  });
 });
 
 describe("RP0-08 memberships", () => {
@@ -373,6 +414,8 @@ describe("RP0-08 memberships", () => {
       userId: member.id,
       organizationId: org.id,
       role: "USER",
+      permissions: NO_FLAGS,
+      groups: [],
       user: { id: member.id, name: "Uma User", rut: member.rawRut },
     });
   });
@@ -398,6 +441,7 @@ describe("RP0-08 memberships", () => {
       userId: target.id,
       organizationId: org.id,
       role: "USER",
+      permissions: NO_FLAGS,
     });
 
     const after = await prisma.user.findUniqueOrThrow({
@@ -464,6 +508,7 @@ describe("RP0-08 memberships", () => {
       userId: other.id,
       organizationId: org.id,
       role: "ADMIN",
+      permissions: NO_FLAGS,
     });
 
     const demoted = await call("patch", path(admin.id), cookie, {
@@ -557,7 +602,9 @@ describe("RP0-08 organization users", () => {
       userId: response.body.user.id,
       organizationId: org.id,
       role: "USER",
+      permissions: NO_FLAGS,
     });
+    expect(response.body.groups).toEqual([]);
     expect(typeof response.body.temporaryPassword).toBe("string");
     expect(response.body.temporaryPassword.length).toBeGreaterThan(0);
 
@@ -569,6 +616,38 @@ describe("RP0-08 organization users", () => {
       .get("/api/v1/auth/profile")
       .set("Cookie", String(login.headers["set-cookie"]).split(";")[0]);
     expect(profile.status).toBe(200);
+    expect(profile.body.profile.mustChangePassword).toBe(true);
+  });
+
+  it("accepts an admin-defined temporary password without echoing it", async () => {
+    const org = await makeOrg("defined-pass");
+    const admin = await makeUser();
+    await join(admin.id, org.id, "ADMIN");
+    const rut = formatRut(randomRut());
+    const defined = "Defined-temp-pass-78";
+
+    const response = await call(
+      "post",
+      `/organizations/${org.id}/users`,
+      await cookieFor(admin),
+      { name: "Defined", rut, role: "USER", temporaryPassword: defined },
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.headers["cache-control"]).toMatch(/no-store/);
+    expect(response.body).not.toHaveProperty("temporaryPassword");
+    expect(JSON.stringify(response.body)).not.toContain(defined);
+    const audit = await prisma.platformAdministrativeAuditEvent.findMany({
+      where: { targetUserId: response.body.user.id },
+    });
+    expect(JSON.stringify(audit)).not.toContain(defined);
+    const login = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ rut, password: defined });
+    expect(login.status).toBe(200);
+    const profile = await request(app)
+      .get("/api/v1/auth/profile")
+      .set("Cookie", String(login.headers["set-cookie"]).split(";")[0]);
     expect(profile.body.profile.mustChangePassword).toBe(true);
   });
 

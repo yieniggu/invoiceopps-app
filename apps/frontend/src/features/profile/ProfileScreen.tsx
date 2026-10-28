@@ -1,16 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { fromApiRut } from "../../lib/rut";
 import type { Profile } from "../auth/types";
+import { memberRoleLabel } from "../orgs/types/roles";
 import { usePendingContact, useUpdateProfile } from "./hooks/useUpdateProfile";
 
 export type { Profile };
 
 export function roleLabel(role: string) {
-  return role === "ADMIN"
-    ? "Administrador"
-    : role === "USER"
-      ? "Usuario"
-      : "Rol no disponible";
+  return role === "ADMIN" || role === "USER"
+    ? memberRoleLabel(role)
+    : "Rol no disponible";
 }
 
 export function ProfileScreen({ profile }: { profile: Profile }) {

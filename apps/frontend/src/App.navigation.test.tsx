@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -11,6 +12,16 @@ import { focusManager } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { openPolicies } from "./test/policiesRoute";
+
+// Políticas is disabled in the product; the screen is kept unrouted. The
+// shared-context test keeps exercising it through the test-only route.
+vi.mock("./features/session/AppRoutes", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("./features/session/AppRoutes")>();
+  const { withPoliciesRoute } = await import("./test/policiesRoute");
+  return { ...original, AppRoutes: withPoliciesRoute(original.AppRoutes) };
+});
 
 const organizations = [
   { id: "org-A", name: "Academia A", slug: "academy-a" },
@@ -26,6 +37,7 @@ const profile = {
   memberships: organizations.map((organization) => ({
     organization,
     role: "USER",
+    ...ACCESS_NONE,
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -166,7 +178,6 @@ describe("APP12 S1 navigation and shared context", () => {
       "Organizaciones",
       "Grupos",
       "Facturas",
-      "Políticas",
     ]) {
       const queries = within(navigation);
       expect(queries.getByRole("link", { name })).toBeTruthy();
@@ -178,6 +189,14 @@ describe("APP12 S1 navigation and shared context", () => {
         queries.getByRole("link", { name }).getAttribute("aria-current"),
       ).toBe("page");
     }
+    // Políticas is disabled: a labelled, aria-disabled item that is not a link.
+    expect(
+      within(navigation).queryByRole("link", { name: "Políticas" }),
+    ).toBeNull();
+    const policies = within(navigation).getByRole("button", {
+      name: "Políticas Próximamente",
+    });
+    expect(policies.getAttribute("aria-disabled")).toBe("true");
     expect(api.unexpected).toEqual([]);
   });
 
@@ -286,7 +305,7 @@ describe("APP12 S1 navigation and shared context", () => {
       ),
     ).toBe(true);
 
-    navigate(navigation, "Políticas");
+    await openPolicies();
     await screen.findByRole("heading", { name: "Políticas", level: 1 });
     expectGroupBVisible();
 

@@ -20,5 +20,8 @@ ENV NODE_ENV=production
 COPY --from=build /runtime ./
 
 ENV PORT=3000
+# Listen on every interface inside the container; compose publishes the port
+# on loopback only.
+ENV HOST=0.0.0.0
 EXPOSE 3000
 CMD ["node", "dist/server.js"]

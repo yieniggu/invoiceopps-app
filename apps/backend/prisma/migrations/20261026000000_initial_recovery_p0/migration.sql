@@ -20,7 +20,7 @@ CREATE TYPE "InvoiceProcessingStatus" AS ENUM ('NOT_REQUESTED');
 CREATE TYPE "ApiTokenScope" AS ENUM ('invoices:read', 'invoices:create', 'invoices:delete-own', 'invoices:delete-others');
 
 -- CreateEnum
-CREATE TYPE "PlatformAdministrativeAuditEventType" AS ENUM ('PLATFORM_ADMINISTRATOR_BOOTSTRAPPED', 'PLATFORM_ADMINISTRATOR_TRANSFERRED', 'ORGANIZATION_MEMBERSHIP_CREATED', 'ORGANIZATION_MEMBERSHIP_ROLE_CHANGED', 'ORGANIZATION_MEMBERSHIP_REMOVED', 'ORGANIZATION_CREATED', 'USER_PROVISIONED', 'PASSWORD_CHANGED');
+CREATE TYPE "PlatformAdministrativeAuditEventType" AS ENUM ('PLATFORM_ADMINISTRATOR_BOOTSTRAPPED', 'PLATFORM_ADMINISTRATOR_TRANSFERRED', 'ORGANIZATION_MEMBERSHIP_CREATED', 'ORGANIZATION_MEMBERSHIP_ROLE_CHANGED', 'ORGANIZATION_MEMBERSHIP_REMOVED', 'ORGANIZATION_CREATED', 'USER_PROVISIONED', 'PASSWORD_CHANGED', 'GROUP_MEMBERSHIP_CREATED', 'GROUP_MEMBERSHIP_REMOVED', 'MEMBERSHIP_PERMISSIONS_CHANGED');
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -55,6 +55,10 @@ CREATE TABLE "OrganizationMembership" (
     "userId" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
     "role" "OrganizationRole" NOT NULL,
+    "readInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "createInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "deleteOwnInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "deleteOthersInvoices" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "OrganizationMembership_pkey" PRIMARY KEY ("id")
 );
@@ -65,10 +69,6 @@ CREATE TABLE "Group" (
     "organizationId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
-    "readInvoices" BOOLEAN NOT NULL DEFAULT false,
-    "createInvoices" BOOLEAN NOT NULL DEFAULT false,
-    "deleteOwnInvoices" BOOLEAN NOT NULL DEFAULT false,
-    "deleteOthersInvoices" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "Group_pkey" PRIMARY KEY ("id")
 );
@@ -79,6 +79,10 @@ CREATE TABLE "GroupMembership" (
     "groupId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
+    "readInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "createInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "deleteOwnInvoices" BOOLEAN NOT NULL DEFAULT false,
+    "deleteOthersInvoices" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "GroupMembership_pkey" PRIMARY KEY ("id")
 );
@@ -98,7 +102,8 @@ CREATE TABLE "Invoice" (
     "id" TEXT NOT NULL,
     "businessId" VARCHAR(80) NOT NULL,
     "organizationId" TEXT NOT NULL,
-    "groupId" TEXT NOT NULL,
+    "groupId" TEXT,
+    "scopeKey" TEXT NOT NULL,
     "supplierName" VARCHAR(200) NOT NULL,
     "amountPesos" INTEGER NOT NULL,
     "currency" "Currency" NOT NULL,
@@ -119,7 +124,8 @@ CREATE TABLE "InvoiceIdempotencyRecord" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
-    "groupId" TEXT NOT NULL,
+    "groupId" TEXT,
+    "scopeKey" TEXT NOT NULL,
     "operation" TEXT NOT NULL,
     "key" VARCHAR(128) NOT NULL,
     "fingerprint" TEXT NOT NULL,
@@ -137,7 +143,7 @@ CREATE TABLE "ApiToken" (
     "userId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
-    "groupId" TEXT NOT NULL,
+    "groupId" TEXT,
     "tokenHash" TEXT NOT NULL,
     "scopes" "ApiTokenScope"[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -179,8 +185,14 @@ CREATE TABLE "PlatformAdministrativeAuditEvent" (
     "actorUserId" TEXT NOT NULL,
     "targetUserId" TEXT,
     "organizationId" TEXT,
+    "groupId" TEXT,
     "previousRole" "OrganizationRole",
     "role" "OrganizationRole",
+    "readInvoices" BOOLEAN,
+    "createInvoices" BOOLEAN,
+    "deleteOwnInvoices" BOOLEAN,
+    "deleteOthersInvoices" BOOLEAN,
+    "actorIsTarget" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "PlatformAdministrativeAuditEvent_pkey" PRIMARY KEY ("id")
@@ -194,6 +206,9 @@ CREATE UNIQUE INDEX "Organization_slug_key" ON "Organization"("slug");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "OrganizationMembership_userId_organizationId_key" ON "OrganizationMembership"("userId", "organizationId");
+
+-- CreateIndex
+CREATE INDEX "OrganizationMembership_organizationId_role_idx" ON "OrganizationMembership"("organizationId", "role");
 
 -- CreateIndex
 CREATE INDEX "Group_organizationId_name_idx" ON "Group"("organizationId", "name");
@@ -217,19 +232,19 @@ CREATE INDEX "Session_userId_idx" ON "Session"("userId");
 CREATE INDEX "Session_expiresAt_idx" ON "Session"("expiresAt");
 
 -- CreateIndex
-CREATE INDEX "Invoice_organizationId_groupId_deletedAt_createdAt_id_idx" ON "Invoice"("organizationId", "groupId", "deletedAt", "createdAt" DESC, "id" DESC);
+CREATE INDEX "Invoice_organizationId_scopeKey_deletedAt_createdAt_id_idx" ON "Invoice"("organizationId", "scopeKey", "deletedAt", "createdAt" DESC, "id" DESC);
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Invoice_organizationId_businessId_key" ON "Invoice"("organizationId", "businessId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Invoice_id_organizationId_groupId_key" ON "Invoice"("id", "organizationId", "groupId");
+CREATE UNIQUE INDEX "Invoice_id_organizationId_scopeKey_key" ON "Invoice"("id", "organizationId", "scopeKey");
 
 -- CreateIndex
 CREATE INDEX "InvoiceIdempotencyRecord_invoiceId_idx" ON "InvoiceIdempotencyRecord"("invoiceId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "InvoiceIdempotencyRecord_userId_organizationId_groupId_oper_key" ON "InvoiceIdempotencyRecord"("userId", "organizationId", "groupId", "operation", "key");
+CREATE UNIQUE INDEX "InvoiceIdempotencyRecord_userId_organizationId_scopeKey_ope_key" ON "InvoiceIdempotencyRecord"("userId", "organizationId", "scopeKey", "operation", "key");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ApiToken_tokenHash_key" ON "ApiToken"("tokenHash");
@@ -292,7 +307,7 @@ ALTER TABLE "InvoiceIdempotencyRecord" ADD CONSTRAINT "InvoiceIdempotencyRecord_
 ALTER TABLE "InvoiceIdempotencyRecord" ADD CONSTRAINT "InvoiceIdempotencyRecord_groupId_organizationId_fkey" FOREIGN KEY ("groupId", "organizationId") REFERENCES "Group"("id", "organizationId") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "InvoiceIdempotencyRecord" ADD CONSTRAINT "InvoiceIdempotencyRecord_invoiceId_organizationId_groupId_fkey" FOREIGN KEY ("invoiceId", "organizationId", "groupId") REFERENCES "Invoice"("id", "organizationId", "groupId") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "InvoiceIdempotencyRecord" ADD CONSTRAINT "InvoiceIdempotencyRecord_invoiceId_organizationId_scopeKey_fkey" FOREIGN KEY ("invoiceId", "organizationId", "scopeKey") REFERENCES "Invoice"("id", "organizationId", "scopeKey") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ApiToken" ADD CONSTRAINT "ApiToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -314,6 +329,15 @@ ALTER TABLE "PlatformAdministrativeAuditEvent" ADD CONSTRAINT "PlatformAdministr
 
 
 -- Hand-written constraints and guards (not expressible in the Prisma schema).
+
+-- scopeKey mirrors the optional group of a row so that a NULL group (organization
+-- scope) still takes part in the composite foreign key and in the idempotency
+-- unique key; the CHECK keeps it from drifting away from groupId.
+ALTER TABLE "Invoice"
+  ADD CONSTRAINT "Invoice_scopeKey_matches_groupId_check" CHECK ("scopeKey" = COALESCE("groupId", 'organization'));
+
+ALTER TABLE "InvoiceIdempotencyRecord"
+  ADD CONSTRAINT "InvoiceIdempotencyRecord_scopeKey_matches_groupId_check" CHECK ("scopeKey" = COALESCE("groupId", 'organization'));
 
 ALTER TABLE "PlatformAdministrator" ADD CONSTRAINT "PlatformAdministrator_singleton_check" CHECK ("id" = 1);
 

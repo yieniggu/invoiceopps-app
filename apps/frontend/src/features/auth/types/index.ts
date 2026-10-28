@@ -1,11 +1,14 @@
+import type { InvoicePermissions } from "../../permissions/types";
+
 export type OrganizationRole = "ADMIN" | "USER";
 
-export interface GroupCapabilities {
-  readInvoices: boolean;
-  createInvoices: boolean;
-  deleteOwnInvoices: boolean;
-  deleteOthersInvoices: boolean;
-}
+export type GroupMembershipProfile = {
+  group: { id: string; name: string };
+  /** Flags granted directly at the group level. */
+  permissions: InvoicePermissions;
+  /** What the person can actually do through this group (presentation only). */
+  effective: InvoicePermissions;
+};
 
 export type Profile = {
   id: string;
@@ -18,12 +21,7 @@ export type Profile = {
   memberships: Array<{
     organization: { id: string; name: string; slug: string };
     role: string;
-  }>;
-  contexts?: Array<{
-    organizationId: string;
-    organizationName: string;
-    groupId: string;
-    groupName: string;
-    capabilities: GroupCapabilities;
+    permissions: InvoicePermissions;
+    groups: GroupMembershipProfile[];
   }>;
 };

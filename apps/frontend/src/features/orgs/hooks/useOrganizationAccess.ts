@@ -9,9 +9,13 @@ export function useOrganizationAccess(
   const membership = profile.memberships.find(
     ({ organization }) => organization.id === organizationId,
   );
+  const isAdmin = isAdminRole(membership?.role);
   return {
     organization: membership?.organization,
     isMember: membership !== undefined,
-    isAdmin: isAdminRole(membership?.role),
+    isAdmin,
+    /** Organization ADMIN or platform administrator: may manage people. */
+    canManage: isAdmin || profile.isPlatformAdministrator,
+    membership,
   };
 }

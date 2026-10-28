@@ -25,35 +25,93 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    cookie; no copies tokens al navegador.
 2. En **Mi perfil**, consulta identidad y membresías y guarda correo electrónico
    o nombre de usuario. Nombre, RUT y roles no se editan allí.
-3. En **Organizaciones** (`/organizaciones`), abre una organización vigente; en
-   **Grupos** (`/grupos`), usa **Trabajar con…** para seleccionar un grupo al
-   que perteneces. El resumen de organización/propietario permanece visible al
-   navegar. Si el acceso se revoca, no se elige otro propietario
-   automáticamente.
-4. Desde **Panel principal**, abre el trabajo deseado. El panel muestra contexto
-   y accesos, no totales financieros o métricas que la API no ofrece.
-5. En **Facturas**, busca por ID/proveedor y carga más resultados explícitamente.
-   **Ver…** abre el **detalle de factura**, sus hechos y su riesgo.
-6. En **Políticas**, consulta versiones/umbrales del mismo propietario. El dueño
-   individual puede crear/editar; las políticas grupales requieren ADMIN de esa
-   organización.
+3. En **Organizaciones** (`/organizations`), abre una organización vigente; en
+   **Grupos** (`/groups`), abre un grupo al que perteneces con «Ver grupo». La
+   organización y el propietario de trabajo se eligen solo con el selector
+   «Propietario» de **Facturas**. Si el acceso se revoca, no se elige otro
+   propietario automáticamente.
+4. Desde **Panel principal** (`/dashboard`), abre el trabajo deseado. El panel
+   muestra contexto y accesos, no totales financieros o métricas que la API no
+   ofrece.
+5. En **Facturas** (`/invoices`), busca por ID/proveedor y carga más resultados
+   explícitamente. **Ver…** abre el **detalle de factura**, sus hechos y su
+   riesgo.
+6. **Políticas** (`/policies`) está deshabilitada por ahora: el ítem del menú se
+   muestra con la insignia «Próximamente» y la ruta responde «No disponible por
+   ahora.». El código de la pantalla de políticas se conserva sin enrutar.
 7. No existe una pantalla «Administración»: la gestión vive en las pantallas de
-   organizaciones y grupos. En `/organizaciones/nueva` («Crear organización»,
-   solo el administrador de plataforma) se indica de forma explícita el RUT del
-   primer ADMIN de la organización (la plataforma no recibe acceso a facturas ni
-   a grupos). Cada ADMIN de organización abre `/organizaciones/:id`, donde crea
-   y asigna usuarios con rol inicial y gestiona las membresías de la
-   organización; crea grupos en `/organizaciones/:id/grupos/nuevo` y, en el
-   detalle del grupo (`/organizaciones/:id/grupos/:groupId`), gestiona sus
-   cuatro permisos de facturas (leer, crear, eliminar propias, eliminar de
-   otros; todos desactivados al crear) y sus miembros. La contraseña temporal
-   se muestra una sola vez, con `Cache-Control: no-store`, y no se registra.
-   Descubrir una organización administrable no concede acceso a su trabajo. Las
-   rutas `/platform/*` del frontend y `/api/v1/platform/users` se retiraron
-   (RP0-05 a RP0-08): la administración vive bajo `/api/v1/organizations`.
+   organizaciones y grupos. En `/organizations/new` («Crear organización», solo
+   el administrador de plataforma) se indica de forma explícita el RUT del primer
+   ADMIN de la organización (la plataforma no recibe acceso a facturas ni a
+   grupos). Cada ADMIN de organización gestiona su organización en pantallas
+   separadas:
+
+   | Ruta                                                 | Pantalla                                                                                                                               |
+   | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+   | `/organizations/:organizationId`                     | Resumen: nombre, identificador, descripción, cantidad de miembros y de grupos; enlaces «Miembros» y «Grupos» y atajo «Agregar miembro» |
+   | `/organizations/:organizationId/members`             | Tabla de miembros (nombre, RUT, rol, grupos, permisos «n de 4»); selección por fila y «Seleccionar todos»; «Editar permisos en bloque» |
+   | `/organizations/:organizationId/members/new`         | Pestañas «Agregar persona existente» (RUT, rol, permisos) y «Crear persona nueva» (asistente de cuatro pasos de una organización)      |
+   | `/organizations/:organizationId/members/:userId`     | Miembro: cambio de rol, permisos de organización, grupos de la organización (permisos, agregar y quitar) y quitar de la organización   |
+   | `/organizations/:organizationId/members/permissions` | Permisos en bloque de `?userIds=a,b` (sobrevive a recargar); «Aplicar a N miembros»                                                    |
+   | `/organizations/:organizationId/groups`              | Tarjetas de grupos con «Ver grupo»                                                                                                     |
+   | `/organizations/:organizationId/groups/new`          | Solo nombre y descripción; al crear lleva a agregar miembros                                                                           |
+   | `/organizations/:organizationId/groups/:groupId`     | Resumen del grupo: nombre, descripción, cantidad de miembros y enlace «Miembros»                                                       |
+   | `.../groups/:groupId/members`                        | Tabla de miembros del grupo con selección y «Editar permisos en bloque»                                                                |
+   | `.../groups/:groupId/members/new`                    | Elegir varios miembros de la organización (búsqueda por nombre/RUT, «Seleccionar todos»), permisos por persona o «Aplicar los mismos…» |
+   | `.../groups/:groupId/members/:userId`                | Permisos de la persona en el grupo y quitar del grupo                                                                                  |
+   | `.../groups/:groupId/members/permissions`            | Permisos en bloque del grupo (`?userIds=`)                                                                                             |
+
+   Los cuatro permisos de facturas (leer, crear, eliminar propias, eliminar de
+   otros; todos desactivados por defecto) se muestran como botones de alternancia
+   (+ activa, − desactiva; con «Marcar todos» y «Desmarcar todos»). El estado de
+   cada botón lo transmiten `aria-pressed` y el ícono/borde; los botones no
+   llevan texto de estado como «Activado» o «Desactivado». Se asignan por
+   persona, en su membresía de organización y en la de grupo (efectivo en grupo =
+   organización o grupo), con «Guardar» en las pantallas de la persona.
+   Un administrador (de organización o de plataforma) puede asignarse permisos a
+   sí mismo: queda registrado de forma durable en la auditoría
+   (`actorIsTarget`) y ningún rol da acceso implícito a facturas. Cambiar tu
+   propio rol pide confirmación y, tras quitarte de una organización, la app te
+   lleva a **Organizaciones** con un aviso. Agregar
+   varias personas a un grupo es atómico (todas o ninguna; hasta 200 por
+   operación, igual que los permisos en bloque). En pantallas angostas (menos de
+   40 rem) las tablas de personas pasan a filas apiladas con la etiqueta de cada
+   columna, sin desplazamiento horizontal.
+
+   > **Aviso (RP0-11):** por ahora los permisos de facturas se guardan y se
+   > auditan, pero **todavía no restringen la lectura**: los endpoints de facturas
+   > no consultan los permisos efectivos hasta RP0-11 (y las escrituras hasta
+   > RP0-09/10/12). No los uses como control de acceso hasta entonces.
+
+   El administrador de
+   plataforma crea usuarios con varias organizaciones y grupos en **Admin →
+   Crear usuario** (`/admin/users/new`; `?organizationId=` preselecciona), con
+   el mismo asistente de cuatro pasos (Datos → Organizaciones → Grupos →
+   Resumen; organizaciones y grupos son tarjetas plegables con un resumen de una
+   línea; un usuario puede tener hasta 200 grupos en total entre todas sus
+   organizaciones: al llegar al tope el asistente deja de ofrecer grupos). En el
+   paso Datos se elige la **contraseña temporal**: «Generar
+   automáticamente» (por defecto; el servidor la genera, se muestra una sola vez,
+   con `Cache-Control: no-store`, y no se registra) o «Definir contraseña
+   temporal» (8 a 256 caracteres, repetida; viaja en el cuerpo de la solicitud,
+   la respuesta no la devuelve y la interfaz no la muestra ni la guarda en
+   cachés). En ambos casos la persona debe cambiarla al iniciar sesión. La
+   contraseña generada se muestra en un cuadro que solo se cierra con «Ya copié
+   la contraseña» (Escape y el fondo no lo descartan); «Copiar» la envía al
+   portapapeles o, si no hay permiso, la deja seleccionada.
+   Cuando el administrador de plataforma crea una organización y nombra a otra
+   persona como primer ADMIN, la organización no aparece en su lista (no es
+   miembro) y el aviso posterior a la creación lo explica; el directorio de
+   organizaciones para plataforma llega con RP0-23.
+   Las rutas antiguas en español (`/panel`, `/facturas`, `/organizaciones`,
+   `/grupos`, etc.) ya no existen y no redirigen: cualquier URL desconocida
+   muestra «Página no encontrada». Descubrir una organización administrable no
+   concede acceso a su trabajo. Las rutas `/platform/*` del frontend y
+   `/api/v1/platform/users` se retiraron (RP0-05 a RP0-08): la administración
+   vive bajo `/api/v1/organizations`.
 
 Las superficies vigentes son: acceso mediante login, perfil, organizaciones,
-grupos, panel, facturas, detalle y políticas. No son destinos universales: el
+grupos, panel, facturas y detalle (políticas está deshabilitada). No son destinos universales: el
 detalle se abre dentro de Facturas y la gestión de personas y grupos depende del
 rol (ADMIN de la organización).
 
@@ -143,6 +201,7 @@ Consulta [`LOCAL_RUN.md`](LOCAL_RUN.md) para el procedimiento local completo y l
 comandos `pnpm test:recovery:unit` / `pnpm test:recovery:postgres`. Las pruebas de la
 interfaz de recuperación (onboarding, organizaciones, grupos, usuarios y membresías)
 se ejecutan con `pnpm test:recovery:ui`.
+Las pruebas E2E del navegador (Playwright, pila real contra la base de pruebas aislada) se ejecutan con `pnpm test:e2e`; ver «Pruebas E2E del navegador» en [`LOCAL_RUN.md`](LOCAL_RUN.md).
 
 Crea `.env`, levanta PostgreSQL y el backend/frontend siguiendo
 [`LOCAL_RUN.md`](LOCAL_RUN.md). No se duplican aquí los pasos ni la tabla de
@@ -167,8 +226,10 @@ detiene el arranque) indica cuántos proxies inversos confiables preceden al
 backend para que `request.ip` sea el cliente real y no el proxy.
 Las variables se aplican al proceso del backend (`pnpm dev`, ruta A); el overlay
 de Docker no las reenvía; el `docker-compose.yml` base solo fija
-`AUTH_TRUST_PROXY_HOPS=1` (nginx es el único proxy) y publica el backend solo en
-loopback. Detalle en [`LOCAL_RUN.md`](LOCAL_RUN.md).
+`AUTH_TRUST_PROXY_HOPS=1` (nginx es el único proxy) y publica solo en loopback el
+backend, el frontend y la base de pruebas `db-test` (`127.0.0.1:`; esta última
+tiene una contraseña conocida y las suites la vacían). Detalle en
+[`LOCAL_RUN.md`](LOCAL_RUN.md).
 
 ## URLs y checks
 
@@ -184,7 +245,11 @@ Con Docker + overlay local:
 - Frontend: `http://127.0.0.1:5174`
 - Backend: `http://127.0.0.1:5300` (mismas rutas `/health/live` y `/health/ready`)
 
-El servidor de desarrollo de Vite escucha solo en `127.0.0.1`.
+El servidor de desarrollo de Vite escucha solo en `127.0.0.1`. El backend
+también: escucha en `HOST` (por defecto `127.0.0.1`). En el contenedor la imagen
+y `docker-compose.yml` fijan `HOST=0.0.0.0` para que el puerto publicado llegue
+al proceso; el puerto sigue publicado solo en loopback del anfitrión. No
+definas `HOST=0.0.0.0` fuera de un contenedor.
 
 `/health/live` confirma que el proceso HTTP está disponible. `/health/ready`
 consulta PostgreSQL y devuelve `503` con una respuesta segura si la base de datos
@@ -250,8 +315,9 @@ el logout (y el `PATCH /api/v1/profile` heredado) son las únicas rutas
 permitidas; el resto responde `403 ONBOARDING_REQUIRED`. La sesión de un usuario
 con contraseña temporal caduca como máximo cuando caduca la temporal. Una petición
 con `Authorization` y cookie de sesión responde `400 AMBIGUOUS_AUTH`; `Authorization`
-sola responde `401` (los Bearer llegan con RP0-16). El perfil incluye `contexts`:
-grupos de organizaciones habilitadas con ambas membresías y sus capacidades.
+sola responde `401` (los Bearer llegan con RP0-16). El perfil incluye `memberships`: por
+organización, `role`, `permissions` y los grupos de esa organización con sus
+`permissions` y `effective` (presentación; el servidor decide). No existe `contexts`.
 
 Solo `POST /api/v1/auth/login` limita los intentos mediante memoria local
 (`logout` y `change-password` no tienen límite). Política: cuenta únicamente
@@ -316,17 +382,40 @@ multiple groups in the same organization, while the database prevents duplicate
 group-user pairs and enforces that every group member has an
 `OrganizationMembership` in that group organization.
 
-Authenticated users can call `GET /api/v1/groups` to list only their groups and every
-group member in deterministic organization, group, and member order. Group
+Authenticated users can call `GET /api/v1/groups` (legacy, undocumented) to list only
+their own groups (`id`, `name`, `description`, `organization`) in deterministic
+organization and group order; it does not include the people in them (member
+listings are for the organization `ADMIN` and the platform administrator). Group
 management is scoped under `/api/v1/organizations/:organizationId/groups`; only a
-current `ADMIN` of that organization can create or update a group (including its four
-invoice permission flags) and add or remove members. The server validates the current session and resource
+current `ADMIN` of that organization (or the platform administrator) can create a group
+and add or remove members. The four invoice permission flags live on
+`OrganizationMembership` and `GroupMembership` (default `false`) and are replaced with
+`PUT .../memberships/:userId/permissions` and
+`PUT .../groups/:groupId/memberships/:userId/permissions`; `Group` has none and
+`PATCH .../groups/:groupId` was removed. Effective permissions in a group are
+organization OR group flags; at organization scope, organization flags only. The server validates the current session and resource
 organization for every request, returning safe authorization responses for
 absent sessions, non-members, and users with the USER role.
 
-El administrador de plataforma no tiene acceso implícito a grupos, memberships
-ni facturas: sin una membership en la organización recibe `404`, igual que
-cualquier persona ajena. Esta regla se aplica en el servidor y no depende de
+JSON request bodies are limited to 16 kB (`413 PAYLOAD_TOO_LARGE` above it).
+Only the five batch operations accept up to 64 kB, enough for 200 members with
+their own permissions: `POST /api/v1/admin/users`,
+`POST /api/v1/organizations/:organizationId/users`,
+`POST .../groups/:groupId/memberships/bulk` and the two bulk
+`PUT .../memberships/permissions`. `POST /api/v1/admin/users` accepts at most 50
+memberships and **200 group grants in total** across all of them (`400` above
+that; the largest valid body, with UUIDs, all flags and the longest name and
+password, is about 42 kB, so it always fits in 64 kB). Every membership write (user provisioning
+included) runs in a SERIALIZABLE transaction with bounded, jittered retries and
+answers `503 RETRYABLE_CONFLICT` with `Retry-After` when they run out: repeat the
+request. Every membership change is also written to the durable
+`PlatformAdministrativeAuditEvent` table in the same transaction (one row per
+affected member, identifiers and the new flags only).
+
+El administrador de plataforma tiene autoridad **administrativa** sobre cualquier
+organización o grupo (miembros, roles, grupos y permisos; `404` solo si la
+organización no existe), pero nunca acceso a facturas: el resolutor de permisos
+ignora la plataforma. Esta regla se aplica en el servidor y no depende de
 permisos entregados por el cliente.
 
 El primer administrador de plataforma se crea fuera de HTTP con

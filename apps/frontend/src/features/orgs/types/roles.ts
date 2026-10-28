@@ -1,8 +1,8 @@
 import type { OrganizationRole } from "../../auth/types";
 
-/** How a role reads in organization and group screens. */
+/** How a role reads everywhere (screens, role selects, wizard summaries). */
 export function memberRoleLabel(role: string) {
-  return role === "ADMIN" ? "Administrador" : "Miembro";
+  return role === "ADMIN" ? "Administrador" : "Usuario";
 }
 
 export const isAdminRole = (

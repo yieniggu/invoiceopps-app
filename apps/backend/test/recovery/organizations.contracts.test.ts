@@ -13,7 +13,9 @@ type Json = Record<string, unknown>;
 const ORGANIZATION_OPERATIONS = [
   ["get", "/api/v1/organizations"],
   ["post", "/api/v1/organizations"],
+  ["get", "/api/v1/organizations/{organizationId}"],
   ["get", "/api/v1/organizations/{organizationId}/memberships"],
+  ["put", "/api/v1/organizations/{organizationId}/memberships/permissions"],
   ["post", "/api/v1/organizations/{organizationId}/memberships"],
   ["patch", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
   ["delete", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
@@ -60,6 +62,67 @@ describe("RP0-06/RP0-08 organization OpenAPI contract", () => {
       if (method === "get" || method === "delete") continue;
       expect(bodyOf(path, method), `${method} ${path}`).toBeDefined();
     }
+  });
+
+  it("documents the optional temporaryPassword in both create-user requests and responses", () => {
+    const schemas = ((document.components as Json | undefined)?.schemas ??
+      {}) as Record<string, Json>;
+    const property = (schema: string, name: string) =>
+      ((schemas[schema]?.properties ?? {}) as Record<string, Json>)[name];
+    const required = (schema: string) =>
+      (schemas[schema]?.required ?? []) as string[];
+
+    for (const schema of ["UserProvisionRequest", "AdminUserCreateRequest"]) {
+      expect(property(schema, "temporaryPassword"), schema).toMatchObject({
+        type: "string",
+        minLength: 8,
+        maxLength: 256,
+      });
+      expect(required(schema), schema).not.toContain("temporaryPassword");
+    }
+    for (const schema of ["UserProvisionResponse", "AdminUserCreateResponse"]) {
+      expect(property(schema, "temporaryPassword"), schema).toBeDefined();
+      expect(required(schema), schema).not.toContain("temporaryPassword");
+    }
+  });
+
+  it("documents the organization summary and the bulk permission contracts", () => {
+    const schemas = ((document.components as Json | undefined)?.schemas ??
+      {}) as Record<string, Json>;
+    const properties = (schema: string) =>
+      (schemas[schema]?.properties ?? {}) as Record<string, Json>;
+    const required = (schema: string) =>
+      (schemas[schema]?.required ?? []) as string[];
+
+    expect(
+      Object.keys(properties("OrganizationDetailResponse")).sort(),
+    ).toEqual(["organization", "summary"]);
+    expect(Object.keys(properties("OrganizationBasic")).sort()).toEqual([
+      "description",
+      "id",
+      "name",
+      "slug",
+    ]);
+    expect(Object.keys(properties("OrganizationCounts")).sort()).toEqual([
+      "groupCount",
+      "memberCount",
+    ]);
+    expect(properties("BulkPermissionsUpdateRequest").userIds).toMatchObject({
+      type: "array",
+      minItems: 1,
+      maxItems: 200,
+      items: { type: "string", format: "uuid" },
+    });
+    expect(required("BulkPermissionsUpdateRequest").sort()).toEqual([
+      "permissions",
+      "userIds",
+    ]);
+    expect(schemas.BulkPermissionsUpdateRequest?.additionalProperties).toBe(
+      false,
+    );
+    expect(properties("MembershipsResponse").memberships).toMatchObject({
+      type: "array",
+    });
   });
 
   it("no longer documents or mounts the legacy platform routes", () => {

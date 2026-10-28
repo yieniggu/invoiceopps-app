@@ -46,7 +46,7 @@ describe("CR-107 late PATCH /profile after an identity swap", () => {
         return jsonResponse({ user: {} });
       },
     });
-    const { store } = renderApp({ route: "/perfil" });
+    const { store } = renderApp({ route: "/profile" });
     fireEvent.change(await screen.findByLabelText("Correo electrónico"), {
       target: { value: "ada-late@example.test" },
     });
@@ -91,12 +91,6 @@ describe("CR-107 group create re-submit", () => {
       organizationId: "org-1",
       name: "Cobranza",
       description: null,
-      permissions: {
-        readInvoices: false,
-        createInvoices: false,
-        deleteOwnInvoices: false,
-        deleteOthersInvoices: false,
-      },
     };
     const base = "/api/v1/organizations/org-1";
     const transport = mockTransport({
@@ -108,7 +102,7 @@ describe("CR-107 group create re-submit", () => {
         jsonResponse({ memberships: [] }),
       [`POST ${base}/groups`]: () => gate.promise,
     });
-    renderApp({ route: "/organizaciones/org-1/grupos/nuevo" });
+    renderApp({ route: "/organizations/org-1/groups/new" });
     fireEvent.change(await screen.findByLabelText("Nombre del grupo"), {
       target: { value: "Cobranza" },
     });
@@ -124,7 +118,7 @@ describe("CR-107 group create re-submit", () => {
       expect(transport.calls(`POST ${base}/groups`)).toHaveLength(1),
     );
     await act(async () => gate.resolve(jsonResponse({ group: created }, 201)));
-    await screen.findByText("Grupo «Cobranza» creado.");
+    await screen.findByText("Grupo creado. Agrega a sus miembros.");
     expect(transport.calls(`POST ${base}/groups`)).toHaveLength(1);
   });
 });

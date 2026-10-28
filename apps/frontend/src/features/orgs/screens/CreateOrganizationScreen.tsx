@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { BackLink } from "../../../components/BackLink";
 import { MutationFeedback } from "../../../components/MutationFeedback";
 import { PageHeader } from "../../../components/PageHeader";
+import { cleanRut } from "../../../lib/rut";
 import type { Profile } from "../../auth/types";
 import { paths, type RouteNotice } from "../../navigation/paths";
 import { OrganizationForm } from "../components/OrganizationForm";
@@ -27,15 +28,32 @@ export function CreateOrganizationScreen({ profile }: { profile: Profile }) {
       </div>
     );
   }
-  return <CreateOrganizationContainer />;
+  return <CreateOrganizationContainer profile={profile} />;
 }
 
-function CreateOrganizationContainer() {
+/**
+ * The platform administrator is not a member of what they create unless they
+ * name themselves first administrator, and the list they land on shows only
+ * their memberships: say so, or the new organization seems to have vanished.
+ * What the notice states is checked: the API lets the platform administrator
+ * administer any organization, but the screens resolve an organization from
+ * the profile's memberships, so opening it by URL shows "not found".
+ */
+function createdNotice(name: string, actorIsFirstAdmin: boolean) {
+  return actorIsFirstAdmin
+    ? `Organización «${name}» creada.`
+    : `Organización «${name}» creada. No aparece en esta lista porque no eres miembro de ella: su primer administrador la verá en la suya y podrá agregar a las personas. La plataforma sí puede administrarla, pero hasta que exista el directorio de organizaciones esta aplicación no lista ni abre organizaciones de las que no eres miembro.`;
+}
+
+function CreateOrganizationContainer({ profile }: { profile: Profile }) {
   const navigate = useNavigate();
-  const form = useCreateOrganizationForm((name) =>
+  const form = useCreateOrganizationForm(({ name, firstAdminRut }) =>
     navigate(paths.organizations, {
       state: {
-        notice: `Organización «${name}» creada. Aparecerá en esta lista solo si tú eres su primer administrador.`,
+        notice: createdNotice(
+          name,
+          cleanRut(firstAdminRut) === cleanRut(profile.rut),
+        ),
       } satisfies RouteNotice,
     }),
   );
@@ -49,7 +67,6 @@ function CreateOrganizationContainer() {
         description="Define la organización y a su primer administrador; esa persona podrá agregar al resto."
       />
       <OrganizationForm
-        mode="create"
         values={form.values}
         onChange={form.change}
         invalid={form.invalid}

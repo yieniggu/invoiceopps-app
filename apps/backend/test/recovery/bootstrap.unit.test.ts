@@ -109,7 +109,7 @@ describe("RP0-03 bootstrap concurrency conflicts", () => {
       service.bootstrap({
         name: "Ada",
         rut: "12.345.678-5",
-        password: "x".repeat(12),
+        password: "x".repeat(8),
       }),
     ).rejects.toThrow(message);
     await expect(
@@ -143,14 +143,14 @@ describe("RP0-03 bootstrap password bounds", () => {
   });
 
   it.each([
-    ["12 characters", "x".repeat(12)],
+    ["8 characters", "x".repeat(8)],
     ["256 characters", "x".repeat(256)],
   ])("accepts %s", (_label, password) => {
     expect(parseBootstrapInput(input(password)).password).toBe(password);
   });
 
   it.each([
-    ["11 characters", "x".repeat(11)],
+    ["7 characters", "x".repeat(7)],
     ["257 characters", "x".repeat(257)],
   ])(
     "rejects %s with the range and without echoing the password",
@@ -161,7 +161,7 @@ describe("RP0-03 bootstrap password bounds", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(BootstrapInputError);
         expect((error as Error).message).toBe(
-          "The temporary password must have between 12 and 256 characters",
+          "The temporary password must have between 8 and 256 characters",
         );
       }
     },
@@ -329,6 +329,8 @@ describe("RP0-03 bootstrap command flow", () => {
   });
 });
 
+const ESC = String.fromCharCode(27);
+
 describe("RP0-03 terminal prompts", () => {
   it("refuses to prompt when stdin is not a TTY", () => {
     const input = Object.assign(Readable.from([]), { isTTY: false });
@@ -361,6 +363,43 @@ describe("RP0-03 terminal prompts", () => {
 
     await expect(answer).rejects.toThrow(/input was closed/);
     expect(written.join("")).not.toContain("partial-secret");
+  });
+
+  it("keeps a visible question on screen without erasing it before the answer", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = new PassThrough();
+    const written: string[] = [];
+    output.on("data", (chunk: Buffer) => written.push(String(chunk)));
+    const prompts = createTerminalPrompts(input as never, output);
+
+    const answer = prompts.ask("Name: ");
+    input.write("Ada\r");
+    await expect(answer).resolves.toBe("Ada");
+
+    const text = written.join("");
+    expect(text).toContain("Name: ");
+    // Nothing may erase the line (ESC[0J / ESC[1G / ESC[2K) right after the question.
+    const afterQuestion = text.slice(text.indexOf("Name: ") + "Name: ".length);
+    for (const erase of [`${ESC}[0J`, `${ESC}[1G`, `${ESC}[2K`]) {
+      expect(afterQuestion.startsWith(erase)).toBe(false);
+    }
+  });
+
+  it("shows a secret question once and never echoes the secret", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = new PassThrough();
+    const written: string[] = [];
+    output.on("data", (chunk: Buffer) => written.push(String(chunk)));
+    const prompts = createTerminalPrompts(input as never, output);
+
+    const answer = prompts.askSecret("Temporary password: ");
+    input.write("hunter2-secret\r");
+    await expect(answer).resolves.toBe("hunter2-secret");
+
+    const text = written.join("");
+    expect(text.startsWith("Temporary password: ")).toBe(true);
+    expect(text.startsWith(`Temporary password: ${ESC}`)).toBe(false);
+    expect(text).not.toContain("hunter2-secret");
   });
 
   it("still resolves a normal answer", async () => {

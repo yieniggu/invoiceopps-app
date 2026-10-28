@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -9,6 +10,16 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { openPolicies } from "./test/policiesRoute";
+
+// Políticas is disabled in the product; the screen is kept unrouted. Its
+// ONBOARDING_REQUIRED and logout races keep running through the test route.
+vi.mock("./features/session/AppRoutes", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("./features/session/AppRoutes")>();
+  const { withPoliciesRoute } = await import("./test/policiesRoute");
+  return { ...original, AppRoutes: withPoliciesRoute(original.AppRoutes) };
+});
 
 const temporary = "temporary-password-1";
 const profile = {
@@ -22,9 +33,9 @@ const profile = {
     {
       organization: { id: "organization-1", name: "AI Academy", slug: "ai" },
       role: "USER",
+      ...ACCESS_NONE,
     },
   ],
-  contexts: [],
 };
 const pending = { ...profile, mustChangePassword: true };
 
@@ -149,13 +160,13 @@ describe("CR-022 temporary password accessibility", () => {
   it("validates the length itself: Spanish message, focus, aria-invalid, no request", async () => {
     const fetchMock = mockPending(() => new Response(null, { status: 204 }));
     await renderForcedScreen();
-    fill(temporary, "short");
+    fill(temporary, "1234567");
 
     submit();
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
-      "La contraseña nueva debe tener entre 12 y 256 caracteres.",
+      "La contraseña nueva debe tener entre 8 y 256 caracteres.",
     );
     const field = screen.getByLabelText("Contraseña nueva");
     expect(document.activeElement).toBe(field);
@@ -227,7 +238,7 @@ describe("CR-022 temporary password accessibility", () => {
     submit();
 
     expect((await screen.findByRole("alert")).textContent).toMatch(
-      /entre 12 y 256/,
+      /entre 8 y 256/,
     );
     await waitFor(() =>
       expect(document.activeElement).toBe(
@@ -366,6 +377,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
       {
         organization: { id: "org", name: "Academia", slug: "academy" },
         role: "USER",
+        ...ACCESS_NONE,
       },
     ],
   };
@@ -424,7 +436,8 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
+    await screen.findByRole("heading", { name: "Panel principal" });
+    await openPolicies();
 
     expect(
       await screen.findByRole("heading", {
@@ -443,23 +456,7 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
           return jsonResponse({
             profile: pending
               ? { ...sessionProfile, mustChangePassword: true }
-              : {
-                  ...sessionProfile,
-                  contexts: [
-                    {
-                      organizationId: "org",
-                      organizationName: "Academia",
-                      groupId: "group",
-                      groupName: "Equipo",
-                      capabilities: {
-                        readInvoices: true,
-                        createInvoices: false,
-                        deleteOwnInvoices: false,
-                        deleteOthersInvoices: false,
-                      },
-                    },
-                  ],
-                },
+              : sessionProfile,
           });
         if (url.pathname === "/api/v1/groups") return jsonResponse({ groups });
         if (url.pathname.startsWith("/api/v1/invoices")) {
@@ -517,7 +514,8 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
+    await screen.findByRole("heading", { name: "Panel principal" });
+    await openPolicies();
     fireEvent.click(screen.getByRole("button", { name: /salir/i }));
     // The logout request is issued once the mutation has cancelled the
     // identity's in-flight reads.

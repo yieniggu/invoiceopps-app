@@ -5,7 +5,9 @@ import type {
   MembershipRoleRequestSchema,
   MembershipSchema,
   MembershipWithUserSchema,
+  OrganizationCountsSchema,
   OrganizationCreateRequestSchema,
+  OrganizationBasicSchema,
   OrganizationSchema,
 } from "./schemas.js";
 
@@ -19,3 +21,5 @@ export type MembershipRoleRequest = z.infer<typeof MembershipRoleRequestSchema>;
 export type OrganizationDto = z.infer<typeof OrganizationSchema>;
 export type MembershipDto = z.infer<typeof MembershipSchema>;
 export type MembershipWithUserDto = z.infer<typeof MembershipWithUserSchema>;
+export type OrganizationBasicDto = z.infer<typeof OrganizationBasicSchema>;
+export type OrganizationCountsDto = z.infer<typeof OrganizationCountsSchema>;

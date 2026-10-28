@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderApp } from "./test/renderApp";
@@ -54,16 +60,16 @@ describe("organization list (only my memberships)", () => {
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones" });
+    renderApp({ route: "/organizations" });
     expect(
       await screen.findByRole("heading", { level: 2, name: "Academia Norte" }),
     ).toBeTruthy();
     expect(screen.getByText("norte")).toBeTruthy();
     expect(screen.getByText("Administrador")).toBeTruthy();
-    expect(screen.getByText("Miembro")).toBeTruthy();
+    expect(screen.getByText("Usuario")).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Ver detalle de Instituto Sur" }),
-    ).toHaveProperty("href", expect.stringContaining("/organizaciones/org-2"));
+    ).toHaveProperty("href", expect.stringContaining("/organizations/org-2"));
     // The profile is the source: the platform-wide list is never read here.
     expect(transport.calls("GET /api/v1/organizations")).toHaveLength(0);
   });
@@ -79,7 +85,7 @@ describe("organization list (only my memberships)", () => {
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones" });
+    renderApp({ route: "/organizations" });
     await screen.findByRole("heading", { level: 2, name: "Academia Norte" });
     expect(screen.queryByText("Instituto Sur")).toBeNull();
     expect(transport.calls("GET /api/v1/organizations")).toHaveLength(0);
@@ -90,7 +96,7 @@ describe("organization list (only my memberships)", () => {
       "GET /api/v1/auth/profile": () =>
         jsonResponse({ profile: profileFixture() }),
     });
-    renderApp({ route: "/organizaciones" });
+    renderApp({ route: "/organizations" });
     expect(
       await screen.findByText(
         "Aún no perteneces a ninguna organización. Pide a un administrador que te agregue.",
@@ -105,10 +111,10 @@ describe("organization list (only my memberships)", () => {
     mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
     });
-    renderApp({ route: "/organizaciones" });
+    renderApp({ route: "/organizations" });
     expect(
       await screen.findByRole("link", { name: "Crear organización" }),
-    ).toHaveProperty("href", expect.stringContaining("/organizaciones/nueva"));
+    ).toHaveProperty("href", expect.stringContaining("/organizations/new"));
   });
 });
 
@@ -144,7 +150,7 @@ describe("create organization screen (AC-11)", () => {
         );
       },
     });
-    renderApp({ route: "/organizaciones/nueva" });
+    renderApp({ route: "/organizations/new" });
     await screen.findByRole("heading", {
       level: 1,
       name: "Crear organización",
@@ -160,10 +166,10 @@ describe("create organization screen (AC-11)", () => {
     expect(
       await screen.findByText(/Organización «Instituto Sur» creada/),
     ).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain(
-      "solo si tú eres su primer administrador",
+    expect(screen.getByRole("status").textContent).not.toContain(
+      "primer administrador",
     );
-    expect(window.location.pathname).toBe("/organizaciones");
+    expect(window.location.pathname).toBe("/organizations");
     expect(transport.calls("POST /api/v1/organizations")).toHaveLength(1);
     expect(transport.calls("POST /api/v1/organizations")[0].body).toEqual({
       name: "Instituto Sur",
@@ -181,12 +187,80 @@ describe("create organization screen (AC-11)", () => {
     expect(transport.unexpected).toEqual([]);
   });
 
+  it("explains to a platform administrator who is not the first admin why the new organization is not in the list (CR-230)", async () => {
+    const transport = mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      "POST /api/v1/organizations": (request) => {
+        const body = request.body as { name: string; slug: string };
+        return jsonResponse(
+          {
+            organization: {
+              id: "org-2",
+              ...body,
+              description: null,
+              enabled: true,
+              createdAt: "2026-10-01T00:00:00.000Z",
+            },
+            membership: {
+              userId: "user-9",
+              organizationId: "org-2",
+              role: "ADMIN",
+            },
+          },
+          201,
+        );
+      },
+    });
+    renderApp({ route: "/organizations/new" });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Crear organización",
+    });
+    // Somebody else (19.034.790-7) is the first administrator.
+    fillForm({ name: "Instituto Sur", slug: "sur", rut: "19.034.790-7" });
+    fireEvent.click(screen.getByRole("button", { name: "Crear organización" }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toContain(
+      "Organización «Instituto Sur» creada.",
+    );
+    expect(notice.textContent).toContain("No aparece en esta lista");
+    expect(notice.textContent).toContain("no eres miembro de ella");
+    expect(notice.textContent).toContain("primer administrador");
+    expect(notice.textContent).toContain("directorio de organizaciones");
+    expect(notice.textContent).toContain("no lista ni abre organizaciones");
+    expect(window.location.pathname).toBe("/organizations");
+    // The platform administrator is not a member: no card for the new one.
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Instituto Sur" }),
+    ).toBeNull();
+    expect(transport.calls("POST /api/v1/organizations")).toHaveLength(1);
+  });
+
+  it("does not open an organization of which the platform administrator is not a member, even by URL (what the CR-230 notice says)", async () => {
+    mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+    });
+    renderApp({ route: "/organizations/org-2" });
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Página no encontrada",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("No encontramos esa organización entre las tuyas."),
+    ).toBeTruthy();
+  });
+
   it("asks for no user or group fields to create an organization", async () => {
     mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones/nueva" });
+    renderApp({ route: "/organizations/new" });
     const form = (
       await screen.findByRole("button", { name: "Crear organización" })
     ).closest("form") as HTMLFormElement;
@@ -203,7 +277,7 @@ describe("create organization screen (AC-11)", () => {
       "POST /api/v1/organizations": () =>
         errorResponse(409, "ORGANIZATION_SLUG_CONFLICT"),
     });
-    renderApp({ route: "/organizaciones/nueva" });
+    renderApp({ route: "/organizations/new" });
     await screen.findByRole("button", { name: "Crear organización" });
     fillForm({ name: "Instituto Sur", slug: "sur", rut: "12345678-5" });
     fireEvent.click(screen.getByRole("button", { name: "Crear organización" }));
@@ -214,7 +288,7 @@ describe("create organization screen (AC-11)", () => {
     expect(
       (screen.getByLabelText("Identificador (slug)") as HTMLInputElement).value,
     ).toBe("sur");
-    expect(window.location.pathname).toBe("/organizaciones/nueva");
+    expect(window.location.pathname).toBe("/organizations/new");
   });
 
   it("validates slug and administrator RUT before sending and focuses the first invalid field", async () => {
@@ -222,7 +296,7 @@ describe("create organization screen (AC-11)", () => {
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones/nueva" });
+    renderApp({ route: "/organizations/new" });
     await screen.findByRole("button", { name: "Crear organización" });
     fillForm({ name: "Instituto Sur", slug: "Sur Norte", rut: "12345678-5" });
     fireEvent.click(screen.getByRole("button", { name: "Crear organización" }));
@@ -245,7 +319,7 @@ describe("create organization screen (AC-11)", () => {
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones/nueva" });
+    renderApp({ route: "/organizations/new" });
     expect((await screen.findByRole("alert")).textContent).toContain(
       "No tienes permiso para crear organizaciones",
     );
@@ -256,51 +330,101 @@ describe("create organization screen (AC-11)", () => {
   });
 });
 
-describe("organization detail (view mode)", () => {
-  it("shows name, slug and description disabled and, for a member, no people controls", async () => {
+describe("organization summary", () => {
+  const summaryRoute = (counts = { memberCount: 3, groupCount: 2 }) => ({
+    "GET /api/v1/organizations/org-1": () =>
+      jsonResponse({
+        organization: {
+          id: "org-1",
+          name: "Academia Norte",
+          slug: "norte",
+          description: "Sede central",
+        },
+        summary: counts,
+      }),
+  });
+
+  it("shows name, slug, description and the counts to a member, with only the groups link", async () => {
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
           profile: profileFixture({ memberships: [membership(north, "USER")] }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations": () =>
-        jsonResponse({
-          organizations: [
-            {
-              ...north,
-              description: "Sede central",
-              enabled: true,
-              createdAt: "2026-10-01T00:00:00.000Z",
-            },
-          ],
-        }),
+      ...summaryRoute({ memberCount: 3, groupCount: 1 }),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    const name = (await screen.findByLabelText(
-      "Nombre de la organización",
-    )) as HTMLInputElement;
-    expect(name.value).toBe("Academia Norte");
-    expect(name.disabled).toBe(true);
-    const slug = screen.getByLabelText(
-      "Identificador (slug)",
-    ) as HTMLInputElement;
-    expect(slug.value).toBe("norte");
-    expect(slug.disabled).toBe(true);
-    const description = (await screen.findByDisplayValue(
-      "Sede central",
-    )) as HTMLInputElement;
-    expect(description.disabled).toBe(true);
-    expect(screen.getByRole("link", { name: "Ver grupos" })).toHaveProperty(
+    renderApp({ route: "/organizations/org-1" });
+    expect(await screen.findByText("Sede central")).toBeTruthy();
+    expect(screen.getByText("norte")).toBeTruthy();
+    const counts = screen.getByRole("region", { name: "Resumen" });
+    expect(counts.textContent).toContain("Miembros3");
+    expect(counts.textContent).toContain("Mis grupos1");
+    expect(
+      within(screen.getByRole("main")).getByRole("link", { name: "Grupos" }),
+    ).toHaveProperty(
       "href",
-      expect.stringContaining("/organizaciones/org-1/grupos"),
+      expect.stringContaining("/organizations/org-1/groups"),
     );
+    // A plain member neither sees nor reads the people of the organization.
+    expect(screen.queryByRole("link", { name: "Miembros" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Agregar miembro" })).toBeNull();
     expect(screen.queryByLabelText(/RUT de la persona/)).toBeNull();
     expect(
       transport.requests.filter(({ path }) =>
         /\/(memberships|users)$/.test(path),
       ),
     ).toEqual([]);
+  });
+
+  it("gives an ADMIN the Miembros, Grupos and Agregar miembro links", async () => {
+    mockTransport({
+      "GET /api/v1/auth/profile": () =>
+        jsonResponse({
+          profile: profileFixture({
+            memberships: [membership(north, "ADMIN")],
+          }),
+        }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      ...summaryRoute(),
+    });
+    renderApp({ route: "/organizations/org-1" });
+    await screen.findByText("Sede central");
+    const counts = screen.getByRole("region", { name: "Resumen" });
+    expect(counts.textContent).toContain("Miembros3");
+    expect(counts.textContent).toContain("Grupos2");
+    expect(screen.getByRole("link", { name: "Miembros" })).toHaveProperty(
+      "href",
+      expect.stringContaining("/organizations/org-1/members"),
+    );
+    expect(
+      screen.getByRole("link", { name: "Agregar miembro" }),
+    ).toHaveProperty(
+      "href",
+      expect.stringContaining("/organizations/org-1/members/new"),
+    );
+  });
+
+  it("retries only the summary read when it fails", async () => {
+    let calls = 0;
+    mockTransport({
+      "GET /api/v1/auth/profile": () =>
+        jsonResponse({
+          profile: profileFixture({ memberships: [membership(north, "USER")] }),
+        }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      "GET /api/v1/organizations/org-1": () => {
+        calls += 1;
+        return calls === 1
+          ? errorResponse(500, "INTERNAL_ERROR")
+          : summaryRoute()["GET /api/v1/organizations/org-1"]();
+      },
+    });
+    renderApp({ route: "/organizations/org-1" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Reintentar organización" }),
+    );
+    expect(await screen.findByText("Sede central")).toBeTruthy();
+    expect(calls).toBe(2);
   });
 
   it("answers an organization that is not mine with the not-found screen", async () => {
@@ -314,7 +438,7 @@ describe("organization detail (view mode)", () => {
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     });
-    renderApp({ route: "/organizaciones/org-9" });
+    renderApp({ route: "/organizations/org-9" });
     expect(
       await screen.findByRole("heading", {
         level: 1,

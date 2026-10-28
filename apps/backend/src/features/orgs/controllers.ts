@@ -5,6 +5,10 @@ import { logEvent } from "../../http/logging.js";
 import type { AuthService } from "../auth/services.js";
 import { requireSessionProfile } from "../auth/session.js";
 import {
+  BulkPermissionsUpdateRequestSchema,
+  PermissionsUpdateRequestSchema,
+} from "../groups/permissions-schema.js";
+import {
   MembershipCreateRequestSchema,
   MembershipRoleRequestSchema,
   OrganizationCreateRequestSchema,
@@ -51,6 +55,15 @@ export function createOrganizationController(
       input,
     );
     response.status(201).json(created);
+  };
+
+  const get: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const detail = await wired(organizations).getOrganization(
+      actor.id,
+      String(request.params.organizationId),
+    );
+    response.status(200).json(detail);
   };
 
   const listMemberships: RequestHandler = async (request, response) => {
@@ -104,6 +117,60 @@ export function createOrganizationController(
     response.status(200).json({ membership });
   };
 
+  const updateMembershipPermissions: RequestHandler = async (
+    request,
+    response,
+  ) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const input = parseWith(
+      PermissionsUpdateRequestSchema,
+      request.body,
+      "Invalid permissions",
+    );
+    const organizationId = String(request.params.organizationId);
+    const targetUserId = String(request.params.userId);
+    const membership = await wired(organizations).updateMembershipPermissions(
+      actor.id,
+      organizationId,
+      targetUserId,
+      input.permissions,
+    );
+    logAudit("member_permissions_updated", {
+      organizationId,
+      actorUserId: actor.id,
+      targetUserId,
+    });
+    response.status(200).json({ membership });
+  };
+
+  const updateMembershipsPermissions: RequestHandler = async (
+    request,
+    response,
+  ) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const input = parseWith(
+      BulkPermissionsUpdateRequestSchema,
+      request.body,
+      "Invalid permissions",
+    );
+    const organizationId = String(request.params.organizationId);
+    const memberships = await wired(organizations).updateMembershipsPermissions(
+      actor.id,
+      organizationId,
+      input.userIds,
+      input.permissions,
+    );
+    // One audit line for the whole batch: identifiers and a count only.
+    logEvent("info", "audit.org_members_permissions_updated", {
+      feature: "organizations",
+      action: "members_permissions_updated",
+      organizationId,
+      actorUserId: actor.id,
+      memberCount: memberships.length,
+    });
+    response.status(200).json({ memberships });
+  };
+
   const removeMembership: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
     const organizationId = String(request.params.organizationId);
@@ -124,9 +191,12 @@ export function createOrganizationController(
   return {
     list,
     create,
+    get,
     listMemberships,
     createMembership,
     changeMembershipRole,
+    updateMembershipPermissions,
+    updateMembershipsPermissions,
     removeMembership,
   };
 }

@@ -52,7 +52,7 @@ function stubMatchMedia(matches: boolean) {
 function renderShell({
   isLoggingOut = false,
   onLogout = vi.fn(),
-  route = "/panel",
+  route = "/dashboard",
   children = <PageHeader title="Panel principal" />,
 }: {
   children?: ReactNode;
@@ -98,22 +98,27 @@ describe("AppShell sidebar", () => {
     expect(links).toEqual([
       "Panel principal",
       "Facturas",
-      "Políticas",
       "Organizaciones",
       "Grupos",
       "Mi perfil",
     ]);
+    // Políticas is disabled: not a link, announced as unavailable.
     expect(
       within(nav)
         .getAllByRole("button")
         .filter((button) => !button.closest(".theme-toggle"))
         .map((button) => button.textContent),
-    ).toEqual(["Salir"]);
+    ).toEqual(["Políticas Próximamente", "Salir"]);
+    const policies = within(nav).getByRole("button", {
+      name: "Políticas Próximamente",
+    });
+    expect(policies.getAttribute("aria-disabled")).toBe("true");
+    expect(policies.hasAttribute("href")).toBe(false);
     expect(
       within(nav)
         .getByRole("link", { name: "Panel principal" })
         .getAttribute("href"),
-    ).toBe("/panel");
+    ).toBe("/dashboard");
     expect(
       within(nav)
         .getByRole("link", { name: "Panel principal" })
@@ -133,9 +138,9 @@ describe("AppShell sidebar", () => {
   });
 
   it.each([
-    ["/organizaciones/org-1", "Organizaciones"],
-    ["/organizaciones/org-1/grupos", "Grupos"],
-    ["/organizaciones/org-1/grupos/group-1", "Grupos"],
+    ["/organizations/org-1", "Organizaciones"],
+    ["/organizations/org-1/groups", "Grupos"],
+    ["/organizations/org-1/groups/group-1", "Grupos"],
   ])("marks one destination for the nested URL %s", (route, expected) => {
     const view = renderShell({ route });
     const current = screen
@@ -229,7 +234,7 @@ describe("AppShell sidebar", () => {
     expect(document.activeElement).toBe(trigger);
 
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("link", { name: "Políticas" }));
+    fireEvent.click(screen.getByRole("link", { name: "Facturas" }));
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(
       screen.getByRole("heading", { level: 1 }),

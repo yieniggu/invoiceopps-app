@@ -1,13 +1,15 @@
+import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
   fireEvent,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  orgsKey,
+  orgKey,
   orgGroupsKey,
   workspaceGroupsKey,
 } from "./features/auth/session/queryKeys";
@@ -40,6 +42,7 @@ function profile(id: string, admin = false) {
       {
         organization: { id: `org-${id}`, name: `Organization ${id}`, slug: id },
         role: "ADMIN",
+        ...ACCESS_NONE,
       },
     ],
   };
@@ -60,12 +63,16 @@ function scopedGroup(id: string) {
     organizationId: `org-${id}`,
     name: `Group ${id}`,
     description: null,
-    permissions: {
-      readInvoices: false,
-      createInvoices: false,
-      deleteOwnInvoices: false,
-      deleteOthersInvoices: false,
-    },
+  };
+}
+// v2: permissions live on each member of the group, not on the group.
+function groupMember(id: string) {
+  return {
+    userId: `member-${id}`,
+    groupId: `group-${id}`,
+    organizationId: `org-${id}`,
+    permissions: NO_PERMISSIONS,
+    user: { id: `member-${id}`, name: `Member ${id}`, rut: "190347907" },
   };
 }
 function http(admin = false) {
@@ -96,6 +103,20 @@ function http(admin = false) {
         ],
       }),
     );
+  // Summary behind the organization screen (data and counts in one read).
+  const summary = vi
+    .fn<() => Promise<Response>>()
+    .mockImplementation(async () =>
+      json({
+        organization: {
+          id: `org-${identity}`,
+          name: `Organization ${identity}`,
+          slug: identity,
+          description: `Descripción ${identity}`,
+        },
+        summary: { memberCount: 1, groupCount: 1 },
+      }),
+    );
   const logout = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValue(new Response(null, { status: 204 }));
@@ -118,10 +139,21 @@ function http(admin = false) {
       if (path === "/api/v1/groups") return groups();
       if (path === "/api/v1/organizations") return discovery();
       if (
+        /^\/api\/v1\/organizations\/org-.$/.test(path) &&
+        (init?.method ?? "GET") === "GET"
+      )
+        return summary();
+      if (
         /^\/api\/v1\/organizations\/[^/]+\/groups$/.test(path) &&
         (init?.method ?? "GET") === "GET"
       )
         return orgGroups();
+      const members =
+        /^\/api\/v1\/organizations\/org-(.)\/groups\/group-.\/memberships$/.exec(
+          path,
+        );
+      if (members && (init?.method ?? "GET") === "GET")
+        return json({ memberships: [groupMember(members[1])] });
       // The group detail also reads its members; only writes count as mutations.
       if (path.startsWith("/api/v1/organizations/"))
         return (init?.method ?? "GET") === "GET"
@@ -137,6 +169,7 @@ function http(admin = false) {
     groups,
     orgGroups,
     discovery,
+    summary,
     logout,
     getProfile,
     fetchMock,
@@ -179,10 +212,25 @@ async function signInB() {
 function navigate(name: string) {
   fireEvent.click(screen.getByRole("link", { name }));
 }
-/** Permissions are edited on the group detail, reached from the list. */
+/** The group summary, reached from the list. */
 function openGroup(id: string) {
+  fireEvent.click(screen.getByRole("link", { name: `Ver grupo Group ${id}` }));
+}
+/**
+ * Edits the group member's flags and saves them (PUT, a mutation here). The
+ * editor lives on the person's page: Miembros, then the person.
+ */
+async function savePermissions(id: string) {
+  fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+  fireEvent.click(await screen.findByRole("link", { name: `Member ${id}` }));
+  const editor = await screen.findByRole("group", {
+    name: `Permisos en el grupo «Group ${id}» — Member ${id}`,
+  });
   fireEvent.click(
-    screen.getByRole("link", { name: `Ver detalle de Group ${id}` }),
+    within(editor).getByRole("button", { name: "Leer facturas" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: `Guardar permisos de Member ${id}` }),
   );
 }
 function expectB() {
@@ -200,8 +248,8 @@ function expectB() {
   expect(screen.queryByRole("alert")).toBeNull();
   openGroup("B");
   expect(
-    screen.getByRole("button", { name: "Guardar permisos" }),
-  ).toHaveProperty("disabled", false);
+    screen.getByRole("heading", { name: "Group B", level: 1 }),
+  ).toBeTruthy();
   navigate("Mi perfil");
 }
 afterEach(() => {
@@ -249,16 +297,16 @@ const cases: ReadCase[] = [
     expectLoaded: showsText("Group A"),
   },
   {
-    label: "platform organizations",
-    admin: true,
-    read: (api) => api.discovery,
+    label: "organization summary",
+    admin: false,
+    read: (api) => api.summary,
     destination: "Organizaciones",
-    // The organization detail reads the platform list for its description.
+    // The organization screen reads its own summary (data and counts).
     drillDown: "Ver detalle de Organization A",
-    key: orgsKey("A"),
-    failure: "No fue posible cargar la descripción de la organización.",
+    key: orgKey("A", "org-A"),
+    failure: "No fue posible cargar la información de la organización.",
     retry: "Reintentar organización",
-    expectLoaded: () => screen.findByDisplayValue("Descripción A"),
+    expectLoaded: showsText("Descripción A"),
   },
 ];
 
@@ -351,8 +399,16 @@ describe("CR007 App-owned protected reads", () => {
           if (outcome === "error") reject(new Error("Old JSON failure"));
           else
             resolve(
-              testCase.label === "platform organizations"
-                ? { organizations: [] }
+              testCase.label === "organization summary"
+                ? {
+                    organization: {
+                      id: "org-A",
+                      name: "Organization A",
+                      slug: "A",
+                      description: "Descripción A",
+                    },
+                    summary: { memberCount: 1, groupCount: 1 },
+                  }
                 : testCase.label === "workspace groups"
                   ? { groups: [group("A")] }
                   : { groups: [scopedGroup("A")] },
@@ -482,7 +538,7 @@ describe("CR-001 mounted session isolation", () => {
       await start();
       navigate("Grupos");
       openGroup("A");
-      fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+      await savePermissions("A");
       await waitFor(() => expect(api.mutation).toHaveBeenCalledTimes(1));
       await signOut();
       await signInB();
@@ -558,7 +614,7 @@ describe("CR-001 mounted session isolation", () => {
     expectB();
   });
 
-  it("does not continue a stale platform list reload with another identity's data", async () => {
+  it("does not continue a stale organization summary reload with another identity's data", async () => {
     const api = http(true);
     const pending = deferred();
     const view = await start();
@@ -568,31 +624,29 @@ describe("CR-001 mounted session isolation", () => {
         name: "Ver detalle de Organization A",
       }),
     );
-    await screen.findByDisplayValue("Descripción A");
-    api.discovery.mockReturnValueOnce(pending.promise);
-    reload(view, orgsKey("A"));
-    await waitFor(() => expect(api.discovery).toHaveBeenCalledTimes(2));
+    await screen.findByText("Descripción A");
+    api.summary.mockReturnValueOnce(pending.promise);
+    reload(view, orgKey("A", "org-A"));
+    await waitFor(() => expect(api.summary).toHaveBeenCalledTimes(2));
     await signOut();
     await signInB();
     const count = api.groups.mock.calls.length;
     await act(async () =>
       pending.resolve(
         json({
-          organizations: [
-            {
-              id: "org-A",
-              name: "Old discovery",
-              slug: "old-discovery",
-              description: null,
-              enabled: true,
-              createdAt: "2026-10-01T00:00:00.000Z",
-            },
-          ],
+          organization: {
+            id: "org-A",
+            name: "Old summary",
+            slug: "old-summary",
+            description: "Old description",
+          },
+          summary: { memberCount: 9, groupCount: 9 },
         }),
       ),
     );
     expect(api.groups).toHaveBeenCalledTimes(count);
-    expect(screen.queryByText("old-discovery")).toBeNull();
+    expect(screen.queryByText("old-summary")).toBeNull();
+    expect(screen.queryByText("Old description")).toBeNull();
     expectB();
   });
 
@@ -627,7 +681,7 @@ describe("CR-001 mounted session isolation", () => {
     const view = await start();
     navigate("Grupos");
     openGroup("A");
-    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+    await savePermissions("A");
     await waitFor(() => expect(api.mutation).toHaveBeenCalledTimes(1));
     const count = api.fetchMock.mock.calls.length;
     view.unmount();

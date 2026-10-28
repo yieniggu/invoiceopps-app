@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { Profile } from "../types";
-import { createQueryClient } from "./createQueryClient";
+import { createQueryClient, retireQueryClient } from "./createQueryClient";
 import { profileKey } from "./queryKeys";
 
 /**
@@ -102,8 +102,7 @@ export class SessionStore {
     endedBy: SessionEnd | null = null,
   ) {
     const previous = this.snapshot;
-    void previous.client.cancelQueries();
-    previous.client.clear();
+    retireQueryClient(previous.client);
     const next = this.create(
       phase,
       identityId,

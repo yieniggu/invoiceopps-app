@@ -65,7 +65,7 @@ describe("consolidated Prisma schema contract", () => {
     }
   });
 
-  it("keeps the four permission flags on Group only", async () => {
+  it("keeps the four permission flags on the memberships and not on Group", async () => {
     const schema = await readFile(schemaPath, "utf8");
     const group = modelBlock(schema, "Group");
     for (const flag of [
@@ -74,10 +74,12 @@ describe("consolidated Prisma schema contract", () => {
       "deleteOwnInvoices",
       "deleteOthersInvoices",
     ]) {
-      expect(group).toMatch(
-        new RegExp(`${flag}\\s+Boolean\\s+@default\\(false\\)`),
-      );
-      expect(modelBlock(schema, "GroupMembership")).not.toContain(flag);
+      expect(group).not.toContain(flag);
+      for (const membership of ["OrganizationMembership", "GroupMembership"]) {
+        expect(modelBlock(schema, membership)).toMatch(
+          new RegExp(`${flag}\\s+Boolean\\s+@default\\(false\\)`),
+        );
+      }
     }
     expect(group).toContain("@@unique([id, organizationId])");
   });
@@ -93,6 +95,8 @@ describe("consolidated Prisma schema contract", () => {
     expect(invoice).toMatch(
       /processingStatus\s+InvoiceProcessingStatus\s+@default\(NOT_REQUESTED\)/,
     );
+    expect(invoice).toMatch(/groupId\s+String\?/);
+    expect(invoice).toMatch(/scopeKey\s+String\b/);
     expect(invoice).toContain(
       "fields: [groupId, organizationId], references: [id, organizationId]",
     );
@@ -124,6 +128,9 @@ describe("consolidated Prisma schema contract", () => {
     expect(modelBlock(schema, "OrganizationMembership")).toContain(
       "@@unique([userId, organizationId])",
     );
+    expect(modelBlock(schema, "OrganizationMembership")).toContain(
+      "@@index([organizationId, role])",
+    );
     expect(modelBlock(schema, "GroupMembership")).toContain(
       "@@unique([groupId, userId])",
     );
@@ -142,19 +149,22 @@ describe("consolidated Prisma schema contract", () => {
   it("binds idempotency records to the invoice scope", async () => {
     const schema = await readFile(schemaPath, "utf8");
     expect(modelBlock(schema, "Invoice")).toContain(
-      "@@unique([id, organizationId, groupId])",
+      "@@unique([id, organizationId, scopeKey])",
     );
     expect(modelBlock(schema, "InvoiceIdempotencyRecord")).toContain(
-      "fields: [invoiceId, organizationId, groupId], references: [id, organizationId, groupId]",
+      "fields: [invoiceId, organizationId, scopeKey], references: [id, organizationId, scopeKey]",
     );
   });
 
   it("prepares idempotency and API token tables", async () => {
     const schema = await readFile(schemaPath, "utf8");
-    expect(modelBlock(schema, "InvoiceIdempotencyRecord")).toContain(
-      "@@unique([userId, organizationId, groupId, operation, key])",
+    const record = modelBlock(schema, "InvoiceIdempotencyRecord");
+    expect(record).toContain(
+      "@@unique([userId, organizationId, scopeKey, operation, key])",
     );
+    expect(record).toMatch(/groupId\s+String\?/);
     const token = modelBlock(schema, "ApiToken");
+    expect(token).toMatch(/groupId\s+String\?/);
     expect(token).toMatch(/tokenHash\s+String\s+@unique/);
     expect(token).toMatch(/scopes\s+ApiTokenScope\[\]/);
     const scopes = enumBlock(schema, "ApiTokenScope");
@@ -184,7 +194,8 @@ describe("consolidated Prisma schema contract", () => {
       `CHECK ("expiresAt" <= "createdAt" + interval '30 days')`,
       'CHECK (cardinality("scopes") >= 1)',
       'CHECK (api_token_scopes_are_distinct("scopes"))',
-      'FOREIGN KEY ("invoiceId", "organizationId", "groupId") REFERENCES "Invoice"("id", "organizationId", "groupId") ON DELETE RESTRICT',
+      'FOREIGN KEY ("invoiceId", "organizationId", "scopeKey") REFERENCES "Invoice"("id", "organizationId", "scopeKey") ON DELETE RESTRICT',
+      `CHECK ("scopeKey" = COALESCE("groupId", 'organization'))`,
       'CHECK ("id" = 1)',
       'CHECK ("manualReviewThreshold" >= 0 AND "manualReviewThreshold" <= 1)',
       "CREATE TRIGGER prevent_platform_administrator_delete",

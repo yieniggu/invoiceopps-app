@@ -34,6 +34,7 @@ describe("backend startup configuration", () => {
       new Set([
         "DATABASE_URL",
         "PORT",
+        "HOST",
         "NODE_ENV",
         "AUTH_RATE_LIMIT_DISABLED",
         "AUTH_RATE_LIMIT_MAX_ATTEMPTS",

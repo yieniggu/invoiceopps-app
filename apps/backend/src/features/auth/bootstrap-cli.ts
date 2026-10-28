@@ -62,7 +62,10 @@ export function createTerminalPrompts(
   const muted = new Writable({ write: (_chunk, _encoding, done) => done() });
 
   async function prompt(question: string, hidden: boolean) {
-    output.write(question);
+    // Hidden: readline writes to a muted stream, so the question is written
+    // here and stays visible. Visible: readline owns the prompt, because its
+    // prompt refresh erases the line and redraws only what it knows about.
+    if (hidden) output.write(question);
     const readline = createInterface({
       input,
       output: hidden ? muted : output,
@@ -74,7 +77,7 @@ export function createTerminalPrompts(
         // answer; reject instead of leaving the prompt pending forever.
         readline.once("close", () => reject(new Error(INPUT_CLOSED_MESSAGE)));
         readline.once("SIGINT", () => readline.close());
-        readline.question("", resolve);
+        readline.question(hidden ? "" : question, resolve);
       });
     } finally {
       readline.close();

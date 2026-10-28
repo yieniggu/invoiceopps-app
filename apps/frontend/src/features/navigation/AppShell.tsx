@@ -10,6 +10,7 @@ import {
   Building2,
   LayoutDashboard,
   LogOut,
+  ShieldCheck,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -28,15 +29,27 @@ interface Destination {
   label: string;
   to: string;
   icon: LucideIcon;
+  /** Shown but not reachable yet: rendered as a disabled item, not a link. */
+  comingSoon?: boolean;
 }
 
 export const primaryDestinations: Destination[] = [
-  { label: "Panel principal", to: paths.panel, icon: LayoutDashboard },
+  { label: "Panel principal", to: paths.dashboard, icon: LayoutDashboard },
   { label: "Facturas", to: paths.invoices, icon: ReceiptText },
-  { label: "Políticas", to: paths.policies, icon: SlidersHorizontal },
+  {
+    label: "Políticas",
+    to: paths.policies,
+    icon: SlidersHorizontal,
+    comingSoon: true,
+  },
   { label: "Organizaciones", to: paths.organizations, icon: Building2 },
   { label: "Grupos", to: paths.groups, icon: Users },
 ];
+const adminDestination: Destination = {
+  label: "Admin",
+  to: paths.admin,
+  icon: ShieldCheck,
+};
 const profileDestination: Destination = {
   label: "Mi perfil",
   to: paths.profile,
@@ -61,23 +74,32 @@ function writeCollapsed(collapsed: boolean) {
   }
 }
 
-// Group screens live under /organizaciones/:id/grupos but belong to "Grupos".
-const organizationGroupsPath = /^\/organizaciones\/[^/]+\/grupos(\/|$)/;
+// Group screens live under /organizations/:id/groups but belong to "Grupos".
+const organizationGroupsPath = /^\/organizations\/[^/]+\/groups(\/|$)/;
 
 function isDestinationActive(to: string, pathname: string) {
   if (organizationGroupsPath.test(pathname)) return to === paths.groups;
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
-/** The page title is rendered by each screen's PageHeader. */
-const focusPageTitle = () => document.getElementById("page-title")?.focus();
+/**
+ * The page title is rendered by each screen's PageHeader. An open modal dialog
+ * owns focus until it closes, so a navigation behind it leaves focus alone.
+ */
+const focusPageTitle = () => {
+  if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+  document.getElementById("page-title")?.focus();
+};
 
 export function AppShell({
   children,
   onLogout,
   isLoggingOut,
+  isPlatformAdministrator = false,
 }: {
   children: ReactNode;
+  /** Shows the Admin entry above the profile and logout items. */
+  isPlatformAdministrator?: boolean;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
@@ -159,20 +181,40 @@ export function AppShell({
   };
 
   const labelClass = collapsed ? "nav-label visually-hidden" : "nav-label";
-  const renderItem = ({ label, to, icon: Icon }: Destination) => (
-    <li key={to}>
-      <Link
-        to={to}
-        className="nav-item"
-        aria-current={isDestinationActive(to, pathname) ? "page" : undefined}
-        title={collapsed ? label : undefined}
-        onClick={navigate}
-      >
-        <Icon aria-hidden="true" focusable="false" size={20} />
-        <span className={labelClass}>{label}</span>
-      </Link>
-    </li>
-  );
+  const renderItem = ({ label, to, icon: Icon, comingSoon }: Destination) =>
+    comingSoon ? (
+      <li key={to}>
+        {/* Not a link: it has no destination yet. aria-disabled keeps it
+            focusable so its label and badge are still announced. */}
+        <button
+          type="button"
+          className="nav-item is-disabled"
+          aria-disabled="true"
+          title={collapsed ? `${label} (Próximamente)` : undefined}
+        >
+          <Icon aria-hidden="true" focusable="false" size={20} />
+          <span className="nav-text">
+            <span className={labelClass}>{label}</span>{" "}
+            <span className={collapsed ? "visually-hidden" : "nav-badge"}>
+              Próximamente
+            </span>
+          </span>
+        </button>
+      </li>
+    ) : (
+      <li key={to}>
+        <Link
+          to={to}
+          className="nav-item"
+          aria-current={isDestinationActive(to, pathname) ? "page" : undefined}
+          title={collapsed ? label : undefined}
+          onClick={navigate}
+        >
+          <Icon aria-hidden="true" focusable="false" size={20} />
+          <span className={labelClass}>{label}</span>
+        </Link>
+      </li>
+    );
   const logoutLabel = isLoggingOut ? "Saliendo..." : "Salir";
 
   return (
@@ -197,6 +239,9 @@ export function AppShell({
         <span className="topbar-brand" aria-hidden="true">
           InvoiceOps
         </span>
+        <div className="topbar-actions">
+          <ThemeToggle />
+        </div>
       </header>
       {drawerOpen ? (
         <div
@@ -232,10 +277,13 @@ export function AppShell({
         </div>
         <nav id="app-sidebar-nav" aria-label="Navegación principal">
           <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
-          <div className="sidebar-theme">
-            <ThemeToggle />
-          </div>
           <ul className="nav-group nav-group-bottom">
+            {isPlatformAdministrator ? (
+              <>
+                {renderItem(adminDestination)}
+                <li role="separator" className="nav-divider" />
+              </>
+            ) : null}
             {renderItem(profileDestination)}
             <li>
               <button

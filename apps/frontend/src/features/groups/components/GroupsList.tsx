@@ -1,13 +1,17 @@
 import { useGroupsQuery } from "../hooks/useGroups";
+import type { GroupMembershipProfile } from "../../auth/types";
 import { GroupRow } from "./GroupRow";
 
 /** Groups of one organization: all for an ADMIN, only own groups for a USER. */
 export function GroupsList({
   organizationId,
   isAdmin,
+  memberGroups = [],
 }: {
   organizationId: string;
   isAdmin: boolean;
+  /** My own group memberships here, for the effective-permission summary. */
+  memberGroups?: GroupMembershipProfile[];
 }) {
   const groups = useGroupsQuery(organizationId);
   return (
@@ -41,6 +45,10 @@ export function GroupsList({
               key={group.id}
               organizationId={organizationId}
               group={group}
+              effective={
+                memberGroups.find((entry) => entry.group.id === group.id)
+                  ?.effective
+              }
             />
           ))}
         </ul>

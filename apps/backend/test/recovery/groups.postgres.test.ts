@@ -1,136 +1,37 @@
-import { randomInt, randomUUID } from "node:crypto";
 import pg from "pg";
-import request from "../support/request.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
-import { createAuthService, hashPassword } from "../../src/auth.js";
+import { createAuthService } from "../../src/auth.js";
 import { createDatabase } from "../../src/database.js";
-import { formatRut } from "../../src/rut.js";
+import { createGroupCatalogService } from "../../src/features/groups/services.js";
+import {
+  ALL_FLAGS,
+  membershipFixtures,
+  NO_FLAGS,
+  type Scenario,
+  type TestUser,
+} from "./membership-fixtures.js";
+import { recoveryTestDatabaseUrl } from "./recovery-target.js";
 
-const url = process.env.RECOVERY_TEST_DATABASE_URL;
-if (!url) {
-  throw new Error("RECOVERY_TEST_DATABASE_URL must be configured");
-}
-if (new URL(url).pathname !== "/invoiceops_recovery_test") {
-  throw new Error(
-    "RECOVERY_TEST_DATABASE_URL must target invoiceops_recovery_test",
-  );
-}
+const url = recoveryTestDatabaseUrl();
 
 const client = new pg.Client({ connectionString: url });
 const database = createDatabase(url);
 const prisma = database.prisma;
 const auth = createAuthService(prisma);
-const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
-const PASSWORD = "correct-horse-battery";
 const app = createApp(database, auth);
-
-const NO_FLAGS = {
-  readInvoices: false,
-  createInvoices: false,
-  deleteOwnInvoices: false,
-  deleteOthersInvoices: false,
-};
-const ALL_FLAGS = {
-  readInvoices: true,
-  createInvoices: true,
-  deleteOwnInvoices: true,
-  deleteOthersInvoices: true,
-};
-
-function randomRut() {
-  const body = String(randomInt(10_000_000, 99_999_999));
-  let sum = 0;
-  let multiplier = 2;
-  for (const digit of [...body].reverse()) {
-    sum += Number(digit) * multiplier;
-    multiplier = multiplier === 7 ? 2 : multiplier + 1;
-  }
-  const remainder = 11 - (sum % 11);
-  const dv =
-    remainder === 11 ? "0" : remainder === 10 ? "K" : String(remainder);
-  return `${body}${dv}`;
-}
-
-async function makeUser(name = "Test User") {
-  const rut = randomRut();
-  const user = await prisma.user.create({
-    data: { name, rut, passwordHash: await hashPassword(PASSWORD) },
-    select: { id: true, rut: true },
-  });
-  return { id: user.id, rut: formatRut(user.rut), rawRut: user.rut };
-}
-type TestUser = Awaited<ReturnType<typeof makeUser>>;
-
-const makeOrg = (label = "org") =>
-  prisma.organization.create({
-    data: { name: `Org ${label}`, slug: `${label}-${randomUUID()}` },
-  });
-
-const join = (userId: string, organizationId: string, role: "ADMIN" | "USER") =>
-  prisma.organizationMembership.create({
-    data: { userId, organizationId, role },
-  });
-
-const makeGroup = (
-  organizationId: string,
-  name = "Group",
-  flags: Partial<typeof ALL_FLAGS> = {},
-) => prisma.group.create({ data: { organizationId, name, ...flags } });
-
-const addToGroup = (groupId: string, userId: string, organizationId: string) =>
-  prisma.groupMembership.create({ data: { groupId, userId, organizationId } });
-
-async function cookieFor(user: TestUser) {
-  const { sessionToken } = await auth.login({
-    rut: user.rut,
-    password: PASSWORD,
-  });
-  return `invoiceops_session=${sessionToken}`;
-}
-
-function call(
-  method: "get" | "post" | "patch" | "delete",
-  path: string,
-  cookie: string | undefined,
-  body?: unknown,
-) {
-  let test = request(app)[method](`/api/v1${path}`).set(SAME_ORIGIN);
-  if (cookie) test = test.set("Cookie", cookie);
-  return body === undefined ? test : test.send(body as object);
-}
-
-type ProfileContext = {
-  groupId: string;
-  capabilities: typeof ALL_FLAGS;
-};
-
-async function contextsOf(cookie: string) {
-  const response = await call("get", "/auth/profile", cookie);
-  expect(response.status).toBe(200);
-  return response.body.profile.contexts as ProfileContext[];
-}
-
-// The PlatformAdministrator singleton cannot be deleted by design (trigger);
-// this file owns the singleton of the dedicated test database.
-async function designatePlatformAdministrator(userId: string) {
-  await client.query("BEGIN");
-  try {
-    await client.query(
-      'ALTER TABLE "PlatformAdministrator" DISABLE TRIGGER prevent_platform_administrator_delete',
-    );
-    await client.query('DELETE FROM "PlatformAdministrator"');
-    await client.query(
-      'ALTER TABLE "PlatformAdministrator" ENABLE TRIGGER prevent_platform_administrator_delete',
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
-  await prisma.platformAdministrator.create({ data: { id: 1, userId } });
-}
+const {
+  makeUser,
+  makeOrg,
+  makeGroup,
+  addToGroup,
+  cookieFor,
+  call,
+  designatePlatformAdministrator,
+  waitUntilBlocked,
+  scenario,
+} = membershipFixtures({ prisma, client, auth, app, url });
 
 let platform: TestUser;
 let platformCookie: string;
@@ -146,23 +47,11 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function scenario() {
-  const org = await makeOrg("grp");
-  const admin = await makeUser("Ada Admin");
-  const member = await makeUser("Uma User");
-  const outsider = await makeUser();
-  await join(admin.id, org.id, "ADMIN");
-  await join(member.id, org.id, "USER");
-  const group = await makeGroup(org.id, "Finance");
-  return { org, admin, member, outsider, group };
-}
-type Scenario = Awaited<ReturnType<typeof scenario>>;
-
 describe("RP0-07 GET /organizations/{organizationId}/groups", () => {
-  it("lists every group for an ADMIN and only own groups for a USER, with the group DTO", async () => {
+  it("lists every group for an ADMIN and only own groups for a USER, with a group DTO without flags", async () => {
     const s = await scenario();
-    const second = await makeGroup(s.org.id, "Zeta", { readInvoices: true });
-    await addToGroup(second.id, s.member.id, s.org.id);
+    const second = await makeGroup(s.org.id, "Zeta");
+    await addToGroup(second.id, s.member.id, s.org.id, { readInvoices: true });
 
     const asAdmin = await call(
       "get",
@@ -176,14 +65,12 @@ describe("RP0-07 GET /organizations/{organizationId}/groups", () => {
         organizationId: s.org.id,
         name: "Finance",
         description: null,
-        permissions: NO_FLAGS,
       },
       {
         id: second.id,
         organizationId: s.org.id,
         name: "Zeta",
         description: null,
-        permissions: { ...NO_FLAGS, readInvoices: true },
       },
     ]);
 
@@ -198,22 +85,82 @@ describe("RP0-07 GET /organizations/{organizationId}/groups", () => {
     ).toEqual([second.id]);
   });
 
-  it("answers 404 to a non-member and to the platform administrator without membership", async () => {
+  it("lists every group of any existing organization for the platform administrator", async () => {
     const s = await scenario();
-    for (const cookie of [await cookieFor(s.outsider), platformCookie]) {
-      const response = await call(
-        "get",
-        `/organizations/${s.org.id}/groups`,
-        cookie,
-      );
-      expect(response.status).toBe(404);
-      expect(response.body.error.code).toBe("NOT_FOUND");
+    const response = await call(
+      "get",
+      `/organizations/${s.org.id}/groups`,
+      platformCookie,
+    );
+    expect(response.status).toBe(200);
+    expect(
+      (response.body.groups as Array<{ id: string }>).map((group) => group.id),
+    ).toEqual([s.group.id]);
+
+    const missing = await call(
+      "get",
+      "/organizations/00000000-0000-4000-8000-000000000000/groups",
+      platformCookie,
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("answers 404 to a non-member", async () => {
+    const s = await scenario();
+    const response = await call(
+      "get",
+      `/organizations/${s.org.id}/groups`,
+      await cookieFor(s.outsider),
+    );
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("CR-260 the legacy GET /groups exposes no people", () => {
+  // The legacy route is mounted only when the catalog service is wired, as
+  // server.ts does.
+  const legacy = membershipFixtures({
+    prisma,
+    client,
+    auth,
+    app: createApp(database, auth, {
+      groups: createGroupCatalogService(prisma),
+    }),
+    url,
+  }).call;
+
+  it("lists the caller's groups to a plain USER and an ADMIN without any member name or RUT", async () => {
+    const s = await scenario();
+    await addToGroup(s.group.id, s.admin.id, s.org.id);
+    await addToGroup(s.group.id, s.member.id, s.org.id);
+    const expected = [
+      {
+        id: s.group.id,
+        name: "Finance",
+        description: null,
+        organization: { id: s.org.id, name: s.org.name },
+      },
+    ];
+
+    for (const actor of [s.member, s.admin]) {
+      const response = await legacy("get", "/groups", await cookieFor(actor));
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ groups: expected });
+      const text = JSON.stringify(response.body);
+      for (const person of [s.admin, s.member]) {
+        expect(text).not.toContain(person.id);
+        expect(text).not.toContain(person.rut);
+        expect(text).not.toContain(person.rawRut);
+      }
+      expect(text).not.toContain("Ada Admin");
+      expect(text).not.toContain("Uma User");
     }
   });
 });
 
 describe("RP0-07 POST /organizations/{organizationId}/groups", () => {
-  it("creates a group with every flag false and does not add the creator", async () => {
+  it("creates a group without flags and does not add the creator", async () => {
     const s = await scenario();
 
     const response = await call(
@@ -224,11 +171,11 @@ describe("RP0-07 POST /organizations/{organizationId}/groups", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(response.body.group).toMatchObject({
+    expect(response.body.group).toEqual({
+      id: expect.any(String),
       organizationId: s.org.id,
       name: "Operations",
       description: "Back office",
-      permissions: NO_FLAGS,
     });
     expect(
       await prisma.groupMembership.count({
@@ -261,115 +208,34 @@ describe("RP0-07 POST /organizations/{organizationId}/groups", () => {
     ).toBe(before);
   });
 
-  it("answers 403 to a USER member and 404 to outsiders and the platform administrator", async () => {
+  it("answers 403 to a USER member, 404 to outsiders and lets the platform administrator create", async () => {
     const s = await scenario();
     const send = (cookie: string) =>
       call("post", `/organizations/${s.org.id}/groups`, cookie, { name: "N" });
 
     expect((await send(await cookieFor(s.member))).status).toBe(403);
     expect((await send(await cookieFor(s.outsider))).status).toBe(404);
-    expect((await send(platformCookie)).status).toBe(404);
     expect(
       await prisma.group.count({ where: { organizationId: s.org.id } }),
     ).toBe(1);
+    expect((await send(platformCookie)).status).toBe(201);
+    expect(
+      await prisma.group.count({ where: { organizationId: s.org.id } }),
+    ).toBe(2);
   });
 });
 
-describe("RP0-07 PATCH /organizations/{organizationId}/groups/{groupId}", () => {
-  const path = (s: Scenario, groupId = s.group.id) =>
-    `/organizations/${s.org.id}/groups/${groupId}`;
-
-  it("replaces the four flags atomically and answers 200 with the group DTO", async () => {
+describe("RP0-22 the group-level PATCH is gone", () => {
+  it("answers 404 and changes nothing", async () => {
     const s = await scenario();
-    const cookie = await cookieFor(s.admin);
-
-    const first = await call("patch", path(s), cookie, {
-      permissions: { ...NO_FLAGS, createInvoices: true },
-    });
-    expect(first.status).toBe(200);
-    expect(first.body.group).toMatchObject({
-      id: s.group.id,
-      name: "Finance",
-      permissions: { ...NO_FLAGS, createInvoices: true },
-    });
-
-    // create=true / read=false stays as sent: no implication between flags.
-    const second = await call("patch", path(s), cookie, {
-      permissions: { ...NO_FLAGS, deleteOthersInvoices: true },
-    });
-    expect(second.status).toBe(200);
-    const stored = await prisma.group.findUniqueOrThrow({
-      where: { id: s.group.id },
-    });
-    expect({
-      readInvoices: stored.readInvoices,
-      createInvoices: stored.createInvoices,
-      deleteOwnInvoices: stored.deleteOwnInvoices,
-      deleteOthersInvoices: stored.deleteOthersInvoices,
-    }).toEqual({ ...NO_FLAGS, deleteOthersInvoices: true });
-  });
-
-  it.each([
-    ["a missing flag", { permissions: { readInvoices: true } }],
-    [
-      "a non-boolean flag",
-      { permissions: { ...NO_FLAGS, readInvoices: "yes" } },
-    ],
-    ["a missing permissions object", {}],
-    ["an extra top-level field", { permissions: NO_FLAGS, name: "Renamed" }],
-    [
-      "an extra field inside permissions",
-      { permissions: { ...NO_FLAGS, adminOverride: true } },
-    ],
-    ["the legacy name/description body", { name: "Renamed" }],
-  ])("rejects %s with 400 and changes nothing", async (_label, body) => {
-    const s = await scenario();
-
     const response = await call(
       "patch",
-      path(s),
+      `/organizations/${s.org.id}/groups/${s.group.id}`,
       await cookieFor(s.admin),
-      body,
+      { permissions: ALL_FLAGS },
     );
-
-    expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe("VALIDATION_ERROR");
-    const stored = await prisma.group.findUniqueOrThrow({
-      where: { id: s.group.id },
-    });
-    expect(stored.name).toBe("Finance");
-    expect(stored.readInvoices).toBe(false);
-  });
-
-  it("answers 403 to a USER member, 404 to outsiders, the platform administrator and a group of another organization", async () => {
-    const s = await scenario();
-    const foreignOrg = await makeOrg("foreign");
-    const foreignGroup = await makeGroup(foreignOrg.id, "Foreign");
-    const body = { permissions: ALL_FLAGS };
-
-    expect(
-      (await call("patch", path(s), await cookieFor(s.member), body)).status,
-    ).toBe(403);
-    expect(
-      (await call("patch", path(s), await cookieFor(s.outsider), body)).status,
-    ).toBe(404);
-    expect((await call("patch", path(s), platformCookie, body)).status).toBe(
-      404,
-    );
-    const crossTenant = await call(
-      "patch",
-      path(s, foreignGroup.id),
-      await cookieFor(s.admin),
-      body,
-    );
-    expect(crossTenant.status).toBe(404);
-    expect(crossTenant.body.error.code).toBe("NOT_FOUND");
-
-    for (const id of [s.group.id, foreignGroup.id]) {
-      expect(
-        (await prisma.group.findUniqueOrThrow({ where: { id } })).readInvoices,
-      ).toBe(false);
-    }
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("NOT_FOUND");
   });
 });
 
@@ -377,7 +243,7 @@ describe("RP0-07 group memberships", () => {
   const base = (s: Scenario) =>
     `/organizations/${s.org.id}/groups/${s.group.id}/memberships`;
 
-  it("adds an organization member, rejects duplicates and non-members, lists and removes", async () => {
+  it("adds an organization member with default flags, rejects duplicates and non-members, lists and removes", async () => {
     const s = await scenario();
     const cookie = await cookieFor(s.admin);
 
@@ -389,6 +255,7 @@ describe("RP0-07 group memberships", () => {
       userId: s.member.id,
       groupId: s.group.id,
       organizationId: s.org.id,
+      permissions: NO_FLAGS,
     });
 
     const duplicate = await call("post", base(s), cookie, {
@@ -410,6 +277,7 @@ describe("RP0-07 group memberships", () => {
         userId: s.member.id,
         groupId: s.group.id,
         organizationId: s.org.id,
+        permissions: NO_FLAGS,
         user: { id: s.member.id, name: "Uma User", rut: s.member.rawRut },
       },
     ]);
@@ -421,9 +289,26 @@ describe("RP0-07 group memberships", () => {
     expect(again.body.error.code).toBe("NOT_FOUND");
   });
 
+  it("stores the permissions sent when adding a member and lists them", async () => {
+    const s = await scenario();
+    const cookie = await cookieFor(s.admin);
+    const sent = { ...NO_FLAGS, readInvoices: true, deleteOwnInvoices: true };
+
+    const created = await call("post", base(s), cookie, {
+      userId: s.member.id,
+      permissions: sent,
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body.membership.permissions).toEqual(sent);
+    const listed = await call("get", base(s), cookie);
+    expect(listed.body.memberships[0].permissions).toEqual(sent);
+  });
+
   it.each([
-    ["permissions", { permissions: ALL_FLAGS }],
-    ["a flag", { readInvoices: true }],
+    ["a partial permissions object", { permissions: { readInvoices: true } }],
+    ["a flag at the top level", { readInvoices: true }],
+    ["a non-boolean flag", { permissions: { ...NO_FLAGS, readInvoices: 1 } }],
   ])(
     "rejects %s in the membership payload and persists nothing",
     async (_label, extra) => {
@@ -439,14 +324,10 @@ describe("RP0-07 group memberships", () => {
       expect(
         await prisma.groupMembership.count({ where: { groupId: s.group.id } }),
       ).toBe(0);
-      expect(
-        (await prisma.group.findUniqueOrThrow({ where: { id: s.group.id } }))
-          .readInvoices,
-      ).toBe(false);
     },
   );
 
-  it("answers 403 to a USER member and 404 to outsiders, the platform administrator and a group of another organization", async () => {
+  it("answers 403 to a USER member and 404 to outsiders and a group of another organization", async () => {
     const s = await scenario();
     const foreignOrg = await makeOrg("foreign-membership");
     const foreignGroup = await makeGroup(foreignOrg.id, "Foreign");
@@ -458,153 +339,61 @@ describe("RP0-07 group memberships", () => {
     expect(
       (await call("post", base(s), await cookieFor(s.outsider), body)).status,
     ).toBe(404);
-    expect((await call("post", base(s), platformCookie, body)).status).toBe(
-      404,
-    );
     expect((await call("get", base(s), await cookieFor(s.member))).status).toBe(
       403,
     );
-    expect(
-      (
-        await call(
-          "post",
-          `/organizations/${s.org.id}/groups/${foreignGroup.id}/memberships`,
-          await cookieFor(s.admin),
-          body,
-        )
-      ).status,
-    ).toBe(404);
+    for (const cookie of [await cookieFor(s.admin), platformCookie]) {
+      expect(
+        (
+          await call(
+            "post",
+            `/organizations/${s.org.id}/groups/${foreignGroup.id}/memberships`,
+            cookie,
+            body,
+          )
+        ).status,
+      ).toBe(404);
+    }
     expect(
       await prisma.groupMembership.count({
         where: { organizationId: s.org.id },
       }),
     ).toBe(0);
   });
-});
 
-describe("RP0-07 shared group flags and profile capabilities", () => {
-  it("shares the flags between members, applies PATCH to both on their next request and leaves other groups alone", async () => {
+  it("lets the platform administrator add, list and remove members", async () => {
     const s = await scenario();
-    const second = await makeUser("Second Member");
-    await join(second.id, s.org.id, "USER");
-    const other = await makeGroup(s.org.id, "Other", { readInvoices: true });
-    for (const user of [s.member, second]) {
-      await addToGroup(s.group.id, user.id, s.org.id);
-    }
-    await addToGroup(other.id, s.member.id, s.org.id);
-    const cookies = [await cookieFor(s.member), await cookieFor(second)];
 
-    const flagsOf = async (cookie: string, groupId: string) =>
-      (await contextsOf(cookie)).find((context) => context.groupId === groupId)
-        ?.capabilities;
-
-    expect(await flagsOf(cookies[0]!, s.group.id)).toEqual(NO_FLAGS);
-    expect(await flagsOf(cookies[1]!, s.group.id)).toEqual(NO_FLAGS);
-
-    const patch = await call(
-      "patch",
-      `/organizations/${s.org.id}/groups/${s.group.id}`,
-      await cookieFor(s.admin),
-      {
-        permissions: {
-          readInvoices: true,
-          createInvoices: false,
-          deleteOwnInvoices: true,
-          deleteOthersInvoices: false,
-        },
-      },
-    );
-    expect(patch.status).toBe(200);
-
-    const expected = {
-      readInvoices: true,
-      createInvoices: false,
-      deleteOwnInvoices: true,
-      deleteOthersInvoices: false,
-    };
-    expect(await flagsOf(cookies[0]!, s.group.id)).toEqual(expected);
-    expect(await flagsOf(cookies[1]!, s.group.id)).toEqual(expected);
-    // The other group of the same person keeps its own configuration.
-    expect(await flagsOf(cookies[0]!, other.id)).toEqual({
-      ...NO_FLAGS,
-      readInvoices: true,
+    const added = await call("post", base(s), platformCookie, {
+      userId: s.member.id,
     });
-  });
-
-  it("gives a person in two groups the flags of each group", async () => {
-    const s = await scenario();
-    const second = await makeGroup(s.org.id, "Second", {
-      createInvoices: true,
-      deleteOthersInvoices: true,
-    });
-    await addToGroup(s.group.id, s.member.id, s.org.id);
-    await addToGroup(second.id, s.member.id, s.org.id);
-    await prisma.group.update({
-      where: { id: s.group.id },
-      data: { readInvoices: true },
-    });
-
-    const contexts = await contextsOf(await cookieFor(s.member));
-
+    expect(added.status).toBe(201);
+    expect((await call("get", base(s), platformCookie)).status).toBe(200);
     expect(
-      Object.fromEntries(
-        contexts.map((context) => [context.groupId, context.capabilities]),
-      ),
-    ).toEqual({
-      [s.group.id]: { ...NO_FLAGS, readInvoices: true },
-      [second.id]: {
-        ...NO_FLAGS,
-        createInvoices: true,
-        deleteOthersInvoices: true,
-      },
-    });
-  });
-
-  it("gives an ADMIN and the platform administrator no invoice capabilities from their role", async () => {
-    const s = await scenario();
-    await prisma.group.update({
-      where: { id: s.group.id },
-      data: ALL_FLAGS,
-    });
-
-    expect(await contextsOf(await cookieFor(s.admin))).toEqual([]);
-    expect(await contextsOf(platformCookie)).toEqual([]);
+      (await call("delete", `${base(s)}/${s.member.id}`, platformCookie))
+        .status,
+    ).toBe(204);
   });
 });
 
-describe("RP0-07 serialization on the group row", () => {
-  // Waits (bounded) until a backend is blocked on a row lock running a
-  // statement that matches `pattern`; this is the deterministic ordering
-  // signal, no sleep is used as an assertion.
-  async function waitUntilBlocked(pattern: string) {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const result = await client.query(
-        `SELECT 1 FROM pg_stat_activity
-         WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock'
-           AND query ILIKE $1`,
-        [pattern],
-      );
-      if (result.rowCount) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error(`no backend blocked on a lock matching ${pattern}`);
-  }
-
-  it("makes PATCH wait for a transaction holding the group row lock", async () => {
+describe("RP0-22 serialization on membership rows", () => {
+  it("makes a group permission PUT wait for a transaction holding that group membership", async () => {
     const s = await scenario();
+    await addToGroup(s.group.id, s.member.id, s.org.id);
     const cookie = await cookieFor(s.admin);
     const holder = new pg.Client({ connectionString: url });
     await holder.connect();
     try {
       await holder.query("BEGIN");
-      await holder.query('SELECT id FROM "Group" WHERE id = $1 FOR UPDATE', [
-        s.group.id,
-      ]);
+      await holder.query(
+        'SELECT id FROM "GroupMembership" WHERE "groupId" = $1 AND "userId" = $2 FOR SHARE',
+        [s.group.id, s.member.id],
+      );
 
       let settled = false;
       const pending = call(
-        "patch",
-        `/organizations/${s.org.id}/groups/${s.group.id}`,
+        "put",
+        `/organizations/${s.org.id}/groups/${s.group.id}/memberships/${s.member.id}/permissions`,
         cookie,
         { permissions: ALL_FLAGS },
       ).then((response) => {
@@ -612,24 +401,27 @@ describe("RP0-07 serialization on the group row", () => {
         return response;
       });
 
-      await waitUntilBlocked('%FROM "Group" WHERE id%FOR UPDATE%');
+      await waitUntilBlocked('%FROM "GroupMembership"%FOR UPDATE%');
       expect(settled).toBe(false);
       expect(
-        (await prisma.group.findUniqueOrThrow({ where: { id: s.group.id } }))
-          .readInvoices,
+        (
+          await prisma.groupMembership.findFirstOrThrow({
+            where: { groupId: s.group.id, userId: s.member.id },
+          })
+        ).readInvoices,
       ).toBe(false);
 
       await holder.query("COMMIT");
       const response = await pending;
       expect(response.status).toBe(200);
-      expect(response.body.group.permissions).toEqual(ALL_FLAGS);
+      expect(response.body.membership.permissions).toEqual(ALL_FLAGS);
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       await holder.end();
     }
   });
 
-  it("makes organization membership removal wait for the group rows of that organization", async () => {
+  it("makes organization membership removal wait for an invoice-write share lock on that membership", async () => {
     const s = await scenario();
     await addToGroup(s.group.id, s.member.id, s.org.id);
     const cookie = await cookieFor(s.admin);
@@ -637,9 +429,10 @@ describe("RP0-07 serialization on the group row", () => {
     await holder.connect();
     try {
       await holder.query("BEGIN");
-      await holder.query('SELECT id FROM "Group" WHERE id = $1 FOR UPDATE', [
-        s.group.id,
-      ]);
+      await holder.query(
+        'SELECT id FROM "OrganizationMembership" WHERE "userId" = $1 AND "organizationId" = $2 FOR SHARE',
+        [s.member.id, s.org.id],
+      );
 
       let settled = false;
       const pending = call(
@@ -651,9 +444,7 @@ describe("RP0-07 serialization on the group row", () => {
         return response;
       });
 
-      await waitUntilBlocked(
-        '%FROM "Group" WHERE "organizationId"%FOR UPDATE%',
-      );
+      await waitUntilBlocked('%FROM "OrganizationMembership"%FOR UPDATE%');
       expect(settled).toBe(false);
       expect(
         await prisma.organizationMembership.count({

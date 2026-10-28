@@ -21,7 +21,7 @@ export function IdentityRouteGuard({ store }: { store: SessionStore }) {
   // Router synchronisation with an external store, not data fetching.
   useLayoutEffect(() => {
     if (previous.current && previous.current !== identityId) {
-      navigate(paths.panel, { replace: true });
+      navigate(paths.dashboard, { replace: true });
     }
     previous.current = identityId;
   }, [identityId, navigate]);

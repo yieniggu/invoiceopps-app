@@ -21,6 +21,7 @@ import type { InvoiceService } from "../../src/invoices.js";
 const COOKIE = "invoiceops_session=session-token";
 const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
 const ACTOR = "user-1";
+const MEMBER_ID = "22222222-2222-4222-8222-222222222222";
 
 const profile = {
   id: ACTOR,
@@ -37,7 +38,7 @@ function harness() {
   const group = { id: "g1" };
   const groups = {
     createGroup: vi.fn(async () => group),
-    updatePermissions: vi.fn(async () => group),
+    updateMemberPermissions: vi.fn(async () => ({ userId: "u1" })),
     addMember: vi.fn(async () => ({ userId: "u1" })),
     removeMember: vi.fn(async () => {}),
     listGroups: vi.fn(async () => []),
@@ -46,6 +47,7 @@ function harness() {
     createOrganization: vi.fn(async () => ({ organization: { id: "o1" } })),
     createMembership: vi.fn(async () => ({ userId: "u1" })),
     changeMembershipRole: vi.fn(async () => ({ userId: "u1" })),
+    updateMembershipPermissions: vi.fn(async () => ({ userId: "u1" })),
     removeMembership: vi.fn(async () => {}),
     listOrganizations: vi.fn(async () => []),
   };
@@ -84,14 +86,12 @@ type Case = [label: string, body: unknown, expected: "reject" | unknown];
 
 async function send(
   app: ReturnType<typeof harness>["app"],
-  method: "post" | "patch",
+  method: "post" | "patch" | "put",
   path: string,
   body: unknown,
 ) {
   const agent = request(app);
-  const call = (method === "post" ? agent.post(path) : agent.patch(path))
-    .set(SAME_ORIGIN)
-    .set("Cookie", COOKIE);
+  const call = agent[method](path).set(SAME_ORIGIN).set("Cookie", COOKIE);
   if (body === undefined) return call;
   return call
     .set("Content-Type", "application/json")
@@ -166,76 +166,105 @@ describe("group create", () => {
   });
 });
 
-describe("group permissions update", () => {
-  const flags = {
-    readInvoices: true,
-    createInvoices: false,
-    deleteOwnInvoices: true,
-    deleteOthersInvoices: false,
-  };
-  const cases: Case[] = [
-    ["all four flags", { permissions: flags }, flags],
-    [
-      "all false",
-      {
-        permissions: {
-          readInvoices: false,
-          createInvoices: false,
-          deleteOwnInvoices: false,
-          deleteOthersInvoices: false,
-        },
-      },
-      {
-        readInvoices: false,
-        createInvoices: false,
-        deleteOwnInvoices: false,
-        deleteOthersInvoices: false,
-      },
-    ],
-    [
-      "missing flag",
-      { permissions: { ...flags, deleteOthersInvoices: undefined } },
-      "reject",
-    ],
-    [
-      "string flag",
-      { permissions: { ...flags, readInvoices: "true" } },
-      "reject",
-    ],
-    ["numeric flag", { permissions: { ...flags, readInvoices: 1 } }, "reject"],
-    ["null flag", { permissions: { ...flags, readInvoices: null } }, "reject"],
-    [
-      "unknown key inside permissions",
-      { permissions: { ...flags, x: true } },
-      "reject",
-    ],
-    ["unknown top-level key", { permissions: flags, name: "B" }, "reject"],
-    ["legacy name body", { name: "B" }, "reject"],
-    ["flags at the top level", flags, "reject"],
-    ["null permissions", { permissions: null }, "reject"],
-    ["empty object", {}, "reject"],
-    ["array body", [], "reject"],
-    ["no body", undefined, "reject"],
-  ];
+// RP0-22: permissions belong to memberships; the group-level PATCH is gone.
+const flags = {
+  readInvoices: true,
+  createInvoices: false,
+  deleteOwnInvoices: true,
+  deleteOthersInvoices: false,
+};
+const allFalse = {
+  readInvoices: false,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+const permissionCases: Case[] = [
+  ["all four flags", { permissions: flags }, flags],
+  ["all false", { permissions: allFalse }, allFalse],
+  [
+    "missing flag",
+    { permissions: { ...flags, deleteOthersInvoices: undefined } },
+    "reject",
+  ],
+  [
+    "string flag",
+    { permissions: { ...flags, readInvoices: "true" } },
+    "reject",
+  ],
+  ["numeric flag", { permissions: { ...flags, readInvoices: 1 } }, "reject"],
+  ["null flag", { permissions: { ...flags, readInvoices: null } }, "reject"],
+  [
+    "unknown key inside permissions",
+    { permissions: { ...flags, x: true } },
+    "reject",
+  ],
+  ["unknown top-level key", { permissions: flags, name: "B" }, "reject"],
+  ["legacy name body", { name: "B" }, "reject"],
+  ["flags at the top level", flags, "reject"],
+  ["null permissions", { permissions: null }, "reject"],
+  ["empty object", {}, "reject"],
+  ["array body", [], "reject"],
+  ["no body", undefined, "reject"],
+];
 
-  it.each(cases)("%s", async (_label, body, expected) => {
+describe("group member permissions update", () => {
+  it.each(permissionCases)("%s", async (_label, body, expected) => {
     const { app, groups } = harness();
     const response = await send(
       app,
-      "patch",
-      "/api/v1/organizations/o1/groups/g1",
+      "put",
+      "/api/v1/organizations/o1/groups/g1/memberships/u1/permissions",
       body,
     );
 
     if (expected === "reject") {
       expectRejected(response);
-      expect(groups.updatePermissions).not.toHaveBeenCalled();
+      expect(groups.updateMemberPermissions).not.toHaveBeenCalled();
     } else {
       expect(response.status).toBe(200);
-      expect(groups.updatePermissions).toHaveBeenCalledWith(
+      expect(groups.updateMemberPermissions).toHaveBeenCalledWith(
         ACTOR,
         "o1",
         "g1",
+        "u1",
+        expected,
+      );
+    }
+  });
+
+  it("no longer serves PATCH on the group", async () => {
+    const { app } = harness();
+    const response = await send(
+      app,
+      "patch",
+      "/api/v1/organizations/o1/groups/g1",
+      { permissions: flags },
+    );
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("organization member permissions update", () => {
+  it.each(permissionCases)("%s", async (_label, body, expected) => {
+    const { app, platform } = harness();
+    const response = await send(
+      app,
+      "put",
+      "/api/v1/organizations/o1/memberships/u1/permissions",
+      body,
+    );
+
+    if (expected === "reject") {
+      expectRejected(response);
+      expect(platform.updateMembershipPermissions).not.toHaveBeenCalled();
+    } else {
+      expect(response.status).toBe(200);
+      expect(platform.updateMembershipPermissions).toHaveBeenCalledWith(
+        ACTOR,
+        "o1",
+        "u1",
         expected,
       );
     }
@@ -244,14 +273,25 @@ describe("group permissions update", () => {
 
 describe("group membership create", () => {
   const cases: Case[] = [
-    ["userId", { userId: "u1" }, "u1"],
-    ["trimmed userId", { userId: " u1 " }, "u1"],
+    ["userId", { userId: MEMBER_ID }, [MEMBER_ID, undefined]],
+    ["trimmed userId", { userId: ` ${MEMBER_ID} ` }, "reject"],
+    ["non-UUID userId", { userId: "u1" }, "reject"],
+    [
+      "userId with permissions",
+      { userId: MEMBER_ID, permissions: flags },
+      [MEMBER_ID, flags],
+    ],
+    [
+      "partial permissions",
+      { userId: MEMBER_ID, permissions: { readInvoices: true } },
+      "reject",
+    ],
     ["empty userId", { userId: "" }, "reject"],
     ["blank userId", { userId: "  " }, "reject"],
     ["numeric userId", { userId: 5 }, "reject"],
-    ["extra key", { userId: "u1", x: 1 }, "reject"],
-    ["permissions", { userId: "u1", permissions: {} }, "reject"],
-    ["flag", { userId: "u1", readInvoices: true }, "reject"],
+    ["extra key", { userId: MEMBER_ID, x: 1 }, "reject"],
+    ["empty permissions", { userId: MEMBER_ID, permissions: {} }, "reject"],
+    ["flag", { userId: MEMBER_ID, readInvoices: true }, "reject"],
     ["empty object", {}, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
@@ -275,7 +315,7 @@ describe("group membership create", () => {
         ACTOR,
         "o1",
         "g1",
-        expected,
+        ...(expected as [string, unknown]),
       );
     }
   });
@@ -292,6 +332,20 @@ describe("organization membership", () => {
       "RUT without separators",
       { rut: "12345678-5", role: "USER" },
       { rut: "123456785", role: "USER" },
+    ],
+    [
+      "with permissions",
+      { rut: "12.345.678-5", role: "USER", permissions: flags },
+      { rut: "123456785", role: "USER", permissions: flags },
+    ],
+    [
+      "partial permissions",
+      {
+        rut: "12.345.678-5",
+        role: "USER",
+        permissions: { readInvoices: true },
+      },
+      "reject",
     ],
     ["invalid RUT", { rut: "11.111.111-2", role: "USER" }, "reject"],
     ["numeric RUT", { rut: 123456785, role: "USER" }, "reject"],
@@ -330,6 +384,7 @@ describe("organization membership", () => {
   const change: Case[] = [
     ["role only", { role: "USER" }, "USER"],
     ["with userId", { role: "USER", userId: "u2" }, "reject"],
+    ["with permissions", { role: "USER", permissions: flags }, "reject"],
     ["empty object", {}, "reject"],
     ["unknown role", { role: "X" }, "reject"],
     ["numeric role", { role: 1 }, "reject"],
@@ -448,6 +503,52 @@ describe("organization user provisioning", () => {
       valid,
       { name: "Ada", rut: "123456785", role: "USER" },
     ],
+    [
+      "with permissions and groups",
+      {
+        ...valid,
+        permissions: flags,
+        groups: [{ groupId: "g1", permissions: allFalse }, { groupId: "g2" }],
+      },
+      {
+        name: "Ada",
+        rut: "123456785",
+        role: "USER",
+        permissions: flags,
+        groups: [{ groupId: "g1", permissions: allFalse }, { groupId: "g2" }],
+      },
+    ],
+    [
+      "duplicate groupId",
+      { ...valid, groups: [{ groupId: "g1" }, { groupId: "g1" }] },
+      "reject",
+    ],
+    [
+      "too many groups",
+      {
+        ...valid,
+        groups: Array.from({ length: 201 }, (_unused, index) => ({
+          groupId: `g${index}`,
+        })),
+      },
+      "reject",
+    ],
+    [
+      "group with extra key",
+      { ...valid, groups: [{ groupId: "g1", x: 1 }] },
+      "reject",
+    ],
+    [
+      "group without id",
+      { ...valid, groups: [{ permissions: flags }] },
+      "reject",
+    ],
+    [
+      "partial permissions",
+      { ...valid, permissions: { readInvoices: true } },
+      "reject",
+    ],
+    ["groups not an array", { ...valid, groups: "g1" }, "reject"],
     ["invalid RUT", { ...valid, rut: "11.111.111-2" }, "reject"],
     ["numeric RUT", { ...valid, rut: 123456785 }, "reject"],
     ["missing RUT", { name: "Ada", role: "USER" }, "reject"],
@@ -462,6 +563,41 @@ describe("organization user provisioning", () => {
     ["extra key", { ...valid, x: 1 }, "reject"],
     ["array body", [], "reject"],
     ["no body", undefined, "reject"],
+    [
+      "defined temporary password of 8",
+      { ...valid, temporaryPassword: "x".repeat(8) },
+      {
+        name: "Ada",
+        rut: "123456785",
+        role: "USER",
+        temporaryPassword: "x".repeat(8),
+      },
+    ],
+    [
+      "defined temporary password of 256",
+      { ...valid, temporaryPassword: "x".repeat(256) },
+      {
+        name: "Ada",
+        rut: "123456785",
+        role: "USER",
+        temporaryPassword: "x".repeat(256),
+      },
+    ],
+    [
+      "defined temporary password of 7",
+      { ...valid, temporaryPassword: "x".repeat(7) },
+      "reject",
+    ],
+    [
+      "defined temporary password of 257",
+      { ...valid, temporaryPassword: "x".repeat(257) },
+      "reject",
+    ],
+    [
+      "non-string temporary password",
+      { ...valid, temporaryPassword: 12345678 },
+      "reject",
+    ],
   ];
 
   it.each(cases)("%s", async (_label, body, expected) => {

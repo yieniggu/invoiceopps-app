@@ -70,12 +70,11 @@ describe("RutField (RV-094, RV-121, RV-122)", () => {
     expect(caretAfterFormat("001", 3, "1")).toBe(1);
   });
 
-  it("explains leading zeros with a visible hint", () => {
+  it("shows no leading-zeros hint and describes the input by its error region only", () => {
     render(<Harness />);
-    expect(screen.getByText(/ceros a la izquierda/i)).toBeTruthy();
-    expect(rutInput().getAttribute("aria-describedby")).toContain(
-      screen.getByText(/ceros a la izquierda/i).id,
-    );
+    expect(screen.queryByText(/ceros a la izquierda/i)).toBeNull();
+    const live = document.querySelector("[aria-live='polite']") as HTMLElement;
+    expect(rutInput().getAttribute("aria-describedby")).toBe(live.id);
   });
 
   it("renders the error inside one persistent aria-live container that never moves", () => {

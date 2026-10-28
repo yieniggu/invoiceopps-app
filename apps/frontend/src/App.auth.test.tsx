@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -28,6 +29,7 @@ const profile = {
         slug: "ai-academy",
       },
       role: "USER",
+      ...ACCESS_NONE,
     },
   ],
 };
@@ -164,7 +166,7 @@ describe("APP12 authentication entry (AC02, AC05)", () => {
       expect(await screen.findByText(profile.name)).toBeTruthy();
       fireEvent.click(screen.getByRole("link", { name: "Organizaciones" }));
       expect(await screen.findByText("AI Academy")).toBeTruthy();
-      expect(screen.getByText(/miembro/i)).toBeTruthy();
+      expect(screen.getByText("Usuario")).toBeTruthy();
       expect(screen.getByRole("button", { name: /^salir$/i })).toBeTruthy();
       expectJsonPost(fetchMock, "/api/v1/auth/login", {
         rut: user.rut,

@@ -1,3 +1,4 @@
+import { ACCESS_NONE } from "./test/transport";
 import {
   act,
   cleanup,
@@ -62,6 +63,7 @@ function http() {
               {
                 organization: { id: "org", name: "Academia", slug: "academy" },
                 role: "USER",
+                ...ACCESS_NONE,
               },
             ],
           },

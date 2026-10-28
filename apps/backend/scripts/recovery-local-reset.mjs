@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertRecoveryTarget,
+  expectedDatabasePort,
   parseResetArguments,
   safeDecode,
 } from "./recovery-db-guards.mjs";
@@ -34,7 +35,11 @@ export async function runRecoveryReset({
 } = {}) {
   // All guards run before any connection or child process.
   const { url, confirmReset } = parseResetArguments(argv, env);
-  const target = assertRecoveryTarget(url, { confirmReset, allowedNames });
+  const target = assertRecoveryTarget(url, {
+    confirmReset,
+    allowedNames,
+    expectedPort: expectedDatabasePort(env),
+  });
   const parsed = new URL(url);
   const secrets = [
     url,

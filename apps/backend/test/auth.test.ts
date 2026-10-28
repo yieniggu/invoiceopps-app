@@ -325,6 +325,13 @@ describe("APP-02 auth HTTP contract", () => {
   });
 });
 
+const NO_FLAGS = {
+  readInvoices: false,
+  createInvoices: false,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+
 describe("APP-03 profile HTTP contract", () => {
   it("returns the authenticated profile and deterministically ordered memberships", async () => {
     const app = createApp(
@@ -351,6 +358,8 @@ describe("APP-03 profile HTTP contract", () => {
                   slug: "data-academy",
                 },
                 role: "ADMIN",
+                permissions: NO_FLAGS,
+                groups: [],
               },
               {
                 organization: {
@@ -359,6 +368,18 @@ describe("APP-03 profile HTTP contract", () => {
                   slug: "ai-academy",
                 },
                 role: "USER",
+                permissions: { ...NO_FLAGS, readInvoices: true },
+                groups: [
+                  {
+                    group: { id: "group-1", name: "Finance" },
+                    permissions: { ...NO_FLAGS, createInvoices: true },
+                    effective: {
+                      ...NO_FLAGS,
+                      readInvoices: true,
+                      createInvoices: true,
+                    },
+                  },
+                ],
               },
             ],
           };
@@ -377,7 +398,6 @@ describe("APP-03 profile HTTP contract", () => {
     expect(response.body).toEqual({
       profile: {
         mustChangePassword: false,
-        contexts: [],
         id: "user-1",
         name: "Ada Lovelace",
         rut: "123456785",
@@ -392,6 +412,8 @@ describe("APP-03 profile HTTP contract", () => {
               slug: "data-academy",
             },
             role: "ADMIN",
+            permissions: NO_FLAGS,
+            groups: [],
           },
           {
             organization: {
@@ -400,10 +422,23 @@ describe("APP-03 profile HTTP contract", () => {
               slug: "ai-academy",
             },
             role: "USER",
+            permissions: { ...NO_FLAGS, readInvoices: true },
+            groups: [
+              {
+                group: { id: "group-1", name: "Finance" },
+                permissions: { ...NO_FLAGS, createInvoices: true },
+                effective: {
+                  ...NO_FLAGS,
+                  readInvoices: true,
+                  createInvoices: true,
+                },
+              },
+            ],
           },
         ],
       },
     });
+    expect(response.body.profile).not.toHaveProperty("contexts");
     expect(response.body.profile.id).toBe("user-1");
   });
 
@@ -554,6 +589,7 @@ describe("APP-03 profile HTTP contract", () => {
 describe("APP-04 groups HTTP contract", () => {
   const validOrigin = "http://127.0.0.1";
   const ORG = "organization-1";
+  const STUDENT_ID = "5c9d2a1e-7b3f-4a8e-9d10-2f6b8c4e1a37";
   const FLAGS = {
     readInvoices: true,
     createInvoices: false,
@@ -565,7 +601,6 @@ describe("APP-04 groups HTTP contract", () => {
     organizationId: ORG,
     name: "Advanced topics",
     description: null,
-    permissions: FLAGS,
   };
 
   const unused = () => {
@@ -602,13 +637,6 @@ describe("APP-04 groups HTTP contract", () => {
                 name: "Advanced topics",
                 description: null,
                 organization: { id: "organization-1", name: "AI Academy" },
-                members: [
-                  {
-                    id: "student-1",
-                    name: "Grace Hopper",
-                    rut: "123456793",
-                  },
-                ],
               },
             ];
           },
@@ -616,9 +644,11 @@ describe("APP-04 groups HTTP contract", () => {
         groupAdministration: {
           listGroups: unused,
           createGroup: unused,
-          updatePermissions: unused,
+          updateMemberPermissions: unused,
           listMemberships: unused,
           addMember: unused,
+          addMembers: unused,
+          updateMembersPermissions: unused,
           removeMember: unused,
           ...groupOverrides,
         } satisfies GroupService,
@@ -626,7 +656,7 @@ describe("APP-04 groups HTTP contract", () => {
     );
   }
 
-  it("lists the authenticated user's groups with deterministic members", async () => {
+  it("lists the authenticated user's groups without the people in them", async () => {
     const response = await request(createGroupApp())
       .get("/api/v1/groups")
       .set("Cookie", "invoiceops_session=admin-session");
@@ -639,9 +669,6 @@ describe("APP-04 groups HTTP contract", () => {
           name: "Advanced topics",
           description: null,
           organization: { id: "organization-1", name: "AI Academy" },
-          members: [
-            { id: "student-1", name: "Grace Hopper", rut: "123456793" },
-          ],
         },
       ],
     });
@@ -688,14 +715,35 @@ describe("APP-04 groups HTTP contract", () => {
       userId: "student-1",
       groupId: "group-2",
       organizationId: ORG,
+      permissions: FLAGS,
     };
     const app = createGroupApp({
-      async updatePermissions(userId, organizationId, groupId, permissions) {
-        calls.push(["update", userId, organizationId, groupId, permissions]);
-        return group;
+      async updateMemberPermissions(
+        actorUserId,
+        organizationId,
+        groupId,
+        memberId,
+        permissions,
+      ) {
+        calls.push([
+          "update",
+          actorUserId,
+          organizationId,
+          groupId,
+          memberId,
+          permissions,
+        ]);
+        return membership;
       },
-      async addMember(userId, organizationId, groupId, memberId) {
-        calls.push(["add", userId, organizationId, groupId, memberId]);
+      async addMember(userId, organizationId, groupId, memberId, permissions) {
+        calls.push([
+          "add",
+          userId,
+          organizationId,
+          groupId,
+          memberId,
+          permissions,
+        ]);
         return membership;
       },
       async removeMember(userId, organizationId, groupId, memberId) {
@@ -703,7 +751,9 @@ describe("APP-04 groups HTTP contract", () => {
       },
     });
     const updated = await request(app)
-      .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
+      .put(
+        `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1/permissions`,
+      )
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
@@ -713,7 +763,7 @@ describe("APP-04 groups HTTP contract", () => {
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
-      .send({ userId: " student-1 " });
+      .send({ userId: STUDENT_ID });
     const removed = await request(app)
       .delete(
         `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1`,
@@ -723,13 +773,13 @@ describe("APP-04 groups HTTP contract", () => {
       .set("Cookie", "invoiceops_session=admin-session");
 
     expect(updated.status).toBe(200);
-    expect(updated.body).toEqual({ group });
+    expect(updated.body).toEqual({ membership });
     expect(added.status).toBe(201);
     expect(added.body).toEqual({ membership });
     expect(removed.status).toBe(204);
     expect(calls).toEqual([
-      ["update", "admin-1", ORG, "group-2", FLAGS],
-      ["add", "admin-1", ORG, "group-2", "student-1"],
+      ["update", "admin-1", ORG, "group-2", "student-1", FLAGS],
+      ["add", "admin-1", ORG, "group-2", STUDENT_ID, undefined],
       ["remove", "admin-1", ORG, "group-2", "student-1"],
     ]);
   });
@@ -742,7 +792,7 @@ describe("APP-04 groups HTTP contract", () => {
     };
     const app = createGroupApp({
       createGroup: fail,
-      updatePermissions: fail,
+      updateMemberPermissions: fail,
       addMember: fail,
       removeMember: fail,
     });
@@ -753,7 +803,9 @@ describe("APP-04 groups HTTP contract", () => {
         .set("Origin", "https://untrusted.example.test")
         .send({ name: "Updated topics" }),
       request(app)
-        .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
+        .put(
+          `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1/permissions`,
+        )
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
         .send({ permissions: FLAGS }),
@@ -761,7 +813,7 @@ describe("APP-04 groups HTTP contract", () => {
         .post(`/api/v1/organizations/${ORG}/groups/group-2/memberships`)
         .set("Cookie", "invoiceops_session=admin-session")
         .set("Origin", "https://untrusted.example.test")
-        .send({ userId: "student-1" }),
+        .send({ userId: STUDENT_ID }),
       request(app)
         .delete(
           `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1`,
@@ -787,14 +839,16 @@ describe("APP-04 groups HTTP contract", () => {
     });
 
     const unauthenticated = await request(app)
-      .patch(`/api/v1/organizations/${ORG}/groups/group-2`)
+      .put(
+        `/api/v1/organizations/${ORG}/groups/group-2/memberships/student-1/permissions`,
+      )
       .send({ permissions: FLAGS });
     const forbidden = await request(app)
       .post(`/api/v1/organizations/${ORG}/groups/group-2/memberships`)
       .set("Host", "127.0.0.1")
       .set("Origin", validOrigin)
       .set("Cookie", "invoiceops_session=admin-session")
-      .send({ userId: "student-1" });
+      .send({ userId: STUDENT_ID });
 
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.body).toEqual({
@@ -808,6 +862,8 @@ describe("APP-04 groups HTTP contract", () => {
 });
 
 describe("organization membership HTTP contract", () => {
+  const FLAGS = NO_FLAGS;
+
   it("uses the session identity for authorized discovery and preserves CSRF checks for membership changes", async () => {
     const calls: unknown[][] = [];
     const unused = () => {
@@ -836,6 +892,9 @@ describe("organization membership HTTP contract", () => {
       {
         organizations: {
           createOrganization: unused,
+          updateMembershipPermissions: unused,
+          updateMembershipsPermissions: unused,
+          getOrganization: unused,
           listMemberships: unused,
           async listOrganizations(actorUserId) {
             calls.push(["list", actorUserId]);
@@ -858,7 +917,12 @@ describe("organization membership HTTP contract", () => {
               input.rut,
               input.role,
             ]);
-            return { userId: "student-1", organizationId, role: input.role };
+            return {
+              userId: "student-1",
+              organizationId,
+              role: input.role,
+              permissions: FLAGS,
+            };
           },
           async changeMembershipRole(
             actorUserId,
@@ -868,7 +932,7 @@ describe("organization membership HTTP contract", () => {
           ) {
             calls.push(["change", actorUserId, organizationId, userId, role]);
             return {
-              membership: { userId, organizationId, role },
+              membership: { userId, organizationId, role, permissions: FLAGS },
               changed: true,
             };
           },

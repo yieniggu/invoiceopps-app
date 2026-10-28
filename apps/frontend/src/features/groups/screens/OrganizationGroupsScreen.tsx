@@ -12,7 +12,7 @@ import { GroupsList } from "../components/GroupsList";
 /** The groups of a single organization. */
 export function OrganizationGroupsScreen({ profile }: { profile: Profile }) {
   const { organizationId = "" } = useParams();
-  const { organization, isAdmin } = useOrganizationAccess(
+  const { organization, canManage, membership } = useOrganizationAccess(
     profile,
     organizationId,
   );
@@ -30,19 +30,23 @@ export function OrganizationGroupsScreen({ profile }: { profile: Profile }) {
         eyebrow={organization.name}
         title="Grupos de la organización"
         description={
-          isAdmin
+          canManage
             ? "Como administrador ves todos los grupos de la organización y puedes crear nuevos."
             : "Los grupos de esta organización a los que perteneces y lo que puedes hacer en ellos."
         }
         action={
-          isAdmin ? (
+          canManage ? (
             <LinkButton to={paths.newGroup(organization.id)}>
               Crear grupo
             </LinkButton>
           ) : undefined
         }
       />
-      <GroupsList organizationId={organization.id} isAdmin={isAdmin} />
+      <GroupsList
+        organizationId={organization.id}
+        isAdmin={canManage}
+        memberGroups={membership?.groups}
+      />
     </div>
   );
 }

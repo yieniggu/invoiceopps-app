@@ -1,3 +1,4 @@
+import { membership, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -23,7 +24,7 @@ const initial: Profile = {
   email: null,
   username: null,
   isPlatformAdministrator: true,
-  memberships: [{ organization: org, role: "ADMIN" }],
+  memberships: [membership(org, "ADMIN")],
 };
 const base = `/api/v1/organizations/${org.id}`;
 function json(value: unknown, status = 200) {
@@ -64,12 +65,14 @@ function http(platform = true) {
     organizationId: org.id,
     name: "Equipo ajeno",
     description: null,
-    permissions: {
-      readInvoices: false,
-      createInvoices: false,
-      deleteOwnInvoices: false,
-      deleteOthersInvoices: false,
-    },
+  };
+  // Another person who is always in the group: their flags can be edited.
+  const carla = {
+    userId: "carla",
+    groupId: "g",
+    organizationId: org.id,
+    permissions: NO_PERMISSIONS,
+    user: { id: "carla", name: "Carla", rut: "190347907" },
   };
   const catalog = vi
     .fn<() => Promise<Response>>()
@@ -101,6 +104,13 @@ function http(platform = true) {
         return method === "PATCH" ? patch() : reads();
       if (path === "/api/v1/groups") return readGroups();
       if (path === "/api/v1/organizations") return json({ organizations: [] });
+      if (path === base && method === "GET")
+        return json({
+          organization: { ...org, description: null },
+          summary: { memberCount: 1, groupCount: 1 },
+        });
+      if (path === `${base}/groups/g/memberships/bulk` && method === "POST")
+        return json({ memberships: [] }, 201);
       if (path === `${base}/memberships` && method === "GET")
         return json({
           memberships: [
@@ -108,6 +118,8 @@ function http(platform = true) {
               userId: actor,
               organizationId: org.id,
               role: "ADMIN",
+              permissions: NO_PERMISSIONS,
+              groups: [],
               user: self,
             },
           ],
@@ -133,23 +145,30 @@ function http(platform = true) {
               201,
             )
           : json({
-              memberships: member
-                ? [
-                    {
-                      userId: actor,
-                      groupId: "g",
-                      organizationId: org.id,
-                      user: self,
-                    },
-                  ]
-                : [],
+              memberships: [
+                ...(member
+                  ? [
+                      {
+                        userId: actor,
+                        groupId: "g",
+                        organizationId: org.id,
+                        permissions: NO_PERMISSIONS,
+                        user: self,
+                      },
+                    ]
+                  : []),
+                carla,
+              ],
             });
       if (path === `${base}/groups/g/memberships/${actor}`) {
         member = false;
         return new Response(null, { status: 204 });
       }
-      if (path === `${base}/groups/g` && method === "PATCH")
-        return json({ group });
+      if (
+        path === `${base}/groups/g/memberships/carla/permissions` &&
+        method === "PUT"
+      )
+        return json({ membership: carla });
       throw new Error(`Unexpected request ${method} ${path}`);
     });
   return {
@@ -163,12 +182,18 @@ function http(platform = true) {
     },
   };
 }
-/** People are managed on the organization detail, reached from the list. */
+/** The organization summary, reached from the list. */
 async function openOrganization() {
   navigate("Organizaciones");
   fireEvent.click(
     await screen.findByRole("link", { name: "Ver detalle de Academia" }),
   );
+}
+/** The person's own page, reached through Miembros. */
+async function openSelf() {
+  fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+  fireEvent.click(await screen.findByRole("link", { name: "Persona" }));
+  await screen.findByRole("heading", { level: 1, name: "Persona" });
 }
 async function start(destination: string) {
   const view = renderApp();
@@ -177,8 +202,11 @@ async function start(destination: string) {
   return view;
 }
 async function removeSelf() {
-  await screen.findByText("12.345.678-5");
-  fireEvent.click(screen.getByRole("button", { name: "Quitar a Persona" }));
+  await openSelf();
+  await screen.findByText(/12\.345\.678-5/);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Quitar a Persona de la organización" }),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Confirmar quitar a Persona" }),
   );
@@ -231,29 +259,36 @@ describe("FULLAPP12 authorized findings", () => {
     expect(api.catalog).not.toHaveBeenCalled();
     navigate("Grupos");
     fireEvent.click(
-      await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" }),
+      await screen.findByRole("link", { name: "Ver grupo Equipo ajeno" }),
     );
+    fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Carla" }));
     const editor = await screen.findByRole("group", {
-      name: "Permisos sobre facturas",
+      name: "Permisos en el grupo «Equipo ajeno» — Carla",
     });
-    expect(
-      screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
     expect(api.catalog).toHaveBeenCalled();
-    // The write contracts of the screen, without ever joining the catalogue
-    // group or adding a Workspace owner. Each write refreshes the catalogue.
+    // The write contracts of the screens, without ever joining the catalogue
+    // group or adding a Workspace owner. Saving a member's flags leaves the
+    // catalogue alone; membership writes and group creation refresh it.
     let reads = api.catalog.mock.calls.length;
     fireEvent.click(
-      within(editor).getByRole("checkbox", { name: "Leer facturas" }),
+      within(editor).getByRole("button", { name: "Leer facturas" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
-    await screen.findByText("Permisos guardados.");
-    await waitFor(() =>
-      expect(api.catalog.mock.calls.length).toBeGreaterThan(reads),
+    fireEvent.click(
+      screen.getByRole("button", { name: "Guardar permisos de Carla" }),
     );
-    await screen.findByRole("option", { name: "Persona" });
+    await screen.findByText("Permisos guardados");
+    expect(api.catalog.mock.calls.length).toBe(reads);
+    fireEvent.click(screen.getByRole("link", { name: "Miembros del grupo" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Agregar miembros" }),
+    );
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Persona/ }));
     reads = api.catalog.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Agregar al grupo" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Agregar 1 persona al grupo" }),
+    );
     await waitFor(() =>
       expect(api.catalog.mock.calls.length).toBeGreaterThan(reads),
     );
@@ -277,8 +312,8 @@ describe("FULLAPP12 authorized findings", () => {
       writes.map(([path, init]) => [String(path), init?.method, init?.body]),
     ).toEqual([
       [
-        `${base}/groups/g`,
-        "PATCH",
+        `${base}/groups/g/memberships/carla/permissions`,
+        "PUT",
         JSON.stringify({
           permissions: {
             readInvoices: true,
@@ -289,17 +324,17 @@ describe("FULLAPP12 authorized findings", () => {
         }),
       ],
       [
-        `${base}/groups/g/memberships`,
+        `${base}/groups/g/memberships/bulk`,
         "POST",
-        JSON.stringify({ userId: actor }),
+        JSON.stringify({
+          members: [{ userId: actor, permissions: NO_PERMISSIONS }],
+        }),
       ],
       [`${base}/groups`, "POST", JSON.stringify({ name: "Intento original" })],
     ]);
     navigate("Grupos");
-    await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" });
-    expect(
-      screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
-    ).toBeNull();
+    await screen.findByRole("link", { name: "Ver grupo Equipo ajeno" });
+    expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
   });
 
   it("CR009 ignores an older capability GET body after a newer same-session authority refresh", async () => {
@@ -308,7 +343,8 @@ describe("FULLAPP12 authorized findings", () => {
     fireEvent.click(
       await screen.findByRole("link", { name: "Ver detalle de Academia" }),
     );
-    await screen.findByText("12.345.678-5");
+    await openSelf();
+    await screen.findByText(/12\.345\.678-5/);
     const body = deferred<unknown>();
     const response = json({});
     const parse = vi.spyOn(response, "json").mockReturnValue(body.promise);
@@ -322,7 +358,11 @@ describe("FULLAPP12 authorized findings", () => {
     });
     await waitFor(() => expect(parse).toHaveBeenCalledOnce());
     // ...when a newer authority change (self removal) refreshes the profile.
-    fireEvent.click(screen.getByRole("button", { name: "Quitar a Persona" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Quitar a Persona de la organización",
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Confirmar quitar a Persona" }),
     );
@@ -345,27 +385,27 @@ describe("FULLAPP12 authorized findings", () => {
     await start("Grupos");
     await waitFor(() => expect(api.catalog).toHaveBeenCalledOnce());
     expect(
-      await screen.findByRole("button", { name: "Trabajar con Equipo ajeno" }),
+      await screen.findByRole("link", { name: "Ver grupo Equipo ajeno" }),
     ).toBeTruthy();
     expect(
       screen.getAllByRole("heading", { name: "Equipo ajeno" }),
     ).toHaveLength(1);
     fireEvent.click(
-      screen.getByRole("link", { name: "Ver detalle de Equipo ajeno" }),
+      screen.getByRole("link", { name: "Ver grupo Equipo ajeno" }),
     );
+    fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Persona" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Quitar a Persona del grupo" }),
     );
-    await screen.findByText("Persona quitada del grupo.");
-    await waitFor(() => expect(api.readGroups).toHaveBeenCalledTimes(2));
-    // Workspace ownership is revoked together with the membership.
-    navigate("Grupos");
-    await screen.findByRole("link", { name: "Ver detalle de Equipo ajeno" });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Trabajar con Equipo ajeno" }),
-      ).toBeNull(),
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirmar quitar a Persona" }),
     );
+    await screen.findByText("Se quitó a Persona del grupo.");
+    await waitFor(() => expect(api.readGroups).toHaveBeenCalledTimes(2));
+    // The workspace catalogue was revalidated together with the membership.
+    navigate("Grupos");
+    await screen.findByRole("link", { name: "Ver grupo Equipo ajeno" });
     expect(
       screen.getAllByRole("heading", { name: "Equipo ajeno" }),
     ).toHaveLength(1);

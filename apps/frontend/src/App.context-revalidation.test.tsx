@@ -1,3 +1,4 @@
+import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -25,7 +26,7 @@ const profile = {
   email: null,
   username: null,
   isPlatformAdministrator: false,
-  memberships: [{ organization, role: "ADMIN" }],
+  memberships: [{ organization, role: "ADMIN", ...ACCESS_NONE }],
 };
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -77,6 +78,7 @@ function http() {
             userId: "user-A",
             groupId: "group-A",
             organizationId: "org-A",
+            permissions: NO_PERMISSIONS,
             user: { id: "user-A", name: "Ada", rut: "123456785" },
           },
         ],
@@ -144,12 +146,17 @@ async function selectGroupAndLeave(
   api.groups.mockReturnValueOnce(pending.promise);
   navigate("Grupos");
   fireEvent.click(
-    await screen.findByRole("link", { name: "Ver detalle de Grupo A" }),
+    await screen.findByRole("link", { name: "Ver grupo Grupo A" }),
   );
+  fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+  fireEvent.click(await screen.findByRole("link", { name: "Ada" }));
   // Removing yourself from the group is what forces the workspace to
   // revalidate its authorized contexts.
   fireEvent.click(
     await screen.findByRole("button", { name: "Quitar a Ada del grupo" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Confirmar quitar a Ada" }),
   );
   await waitFor(() => expect(api.groups).toHaveBeenCalledTimes(2));
 }

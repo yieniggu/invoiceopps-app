@@ -17,6 +17,9 @@ if (!databaseUrl) {
 }
 // Local default avoids 3000; containers set PORT explicitly.
 const port = Number(process.env.PORT || 4380);
+// Loopback by default: a local run is never reachable from the network.
+// Containers set HOST=0.0.0.0 so the published port reaches the process.
+const host = process.env.HOST || "127.0.0.1";
 const database = createDatabase(databaseUrl);
 const authRateLimitConfig = authRateLimitConfigFromEnv({
   AUTH_RATE_LIMIT_DISABLED: process.env.AUTH_RATE_LIMIT_DISABLED,
@@ -40,6 +43,6 @@ const app = createApp(database, createAuthService(database.prisma), {
   businessPolicies: createBusinessPolicyService(database.prisma),
 });
 
-app.listen(port, () => {
-  console.info(`InvoiceOps backend listening on port ${port}`);
+app.listen(port, host, () => {
+  console.info(`InvoiceOps backend listening on ${host}:${port}`);
 });

@@ -1,54 +1,36 @@
-import { useParams } from "react-router";
-
 import { BackLink } from "../../../components/BackLink";
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
+import { QueryFeedback } from "../../../components/QueryFeedback";
 import type { Profile } from "../../auth/types";
-import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
-import { ProvisionUserForm } from "../../users/components/ProvisionUserForm";
-import { AssignMemberForm } from "../components/AssignMemberForm";
-import { MembersPanel } from "../components/MembersPanel";
-import { OrganizationForm } from "../components/OrganizationForm";
-import { useMyOrganizations } from "../hooks/useMyOrganizations";
-import { isAdminRole } from "../types/roles";
+import { OrganizationGate } from "../components/OrganizationGate";
+import { useOrganizationQuery } from "../hooks/useOrganizations";
 
-/** One organization of mine: read-only data, plus its people for an ADMIN. */
+/** Summary of one organization of mine, with the way into its people and groups. */
 export function OrganizationDetailScreen({ profile }: { profile: Profile }) {
-  const { organizationId = "" } = useParams();
-  const membership = profile.memberships.find(
-    ({ organization }) => organization.id === organizationId,
-  );
-  // Platform authority is not membership: without one there is nothing to show.
-  if (!membership) {
-    return (
-      <NotFoundScreen description="No encontramos esa organización entre las tuyas." />
-    );
-  }
   return (
-    <OrganizationDetail
-      profile={profile}
-      organizationId={organizationId}
-      organization={membership.organization}
-      isAdmin={isAdminRole(membership.role)}
-    />
+    <OrganizationGate profile={profile}>
+      {({ organization, canManage }) => (
+        <OrganizationSummaryView
+          key={organization.id}
+          organization={organization}
+          canManage={canManage}
+        />
+      )}
+    </OrganizationGate>
   );
 }
 
-function OrganizationDetail({
-  profile,
-  organizationId,
+function OrganizationSummaryView({
   organization,
-  isAdmin,
+  canManage,
 }: {
-  profile: Profile;
-  organizationId: string;
-  organization: { id: string; name: string; slug: string };
-  isAdmin: boolean;
+  organization: { id: string; name: string };
+  canManage: boolean;
 }) {
-  // Only the description needs the organizations read; the rest is in the profile.
-  const { query, organizations } = useMyOrganizations(profile);
-  const full = organizations?.find(({ id }) => id === organizationId);
+  const query = useOrganizationQuery(organization.id);
+  const detail = query.data;
 
   return (
     <div className="screen-stack">
@@ -57,45 +39,67 @@ function OrganizationDetail({
         eyebrow="Organización"
         title={organization.name}
         description={
-          isAdmin
+          canManage
             ? "Eres administrador: gestiona aquí a las personas y los grupos de esta organización."
             : "Eres miembro de esta organización. Aquí ves su información y tus grupos."
         }
         action={
-          <LinkButton to={paths.organizationGroups(organizationId)}>
-            Ver grupos
-          </LinkButton>
+          <div className="header-actions">
+            {canManage ? (
+              <LinkButton to={paths.organizationMembers(organization.id)}>
+                Miembros
+              </LinkButton>
+            ) : null}
+            <LinkButton
+              to={paths.organizationGroups(organization.id)}
+              variant={canManage ? "secondary" : "primary"}
+            >
+              Grupos
+            </LinkButton>
+            {canManage ? (
+              <LinkButton
+                to={paths.newOrganizationMember(organization.id)}
+                variant="secondary"
+              >
+                Agregar miembro
+              </LinkButton>
+            ) : null}
+          </div>
         }
       />
-      <OrganizationForm
-        mode="view"
-        values={{
-          name: organization.name,
-          slug: organization.slug,
-          description: full?.description ?? "",
-          firstAdminRut: "",
-        }}
-      >
-        {query.isError ? (
-          <>
-            <p role="alert">
-              No fue posible cargar la descripción de la organización.
-            </p>
-            <button type="button" onClick={() => void query.refetch()}>
-              Reintentar organización
-            </button>
-          </>
-        ) : null}
-      </OrganizationForm>
-      {isAdmin ? (
-        // Keyed so a form never carries values into another organization.
-        <div className="screen-stack" key={organizationId}>
-          <MembersPanel organizationId={organizationId} />
-          <div className="screen-grid">
-            <AssignMemberForm organizationId={organizationId} />
-            <ProvisionUserForm organizationId={organizationId} />
-          </div>
-        </div>
+      <QueryFeedback
+        query={query}
+        loading="Cargando organización..."
+        error="No fue posible cargar la información de la organización."
+        staleError="No fue posible actualizar la información de la organización; lo que ves puede estar desactualizado."
+        retryLabel="Reintentar organización"
+      />
+      {detail ? (
+        <section aria-labelledby="organization-summary-title">
+          <h2 id="organization-summary-title">Resumen</h2>
+          <dl className="summary-list">
+            <div>
+              <dt>Nombre</dt>
+              <dd>{detail.organization.name}</dd>
+            </div>
+            <div>
+              <dt>Identificador</dt>
+              <dd className="slug">{detail.organization.slug}</dd>
+            </div>
+            <div>
+              <dt>Descripción</dt>
+              <dd>{detail.organization.description ?? "Sin descripción"}</dd>
+            </div>
+            <div>
+              <dt>Miembros</dt>
+              <dd>{detail.summary.memberCount}</dd>
+            </div>
+            <div>
+              <dt>{canManage ? "Grupos" : "Mis grupos"}</dt>
+              <dd>{detail.summary.groupCount}</dd>
+            </div>
+          </dl>
+        </section>
       ) : null}
     </div>
   );

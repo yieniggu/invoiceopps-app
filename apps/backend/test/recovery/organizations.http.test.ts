@@ -47,7 +47,9 @@ const buildApp = (auth?: AuthService) =>
 const OPERATIONS = [
   ["get", "/organizations"],
   ["post", "/organizations"],
+  ["get", `/organizations/${ORG}`],
   ["get", `/organizations/${ORG}/memberships`],
+  ["put", `/organizations/${ORG}/memberships/permissions`],
   ["post", `/organizations/${ORG}/memberships`],
   ["patch", `/organizations/${ORG}/memberships/${USER}`],
   ["delete", `/organizations/${ORG}/memberships/${USER}`],

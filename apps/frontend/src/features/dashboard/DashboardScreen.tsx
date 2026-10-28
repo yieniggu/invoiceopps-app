@@ -25,7 +25,7 @@ function DashboardCard({
   icon: LucideIcon;
   title: string;
   featured?: boolean;
-  actions: ReactNode;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -38,7 +38,9 @@ function DashboardCard({
       </span>
       <h2 id={id}>{title}</h2>
       <div className="dash-card-body">{children}</div>
-      <div className="dash-card-actions action-row">{actions}</div>
+      {actions ? (
+        <div className="dash-card-actions action-row">{actions}</div>
+      ) : null}
     </section>
   );
 }
@@ -120,12 +122,8 @@ export function DashboardScreen({
           id="dashboard-policies-title"
           icon={SlidersHorizontal}
           title="Políticas"
-          actions={<LinkButton to={paths.policies}>Ir a políticas</LinkButton>}
         >
-          <p>
-            Consulta y versiona los umbrales de revisión de tu organización o
-            grupo.
-          </p>
+          <p>Próximamente.</p>
         </DashboardCard>
       </div>
     </div>

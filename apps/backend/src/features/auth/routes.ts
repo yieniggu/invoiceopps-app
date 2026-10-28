@@ -9,6 +9,7 @@ import {
   ProfileResponseSchema,
   ProfileUpdateSchema,
 } from "./schemas.js";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password-policy.js";
 import type { AuthService } from "./services.js";
 
 const ERROR = ErrorResponseSchema;
@@ -77,7 +78,8 @@ export function createAuthOperations(
     {
       method: "get",
       path: "/auth/profile",
-      summary: "Read the authenticated profile and authorized contexts",
+      summary:
+        "Read the authenticated profile with memberships, groups and invoice permissions",
       tag: "Auth",
       secured: true,
       responses: {
@@ -119,7 +121,7 @@ export function createAuthOperations(
           headers: SET_COOKIE,
         },
         400: {
-          description: `VALIDATION_ERROR: invalid body (newPassword must have 12 to 256 characters); PASSWORD_REUSE: the new password equals the current one; ${INVALID_JSON}; ${AMBIGUOUS}`,
+          description: `VALIDATION_ERROR: invalid body (newPassword must have ${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters); PASSWORD_REUSE: the new password equals the current one; ${INVALID_JSON}; ${AMBIGUOUS}`,
           schema: ERROR,
         },
         401: unauthenticated,

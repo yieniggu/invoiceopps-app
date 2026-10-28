@@ -40,6 +40,7 @@ function createFakePrisma() {
   const transaction = {
     organizationMembership: {
       findUnique: vi.fn(async () => ({ role: "ADMIN" })),
+      createMany: vi.fn(async () => ({ count: 1 })),
     },
     user: {
       create: vi.fn(async (args: { data: { name: string; rut: string } }) => {
@@ -47,7 +48,11 @@ function createFakePrisma() {
         return { id: "user-2", name: args.data.name, rut: args.data.rut };
       }),
     },
-    platformAdministrativeAuditEvent: { create: vi.fn(async () => ({})) },
+    group: { findMany: vi.fn(async () => []) },
+    groupMembership: { createMany: vi.fn(async () => ({ count: 0 })) },
+    platformAdministrativeAuditEvent: {
+      createMany: vi.fn(async () => ({ count: 0 })),
+    },
   };
   const prisma = {
     organizationMembership: transaction.organizationMembership,
@@ -105,6 +110,12 @@ describe("RV-081 POST /organizations/{organizationId}/users RUT contract", () =>
       userId: "user-2",
       organizationId: ORGANIZATION_ID,
       role: "USER",
+      permissions: {
+        readInvoices: false,
+        createInvoices: false,
+        deleteOwnInvoices: false,
+        deleteOthersInvoices: false,
+      },
     });
     expect(typeof response.body.temporaryPassword).toBe("string");
   });

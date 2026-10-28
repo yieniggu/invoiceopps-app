@@ -28,6 +28,8 @@ interface RutFieldProps {
   missingMessage?: string;
   /** Lets the parent move focus here, e.g. to the first invalid field. */
   inputRef?: Ref<HTMLInputElement>;
+  /** A server-side rejection of this RUT (e.g. already registered). */
+  serverMessage?: string;
 }
 
 export function RutField({
@@ -42,9 +44,9 @@ export function RutField({
   submitted = false,
   missingMessage = "Ingresa tu RUT",
   inputRef,
+  serverMessage = "",
 }: RutFieldProps) {
   const errorId = useId();
-  const hintId = useId();
   const element = useRef<HTMLInputElement | null>(null);
   const pendingCaret = useRef<number | null>(null);
   const [touched, setTouched] = useState(false);
@@ -78,7 +80,7 @@ export function RutField({
       ? "RUT inválido"
       : missing
         ? missingMessage
-        : "";
+        : serverMessage;
 
   const input = (
     <input
@@ -109,7 +111,7 @@ export function RutField({
       disabled={disabled}
       required={required}
       aria-invalid={message !== ""}
-      aria-describedby={`${hintId} ${errorId}`}
+      aria-describedby={errorId}
     />
   );
 
@@ -123,9 +125,6 @@ export function RutField({
       ) : (
         input
       )}
-      <p id={hintId} className="field-hint">
-        Los ceros a la izquierda se ignoran.
-      </p>
       <p id={errorId} className="field-error" aria-live="polite">
         {message}
       </p>

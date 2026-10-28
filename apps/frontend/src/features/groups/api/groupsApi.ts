@@ -1,10 +1,6 @@
 import { apiRequest } from "../../auth/api/apiRequest";
-import type {
-  CreateGroupInput,
-  Group,
-  GroupMember,
-  GroupPermissions,
-} from "../types";
+import type { InvoicePermissions } from "../../permissions/types";
+import type { CreateGroupInput, Group, GroupMember } from "../types";
 
 const base = (organizationId: string) =>
   `/api/v1/organizations/${encodeURIComponent(organizationId)}/groups`;
@@ -22,17 +18,6 @@ export const createGroup = (organizationId: string, input: CreateGroupInput) =>
     body: input,
   });
 
-/** Replaces the four flags atomically; the group name is never edited. */
-export const updateGroupPermissions = (
-  organizationId: string,
-  groupId: string,
-  permissions: GroupPermissions,
-) =>
-  apiRequest<{ group: Group }>(
-    `${base(organizationId)}/${encodeURIComponent(groupId)}`,
-    { method: "PATCH", body: { permissions } },
-  );
-
 export const listGroupMembers = (
   organizationId: string,
   groupId: string,
@@ -46,11 +31,23 @@ export const addGroupMember = (
   organizationId: string,
   groupId: string,
   userId: string,
+  permissions: InvoicePermissions,
 ) =>
   apiRequest<unknown>(members(organizationId, groupId), {
     method: "POST",
-    body: { userId },
+    body: { userId, permissions },
   });
+
+/** Adds several organization members at once, each with its own flags. */
+export const addGroupMembers = (
+  organizationId: string,
+  groupId: string,
+  memberships: Array<{ userId: string; permissions: InvoicePermissions }>,
+) =>
+  apiRequest<{ memberships: unknown[] }>(
+    `${members(organizationId, groupId)}/bulk`,
+    { method: "POST", body: { members: memberships } },
+  );
 
 export const removeGroupMember = (
   organizationId: string,

@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +14,8 @@ import {
   jsonResponse,
   mockTransport,
   profileFixture,
+  ACCESS_NONE,
+  NO_PERMISSIONS,
 } from "./test/transport";
 
 // Profile and group tests exercise destinations through the real shell.
@@ -23,7 +26,10 @@ afterEach(() => {
 });
 
 async function navigate(name: string) {
-  fireEvent.click(await screen.findByRole("link", { name }));
+  const nav = await screen.findByRole("navigation", {
+    name: "Navegación principal",
+  });
+  fireEvent.click(within(nav).getByRole("link", { name }));
 }
 
 describe("APP-03 profile", () => {
@@ -48,6 +54,7 @@ describe("APP-03 profile", () => {
                     slug: "ai-academy",
                   },
                   role: "USER",
+                  ...ACCESS_NONE,
                 },
               ],
             },
@@ -89,7 +96,7 @@ describe("APP-03 profile", () => {
     ).toBe("ada");
     await navigate("Organizaciones");
     expect(screen.getByText("AI Academy")).toBeTruthy();
-    expect(screen.getByText("Miembro")).toBeTruthy();
+    expect(screen.getByText("Usuario")).toBeTruthy();
     await navigate("Mi perfil");
 
     fireEvent.change(
@@ -129,17 +136,23 @@ describe("APP-03 profile", () => {
         "Perfil actualizado",
       );
     });
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/v1/profile",
-      expect.objectContaining({
-        method: "PATCH",
-        credentials: "same-origin",
-        body: JSON.stringify({
-          email: "ada.updated@example.test",
-          username: "ada-updated",
+    // Not "the last call": once the save settles the app may read the profile
+    // again, and when that read starts relative to this line depends on load.
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === "/api/v1/profile"),
+    ).toEqual([
+      [
+        "/api/v1/profile",
+        expect.objectContaining({
+          method: "PATCH",
+          credentials: "same-origin",
+          body: JSON.stringify({
+            email: "ada.updated@example.test",
+            username: "ada-updated",
+          }),
         }),
-      }),
-    );
+      ],
+    ]);
   });
 
   it("renders anonymous session expiry and a recoverable update error", async () => {
@@ -258,10 +271,14 @@ describe("APP-03 profile", () => {
       screen.queryByText("Tu sesión no está disponible o expiró."),
     ).toBeNull();
     expect(screen.queryByText("Ada Lovelace")).toBeNull();
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/auth/logout", {
-      method: "POST",
-      credentials: "same-origin",
-    });
+    // Exactly one logout was sent. It is not "the last call": the login screen
+    // that appears next starts its own profile read, and whether that read has
+    // begun when this line runs depends on how loaded the machine is.
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === "/api/v1/auth/logout"),
+    ).toEqual([
+      ["/api/v1/auth/logout", { method: "POST", credentials: "same-origin" }],
+    ]);
   });
 
   it("keeps the profile and announces a recoverable logout failure", async () => {
@@ -305,18 +322,11 @@ describe("APP-04 organization groups", () => {
     name: "AI Academy",
     slug: "ai-academy",
   };
-  const flags = {
-    readInvoices: false,
-    createInvoices: false,
-    deleteOwnInvoices: false,
-    deleteOthersInvoices: false,
-  };
   const orgGroup = (name: string) => ({
     id: "group-1",
     organizationId: "organization-1",
     name,
     description: null,
-    permissions: flags,
   });
 
   it("keeps platform authority out of organizations, groups and invoices for an administrator without memberships", async () => {
@@ -360,31 +370,30 @@ describe("APP-04 organization groups", () => {
     ).toBe(false);
   });
 
-  it("retries only the organization read of the detail when it fails, leaving the groups of the administrator alone", async () => {
-    let listRequests = 0;
+  it("retries only the organization summary read when it fails, leaving the groups of the administrator alone", async () => {
+    let summaryRequests = 0;
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
           profile: profileFixture({
             id: "platform-admin-1",
             isPlatformAdministrator: true,
-            memberships: [{ organization: academy, role: "ADMIN" }],
+            memberships: [
+              { organization: academy, role: "ADMIN", ...ACCESS_NONE },
+            ],
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations": () => {
-        listRequests += 1;
-        return listRequests === 1
+      "GET /api/v1/organizations/organization-1": () => {
+        summaryRequests += 1;
+        return summaryRequests === 1
           ? new Response(null, { status: 500 })
           : jsonResponse({
-              organizations: [
-                {
-                  ...academy,
-                  description: "Sede central",
-                  enabled: true,
-                  createdAt: "2026-10-01T00:00:00.000Z",
-                },
-              ],
+              organization: {
+                ...academy,
+                description: "Sede central",
+              },
+              summary: { memberCount: 3, groupCount: 1 },
             });
       },
       "GET /api/v1/organizations/organization-1/groups": () =>
@@ -403,8 +412,8 @@ describe("APP-04 organization groups", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Reintentar organización" }),
     );
-    expect(await screen.findByDisplayValue("Sede central")).toBeTruthy();
-    expect(listRequests).toBe(2);
+    expect(await screen.findByText("Sede central")).toBeTruthy();
+    expect(summaryRequests).toBe(2);
     await navigate("Grupos");
     expect(await screen.findByText("Local group")).toBeTruthy();
     expect(screen.queryByText("No fue posible cargar los grupos.")).toBeNull();
@@ -416,7 +425,9 @@ describe("APP-04 organization groups", () => {
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
           profile: profileFixture({
-            memberships: [{ organization: academy, role: "ADMIN" }],
+            memberships: [
+              { organization: academy, role: "ADMIN", ...ACCESS_NONE },
+            ],
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
@@ -430,6 +441,7 @@ describe("APP-04 organization groups", () => {
                 userId: "student-1",
                 groupId: "group-1",
                 organizationId: "organization-1",
+                permissions: NO_PERMISSIONS,
                 user: {
                   id: "student-1",
                   name: "Grace Hopper",
@@ -449,15 +461,18 @@ describe("APP-04 organization groups", () => {
     ).toBeTruthy();
     expect(await screen.findByText("Advanced topics")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Crear grupo/ })).toBeTruthy();
-    // Members are managed on the group detail.
+    // Members are managed on their own screens: summary, then Miembros.
     fireEvent.click(
-      screen.getByRole("link", { name: "Ver detalle de Advanced topics" }),
+      screen.getByRole("link", { name: "Ver grupo Advanced topics" }),
     );
-    expect(await screen.findByText("Grace Hopper")).toBeTruthy();
-    expect(screen.getByText("12.345.679-3")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Grace Hopper" }));
     expect(
-      screen.getByRole("button", { name: "Quitar a Grace Hopper del grupo" }),
+      await screen.findByRole("button", {
+        name: "Quitar a Grace Hopper del grupo",
+      }),
     ).toBeTruthy();
+    expect(screen.getByText(/12\.345\.679-3/)).toBeTruthy();
   });
 
   it("hides administrative controls from a student while keeping the empty state accessible", async () => {
@@ -467,7 +482,9 @@ describe("APP-04 organization groups", () => {
           profile: profileFixture({
             id: "student-1",
             name: "Grace Hopper",
-            memberships: [{ organization: academy, role: "USER" }],
+            memberships: [
+              { organization: academy, role: "USER", ...ACCESS_NONE },
+            ],
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),

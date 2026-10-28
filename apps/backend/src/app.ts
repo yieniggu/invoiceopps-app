@@ -13,6 +13,11 @@ import {
   loadProfile,
   sessionTokenFromCookie,
 } from "./features/auth/session.js";
+import { createAdminUserOperations } from "./features/admin-users/routes.js";
+import {
+  createAdminUserService,
+  type AdminUserService,
+} from "./features/admin-users/services.js";
 import { createGroupOperations } from "./features/groups/routes.js";
 import {
   createGroupService,
@@ -45,7 +50,11 @@ import {
   sendError,
 } from "./http/errors.js";
 import { buildOpenApiDocument } from "./http/openapi.js";
-import { API_PREFIX, mountOperations } from "./http/registry.js";
+import {
+  API_PREFIX,
+  createJsonBodyParser,
+  mountOperations,
+} from "./http/registry.js";
 
 function requestOrigin(request: express.Request) {
   const forwardedProtocol = request.headers["x-forwarded-proto"];
@@ -125,6 +134,7 @@ export interface AppOptions {
    */
   organizations?: OrganizationService;
   users?: UserService;
+  adminUsers?: AdminUserService;
   groupAdministration?: GroupService;
   invoices?: InvoiceService;
   businessPolicies?: BusinessPolicyService;
@@ -143,6 +153,7 @@ export function createApp(
     groups,
     organizations,
     users,
+    adminUsers,
     groupAdministration,
     invoices,
     businessPolicies,
@@ -158,7 +169,30 @@ export function createApp(
   app.set("case sensitive routing", true);
   app.set("strict routing", true);
   if (trustProxyHops !== undefined) app.set("trust proxy", trustProxyHops);
-  app.use(express.json({ limit: "16kb" }));
+  // Documented operations need the Prisma client; without it they are still
+  // mounted and documented but answer like a missing session. They are built
+  // first because the body parser picks its limit from them.
+  const { prisma } = database;
+  const operations = [
+    ...createAuthOperations(auth, authRateLimiter),
+    ...createOrganizationOperations(
+      auth,
+      organizations ?? (prisma && createOrganizationService(prisma)),
+    ),
+    ...createUserOperations(
+      auth,
+      users ?? (prisma && createUserService(prisma)),
+    ),
+    ...createAdminUserOperations(
+      auth,
+      adminUsers ?? (prisma && createAdminUserService(prisma)),
+    ),
+    ...createGroupOperations(
+      auth,
+      groupAdministration ?? (prisma && createGroupService(prisma)),
+    ),
+  ];
+  app.use(createJsonBodyParser(operations));
 
   // Credentials are never mixed or substituted: Authorization (any scheme)
   // together with the session cookie is ambiguous, and Authorization alone is
@@ -248,24 +282,6 @@ export function createApp(
     response.status(200).json({ status: "ok" });
   });
 
-  // Documented operations need the Prisma client; without it they are still
-  // mounted and documented but answer like a missing session.
-  const { prisma } = database;
-  const operations = [
-    ...createAuthOperations(auth, authRateLimiter),
-    ...createOrganizationOperations(
-      auth,
-      organizations ?? (prisma && createOrganizationService(prisma)),
-    ),
-    ...createUserOperations(
-      auth,
-      users ?? (prisma && createUserService(prisma)),
-    ),
-    ...createGroupOperations(
-      auth,
-      groupAdministration ?? (prisma && createGroupService(prisma)),
-    ),
-  ];
   const api = express.Router({ caseSensitive: true, strict: true });
   api.use((request, response, next) => {
     response.locals.routeBase = request.baseUrl;

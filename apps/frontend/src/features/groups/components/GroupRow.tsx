@@ -1,49 +1,36 @@
 import { LinkButton } from "../../../components/LinkButton";
 import { paths } from "../../navigation/paths";
-import {
-  contextValue,
-  useSharedWorkspace,
-} from "../../workspace/WorkspaceContext";
 import type { Group } from "../types";
-import { describePermissions } from "../types/permissions";
+import {
+  describePermissions,
+  type InvoicePermissions,
+} from "../../permissions/types";
 
-/** One group: what it is allowed to do and where to open it. */
+/** One group: what my membership lets me do in it, and where to open it. */
 export function GroupRow({
   organizationId,
   group,
+  effective,
 }: {
   organizationId: string;
   group: Group;
+  /** My effective flags in this group (presentation only), when I belong. */
+  effective?: InvoicePermissions;
 }) {
-  const workspace = useSharedWorkspace();
-  const context = workspace.contexts.find(
-    (candidate) =>
-      candidate.ownerType === "group" &&
-      candidate.ownerId === group.id &&
-      candidate.organizationId === organizationId,
-  );
   return (
     <li className="context-card">
       <h3 className="card-title">{group.name}</h3>
       {group.description ? <p>{group.description}</p> : null}
-      <p className="muted">{describePermissions(group.permissions)}</p>
+      {effective ? (
+        <p className="muted">{describePermissions(effective)}</p>
+      ) : null}
       <div className="action-row">
         <LinkButton
           to={paths.group(organizationId, group.id)}
-          aria-label={`Ver detalle de ${group.name}`}
+          aria-label={`Ver grupo ${group.name}`}
         >
-          Ver detalle
+          Ver grupo
         </LinkButton>
-        {context ? (
-          <button
-            type="button"
-            className="secondary-button"
-            aria-pressed={workspace.selectedValue === contextValue(context)}
-            onClick={() => workspace.setSelectedValue(contextValue(context))}
-          >
-            Trabajar con {group.name}
-          </button>
-        ) : null}
       </div>
     </li>
   );

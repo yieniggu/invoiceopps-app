@@ -48,9 +48,15 @@ const buildApp = (auth?: AuthService) =>
 const OPERATIONS = [
   ["get", `/organizations/${ORG}/groups`],
   ["post", `/organizations/${ORG}/groups`],
-  ["patch", `/organizations/${ORG}/groups/${GROUP}`],
   ["get", `/organizations/${ORG}/groups/${GROUP}/memberships`],
+  [
+    "put",
+    `/organizations/${ORG}/groups/${GROUP}/memberships/${USER}/permissions`,
+  ],
+  ["put", `/organizations/${ORG}/memberships/${USER}/permissions`],
   ["post", `/organizations/${ORG}/groups/${GROUP}/memberships`],
+  ["post", `/organizations/${ORG}/groups/${GROUP}/memberships/bulk`],
+  ["put", `/organizations/${ORG}/groups/${GROUP}/memberships/permissions`],
   ["delete", `/organizations/${ORG}/groups/${GROUP}/memberships/${USER}`],
 ] as const;
 
@@ -95,6 +101,7 @@ describe("RP0-07 group routes over HTTP", () => {
   );
 
   it.each([
+    ["patch", `/organizations/${ORG}/groups/${GROUP}`],
     ["delete", `/organizations/${ORG}/groups/${GROUP}`],
     ["post", `/organizations/${ORG}/groups/${GROUP}/members`],
     ["delete", `/organizations/${ORG}/groups/${GROUP}/members/${USER}`],

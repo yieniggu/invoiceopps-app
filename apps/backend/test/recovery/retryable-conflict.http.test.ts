@@ -17,7 +17,7 @@ const profile = {
   email: null,
   username: null,
   mustChangePassword: false,
-  isPlatformAdministrator: false,
+  isPlatformAdministrator: true,
   memberships: [],
 };
 
@@ -40,10 +40,25 @@ const auth: AuthService = {
   },
 };
 
+const FLAGS = {
+  readInvoices: true,
+  createInvoices: true,
+  deleteOwnInvoices: false,
+  deleteOthersInvoices: false,
+};
+
 // Every serializable transaction loses to a concurrent writer (Prisma P2034).
+// The authority reads that run before the transaction (user provisioning checks
+// it before hashing the password) answer "authorized".
 function conflictingPrisma() {
   const attempts = { count: 0 };
   const prisma = {
+    platformAdministrator: {
+      findUnique: async () => ({ userId: "user-1" }),
+    },
+    organizationMembership: {
+      findUnique: async () => ({ role: "ADMIN" }),
+    },
     $transaction: async () => {
       attempts.count += 1;
       throw Object.assign(new Error("write conflict"), { code: "P2034" });
@@ -61,8 +76,25 @@ const OPERATIONS = [
   ["patch", `/organizations/${ORG}/memberships/${USER}`, { role: "ADMIN" }],
   ["delete", `/organizations/${ORG}/memberships/${USER}`, undefined],
   [
-    "patch",
-    `/organizations/${ORG}/groups/${GROUP}`,
+    "put",
+    `/organizations/${ORG}/memberships/permissions`,
+    { userIds: [USER], permissions: FLAGS },
+  ],
+  [
+    "put",
+    `/organizations/${ORG}/memberships/${USER}/permissions`,
+    {
+      permissions: {
+        readInvoices: true,
+        createInvoices: true,
+        deleteOwnInvoices: false,
+        deleteOthersInvoices: false,
+      },
+    },
+  ],
+  [
+    "put",
+    `/organizations/${ORG}/groups/${GROUP}/memberships/${USER}/permissions`,
     {
       permissions: {
         readInvoices: true,
@@ -78,10 +110,26 @@ const OPERATIONS = [
     { userId: USER },
   ],
   [
+    "post",
+    `/organizations/${ORG}/groups/${GROUP}/memberships/bulk`,
+    { members: [{ userId: USER, permissions: FLAGS }] },
+  ],
+  [
+    "put",
+    `/organizations/${ORG}/groups/${GROUP}/memberships/permissions`,
+    { userIds: [USER], permissions: FLAGS },
+  ],
+  [
     "delete",
     `/organizations/${ORG}/groups/${GROUP}/memberships/${USER}`,
     undefined,
   ],
+  [
+    "post",
+    `/organizations/${ORG}/users`,
+    { name: "Ada", rut: "123456785", role: "USER" },
+  ],
+  ["post", "/admin/users", { name: "Ada", rut: "123456785", memberships: [] }],
 ] as const;
 
 describe("CR-102 exhausted serialization retries over HTTP", () => {

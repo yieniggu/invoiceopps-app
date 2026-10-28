@@ -8,7 +8,12 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { formatRut, parseRut } from "../../rut.js";
-import { capabilitiesFromGroup } from "../groups/invoice-permissions.js";
+import {
+  PERMISSION_SELECT,
+  permissionsOf,
+  resolveEffectivePermissions,
+  type InvoicePermissions,
+} from "../groups/invoice-permissions.js";
 import { isAcceptablePassword } from "./password-policy.js";
 
 const scryptAsync = promisify(scrypt);
@@ -24,30 +29,28 @@ export interface AuthUser {
   rut: string;
 }
 
+export interface AuthProfileGroup {
+  group: { id: string; name: string };
+  /** Flags of the group membership alone. */
+  permissions: InvoicePermissions;
+  /** Organization OR group flags; presentation only, the server decides. */
+  effective: InvoicePermissions;
+}
+
+export interface AuthProfileMembership {
+  organization: { id: string; name: string; slug: string };
+  role: OrganizationRole;
+  /** Flags of the organization membership alone. */
+  permissions: InvoicePermissions;
+  groups: AuthProfileGroup[];
+}
+
 export interface AuthProfile extends AuthUser {
   email: string | null;
   username: string | null;
   mustChangePassword?: boolean;
   isPlatformAdministrator: boolean;
-  memberships: Array<{
-    organization: { id: string; name: string; slug: string };
-    role: OrganizationRole;
-  }>;
-  /** Group-level capabilities; absent for services that do not derive them. */
-  contexts?: AuthContext[];
-}
-
-export interface AuthContext {
-  organizationId: string;
-  organizationName: string;
-  groupId: string;
-  groupName: string;
-  capabilities: {
-    readInvoices: boolean;
-    createInvoices: boolean;
-    deleteOwnInvoices: boolean;
-    deleteOthersInvoices: boolean;
-  };
+  memberships: AuthProfileMembership[];
 }
 
 export interface AuthService {
@@ -191,24 +194,20 @@ export function createAuthService(
               ],
               select: {
                 role: true,
+                ...PERMISSION_SELECT,
                 organization: {
-                  select: { id: true, name: true, slug: true },
-                },
-              },
-            },
-            groupMemberships: {
-              where: { group: { organization: { enabled: true } } },
-              select: {
-                organizationId: true,
-                group: {
                   select: {
                     id: true,
                     name: true,
-                    readInvoices: true,
-                    createInvoices: true,
-                    deleteOwnInvoices: true,
-                    deleteOthersInvoices: true,
-                    organization: { select: { id: true, name: true } },
+                    slug: true,
+                    enabled: true,
+                  },
+                },
+                groupMemberships: {
+                  orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
+                  select: {
+                    ...PERMISSION_SELECT,
+                    group: { select: { id: true, name: true } },
                   },
                 },
               },
@@ -222,35 +221,50 @@ export function createAuthService(
       throw new AuthError(401, UNAUTHENTICATED_MESSAGE);
     }
 
-    const { groupMemberships, ...user } = session.user;
-    // A context needs an enabled organization (filtered in the query) plus
-    // both the organization and the group membership; capabilities are the
-    // group's own flags, with no per-user override.
-    const organizationIds = new Set(
-      user.memberships.map((membership) => membership.organization.id),
-    );
-    const contexts = groupMemberships
-      .filter(({ organizationId }) => organizationIds.has(organizationId))
-      .map(({ group }) => ({
-        organizationId: group.organization.id,
-        organizationName: group.organization.name,
-        groupId: group.id,
-        groupName: group.name,
-        capabilities: capabilitiesFromGroup(group),
-      }))
-      .sort(
-        (a, b) =>
-          a.organizationName.localeCompare(b.organizationName) ||
-          a.organizationId.localeCompare(b.organizationId) ||
-          a.groupName.localeCompare(b.groupName) ||
-          a.groupId.localeCompare(b.groupId),
-      );
+    const { memberships, ...user } = session.user;
+    const onboardingComplete = !user.mustChangePassword;
 
     return {
-      ...user,
+      id: user.id,
+      name: user.name,
       rut: formatRut(user.rut),
+      email: user.email,
+      username: user.username,
+      mustChangePassword: user.mustChangePassword,
       isPlatformAdministrator: user.platformAdministrator !== null,
-      contexts,
+      memberships: memberships.map((membership) => {
+        const organizationMembership = {
+          permissions: permissionsOf(membership),
+        };
+        return {
+          organization: {
+            id: membership.organization.id,
+            name: membership.organization.name,
+            slug: membership.organization.slug,
+          },
+          role: membership.role,
+          permissions: organizationMembership.permissions,
+          groups: membership.groupMemberships.map((groupMembership) => {
+            const groupPermissions = {
+              permissions: permissionsOf(groupMembership),
+            };
+            return {
+              group: {
+                id: groupMembership.group.id,
+                name: groupMembership.group.name,
+              },
+              permissions: groupPermissions.permissions,
+              effective: resolveEffectivePermissions({
+                organizationEnabled: membership.organization.enabled,
+                onboardingComplete,
+                organizationMembership,
+                groupMembership: groupPermissions,
+                scope: "group",
+              }),
+            };
+          }),
+        };
+      }),
     };
   }
 

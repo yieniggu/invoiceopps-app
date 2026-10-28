@@ -25,18 +25,11 @@ afterEach(() => {
 });
 
 const org = { id: "org-1", name: "Academia Norte", slug: "norte" };
-const none = {
-  readInvoices: false,
-  createInvoices: false,
-  deleteOwnInvoices: false,
-  deleteOthersInvoices: false,
-};
 const group = {
   id: "group-a",
   organizationId: "org-1",
   name: "Contabilidad",
   description: null,
-  permissions: none,
 };
 const ada = profileFixture({
   isPlatformAdministrator: true,
@@ -55,6 +48,11 @@ function appRoutes(profile: () => Response | Promise<Response>) {
     "GET /api/v1/auth/profile": profile,
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
+    "GET /api/v1/organizations/org-1": () =>
+      jsonResponse({
+        organization: { ...org, description: null },
+        summary: { memberCount: 1, groupCount: 1 },
+      }),
     "GET /api/v1/organizations/org-1/groups": () =>
       jsonResponse({ groups: [group] }),
     "GET /api/v1/organizations/org-1/memberships": () =>
@@ -72,17 +70,25 @@ function appRoutes(profile: () => Response | Promise<Response>) {
 
 describe("deep links", () => {
   it.each([
-    ["/panel", "Panel principal"],
-    ["/facturas", "Facturas"],
-    ["/politicas", "Políticas"],
-    ["/perfil", "Mi perfil"],
-    ["/organizaciones", "Organizaciones"],
-    ["/organizaciones/nueva", "Crear organización"],
-    ["/organizaciones/org-1", "Academia Norte"],
-    ["/organizaciones/org-1/grupos", "Grupos de la organización"],
-    ["/organizaciones/org-1/grupos/nuevo", "Crear grupo"],
-    ["/organizaciones/org-1/grupos/group-a", "Contabilidad"],
-    ["/grupos", "Grupos"],
+    ["/dashboard", "Panel principal"],
+    ["/invoices", "Facturas"],
+    ["/policies", "Políticas"],
+    ["/profile", "Mi perfil"],
+    ["/organizations", "Organizaciones"],
+    ["/organizations/new", "Crear organización"],
+    ["/organizations/org-1", "Academia Norte"],
+    ["/organizations/org-1/groups", "Grupos de la organización"],
+    ["/organizations/org-1/groups/new", "Crear grupo"],
+    ["/organizations/org-1/members", "Miembros"],
+    ["/organizations/org-1/members/new", "Agregar miembro"],
+    ["/organizations/org-1/groups/group-a", "Contabilidad"],
+    ["/organizations/org-1/groups/group-a/members", "Miembros del grupo"],
+    [
+      "/organizations/org-1/groups/group-a/members/new",
+      "Agregar miembros al grupo",
+    ],
+    ["/groups", "Grupos"],
+    ["/admin/users/new", "Crear usuario"],
   ])("opens %s on the %s screen", async (route, title) => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
     renderApp({ route });
@@ -92,16 +98,87 @@ describe("deep links", () => {
     expect(window.location.pathname).toBe(route);
   });
 
+  it.each([
+    "/organizations/org-1/members/permissions?userIds=user-1,user-3",
+    "/organizations/org-1/groups/group-a/members/permissions?userIds=user-1",
+  ])(
+    "opens the bulk permissions deep link %s and keeps its query on a reload",
+    async (route) => {
+      mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
+      const first = renderApp({ route });
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Editar permisos en bloque",
+      });
+      first.unmount();
+      render(<App />);
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Editar permisos en bloque",
+      });
+      expect(window.location.pathname + window.location.search).toBe(route);
+    },
+  );
+
+  it("shows 'No disponible por ahora.' on /policies without reading any policy", async () => {
+    const transport = mockTransport(
+      appRoutes(() => jsonResponse({ profile: ada })),
+    );
+    renderApp({ route: "/policies" });
+    await screen.findByRole("heading", { level: 1, name: "Políticas" });
+    expect(screen.getByText("No disponible por ahora.")).toBeTruthy();
+    expect(
+      transport.requests.some(({ path }) =>
+        path.startsWith("/api/v1/business-policies"),
+      ),
+    ).toBe(false);
+    // The sidebar item is disabled: labelled, with a badge, and not a link.
+    const nav = screen.getByRole("navigation", {
+      name: "Navegación principal",
+    });
+    expect(within(nav).queryByRole("link", { name: /Políticas/ })).toBeNull();
+    const item = within(nav).getByRole("button", {
+      name: "Políticas Próximamente",
+    });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it.each([
+    "/panel",
+    "/facturas",
+    "/politicas",
+    "/perfil",
+    "/cambiar-contrasena",
+    "/organizaciones",
+    "/organizaciones/nueva",
+    "/organizaciones/org-1/grupos",
+    "/grupos",
+    "/admin/usuarios/nuevo",
+  ])(
+    "does not redirect the old Spanish path %s: it is not found",
+    async (route) => {
+      mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
+      renderApp({ route });
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Página no encontrada",
+        }),
+      ).toBeTruthy();
+      expect(window.location.pathname).toBe(route);
+    },
+  );
+
   it("redirects / to the panel", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
     renderApp({ route: "/" });
     await screen.findByRole("heading", { level: 1, name: "Panel principal" });
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 
   it("keeps the screen after a reload of a deep link", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    const first = renderApp({ route: "/organizaciones/org-1/grupos" });
+    const first = renderApp({ route: "/organizations/org-1/groups" });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",
@@ -115,7 +192,7 @@ describe("deep links", () => {
         name: "Grupos de la organización",
       }),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe("/organizaciones/org-1/grupos");
+    expect(window.location.pathname).toBe("/organizations/org-1/groups");
   });
 
   it("answers an unknown path with a not-found screen that links back to the panel", async () => {
@@ -133,20 +210,20 @@ describe("deep links", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Panel principal" }),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 });
 
 describe("sidebar navigation", () => {
   it("changes the URL and marks the active destination", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    renderApp({ route: "/panel" });
+    renderApp({ route: "/dashboard" });
     const nav = await screen.findByRole("navigation", {
       name: "Navegación principal",
     });
     fireEvent.click(within(nav).getByRole("link", { name: "Grupos" }));
     await screen.findByRole("heading", { level: 1, name: "Grupos" });
-    expect(window.location.pathname).toBe("/grupos");
+    expect(window.location.pathname).toBe("/groups");
     expect(
       within(nav)
         .getByRole("link", { name: "Grupos" })
@@ -174,7 +251,7 @@ describe("sidebar navigation", () => {
 
   it("marks Grupos, not Organizaciones, on an organization's group screens", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    renderApp({ route: "/organizaciones/org-1/grupos" });
+    renderApp({ route: "/organizations/org-1/groups" });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",
@@ -204,11 +281,11 @@ describe("onboarding and anonymous access", () => {
     const transport = mockTransport(
       appRoutes(() => jsonResponse({ profile: pending })),
     );
-    renderApp({ route: "/organizaciones/org-1/grupos" });
+    renderApp({ route: "/organizations/org-1/groups" });
     await screen.findByRole("heading", {
       name: "Cambia tu contraseña temporal",
     });
-    expect(window.location.pathname).toBe("/cambiar-contrasena");
+    expect(window.location.pathname).toBe("/change-password");
     expect(screen.queryByRole("navigation")).toBeNull();
     // Nothing of the blocked route was requested.
     expect(
@@ -218,9 +295,9 @@ describe("onboarding and anonymous access", () => {
 
   it("sends a settled person away from the password-change URL", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    renderApp({ route: "/cambiar-contrasena" });
+    renderApp({ route: "/change-password" });
     await screen.findByRole("heading", { level: 1, name: "Panel principal" });
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 
   it("shows the login on any URL and returns to that URL after signing in", async () => {
@@ -236,7 +313,7 @@ describe("onboarding and anonymous access", () => {
         return jsonResponse({ user: {} });
       },
     });
-    renderApp({ route: "/organizaciones" });
+    renderApp({ route: "/organizations" });
     await screen.findByRole("heading", { name: "Iniciar sesión" });
     expect(screen.queryByRole("navigation")).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "RUT" }), {
@@ -249,7 +326,7 @@ describe("onboarding and anonymous access", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Organizaciones" }),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe("/organizaciones");
+    expect(window.location.pathname).toBe("/organizations");
   });
 });
 
@@ -283,13 +360,13 @@ describe("leaving the session", () => {
         return jsonResponse({ user: {} });
       },
     });
-    const { store } = renderApp({ route: "/organizaciones/org-1" });
+    const { store } = renderApp({ route: "/organizations/org-1" });
     await screen.findByRole("heading", { level: 1, name: "Academia Norte" });
     const adaClient = store.getSnapshot().client;
 
     fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("heading", { name: "Iniciar sesión" });
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
     expect(
       screen.queryByText("Tu sesión no está disponible o expiró."),
     ).toBeNull();
@@ -302,7 +379,7 @@ describe("leaving the session", () => {
       await screen.findByRole("heading", { level: 1, name: "Panel principal" }),
     ).toBeTruthy();
     expect(screen.queryByText("Academia Norte")).toBeNull();
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 
   it("an expired session (401) does say so, and also leaves the previous URL", async () => {
@@ -314,7 +391,7 @@ describe("leaving the session", () => {
           : jsonResponse({ profile: ada }),
       ),
     );
-    renderApp({ route: "/organizaciones/org-1" });
+    renderApp({ route: "/organizations/org-1" });
     await screen.findByRole("heading", { level: 1, name: "Academia Norte" });
     expired = true;
     act(() => {
@@ -324,13 +401,13 @@ describe("leaving the session", () => {
     expect(
       await screen.findByText("Tu sesión no está disponible o expiró."),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 
   it("another person answering the profile resets the URL to the panel", async () => {
     let answer = ada;
     mockTransport(appRoutes(() => jsonResponse({ profile: answer })));
-    renderApp({ route: "/organizaciones/org-1/grupos" });
+    renderApp({ route: "/organizations/org-1/groups" });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",
@@ -344,6 +421,6 @@ describe("leaving the session", () => {
       await screen.findByRole("heading", { level: 1, name: "Panel principal" }),
     ).toBeTruthy();
     expect(screen.queryByText("Contabilidad")).toBeNull();
-    expect(window.location.pathname).toBe("/panel");
+    expect(window.location.pathname).toBe("/dashboard");
   });
 });

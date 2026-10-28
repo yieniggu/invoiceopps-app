@@ -7,8 +7,16 @@ export interface RecoveryTarget {
 
 export function assertRecoveryTarget(
   value: string | undefined,
-  options: { confirmReset?: string; allowedNames?: string[] },
+  options: {
+    confirmReset?: string;
+    allowedNames?: string[];
+    expectedPort?: string | number;
+  },
 ): RecoveryTarget;
+
+export function expectedDatabasePort(
+  env: Record<string, string | undefined>,
+): string | undefined;
 
 export function sanitizeTarget(value: string): string;
 

@@ -13,12 +13,10 @@ export interface OrganizationFormValues {
 type TextField = "name" | "slug" | "description" | "firstAdminRut";
 
 /**
- * Presentational organization form. `create` collects the data and the first
- * administrator; `view` shows the saved data read-only because the API cannot
- * edit name, slug or description.
+ * Presentational create-organization form: the data and the first
+ * administrator. (The API cannot edit name, slug or description afterwards.)
  */
 export function OrganizationForm({
-  mode,
   values,
   onChange,
   invalid,
@@ -32,7 +30,6 @@ export function OrganizationForm({
   onSubmit,
   children,
 }: {
-  mode: "create" | "view";
   values: OrganizationFormValues;
   onChange?: (field: TextField, value: string) => void;
   invalid?: "name" | "slug";
@@ -47,8 +44,6 @@ export function OrganizationForm({
   /** Feedback and the submit button belong to the screen's container. */
   children?: ReactNode;
 }) {
-  const creating = mode === "create";
-  const locked = !creating || pending;
   const titleId = useId();
   const nameMessageId = useId();
   const slugMessageId = useId();
@@ -56,27 +51,17 @@ export function OrganizationForm({
 
   return (
     <form onSubmit={onSubmit} noValidate aria-labelledby={titleId}>
-      <h2 id={titleId}>
-        {creating
-          ? "Datos de la organización"
-          : "Información de la organización"}
-      </h2>
-      {creating ? null : (
-        <p>
-          El nombre, el identificador y la descripción no se pueden modificar
-          desde la aplicación.
-        </p>
-      )}
+      <h2 id={titleId}>Datos de la organización</h2>
       <label>
         Nombre de la organización
         <input
           ref={nameInput}
           value={values.name}
           onChange={(event) => set("name")(event.target.value)}
-          disabled={locked}
+          disabled={pending}
           aria-invalid={invalid === "name"}
           aria-describedby={nameMessageId}
-          required={creating}
+          required
         />
       </label>
       <FieldMessage id={nameMessageId} text={nameMessage ?? ""} />
@@ -86,33 +71,31 @@ export function OrganizationForm({
           ref={slugInput}
           value={values.slug}
           onChange={(event) => set("slug")(event.target.value)}
-          disabled={locked}
+          disabled={pending}
           aria-invalid={invalid === "slug"}
           aria-describedby={slugMessageId}
-          required={creating}
+          required
         />
       </label>
       <FieldMessage id={slugMessageId} text={slugMessage ?? ""} />
       <label>
-        {creating ? "Descripción (opcional)" : "Descripción"}
+        Descripción (opcional)
         <input
           value={values.description}
           onChange={(event) => set("description")(event.target.value)}
-          disabled={locked}
+          disabled={pending}
         />
       </label>
-      {creating ? (
-        <RutField
-          label="RUT del primer administrador"
-          missingMessage="Ingresa el RUT"
-          value={values.firstAdminRut}
-          onChange={set("firstAdminRut")}
-          disabled={pending}
-          submitted={submitted}
-          inputRef={rutInput}
-          required
-        />
-      ) : null}
+      <RutField
+        label="RUT del primer administrador"
+        missingMessage="Ingresa el RUT"
+        value={values.firstAdminRut}
+        onChange={set("firstAdminRut")}
+        disabled={pending}
+        submitted={submitted}
+        inputRef={rutInput}
+        required
+      />
       {children}
     </form>
   );

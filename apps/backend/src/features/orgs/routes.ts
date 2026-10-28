@@ -8,15 +8,21 @@ import {
   validationResponse,
 } from "../../http/standard-responses.js";
 import type { AuthService } from "../auth/services.js";
+import {
+  BulkPermissionsUpdateRequestSchema,
+  PermissionsUpdateRequestSchema,
+} from "../groups/permissions-schema.js";
 import { createOrganizationController } from "./controllers.js";
 import {
   MembershipCreateRequestSchema,
   MembershipListResponseSchema,
   MembershipParamsSchema,
   MembershipResponseSchema,
+  MembershipsResponseSchema,
   MembershipRoleRequestSchema,
   OrganizationCreateRequestSchema,
   OrganizationCreateResponseSchema,
+  OrganizationDetailResponseSchema,
   OrganizationListResponseSchema,
   OrganizationParamsSchema,
 } from "./schemas.js";
@@ -24,7 +30,7 @@ import type { OrganizationService } from "./services.js";
 
 const TAG = "Organizations";
 const NOT_A_MEMBER =
-  "the organization does not exist or the actor is not a member (the platform administrator has no implicit membership)";
+  "the organization does not exist or the actor is neither a member nor the platform administrator (the platform administrator administers every existing organization but has no implicit membership)";
 
 export function createOrganizationOperations(
   auth: AuthService | undefined,
@@ -79,6 +85,25 @@ export function createOrganizationOperations(
     },
     {
       method: "get",
+      path: "/organizations/{organizationId}",
+      summary: "Get an organization with its member and group counts",
+      tag: TAG,
+      secured: true,
+      params: OrganizationParamsSchema,
+      responses: {
+        200: {
+          description:
+            "Organization summary: any member, or the platform administrator, reads it",
+          schema: OrganizationDetailResponseSchema,
+        },
+        401: unauthenticatedResponse,
+        403: forbiddenResponse("a temporary password is still pending"),
+        404: notFoundResponse(NOT_A_MEMBER),
+      },
+      handler: controller.get,
+    },
+    {
+      method: "get",
       path: "/organizations/{organizationId}/memberships",
       summary: "List the memberships of an organization",
       tag: TAG,
@@ -86,11 +111,14 @@ export function createOrganizationOperations(
       params: OrganizationParamsSchema,
       responses: {
         200: {
-          description: "Memberships with a user summary",
+          description:
+            "Memberships with a user summary, their invoice permissions and the groups of each member",
           schema: MembershipListResponseSchema,
         },
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN lists memberships"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator lists memberships",
+        ),
         404: notFoundResponse(NOT_A_MEMBER),
       },
       handler: controller.listMemberships,
@@ -98,7 +126,8 @@ export function createOrganizationOperations(
     {
       method: "post",
       path: "/organizations/{organizationId}/memberships",
-      summary: "Add an existing user to the organization by RUT",
+      summary:
+        "Add an existing user to the organization by RUT, with optional invoice permissions",
       tag: TAG,
       secured: true,
       params: OrganizationParamsSchema,
@@ -106,12 +135,14 @@ export function createOrganizationOperations(
       responses: {
         201: {
           description:
-            "Membership created; the credentials of the user are untouched",
+            "Membership created (permissions default to all false); the credentials of the user are untouched",
           schema: MembershipResponseSchema,
         },
         400: validationResponse("invalid or unknown body field"),
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN adds members"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator adds members",
+        ),
         404: errorResponse(
           `USER_NOT_FOUND: no user has that RUT; NOT_FOUND: ${NOT_A_MEMBER}`,
         ),
@@ -125,7 +156,7 @@ export function createOrganizationOperations(
     {
       method: "patch",
       path: "/organizations/{organizationId}/memberships/{userId}",
-      summary: "Change the role of a member",
+      summary: "Change the role of a member (permissions are rejected here)",
       tag: TAG,
       secured: true,
       params: MembershipParamsSchema,
@@ -137,7 +168,9 @@ export function createOrganizationOperations(
         },
         400: validationResponse("invalid or unknown body field"),
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN changes roles"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator changes roles",
+        ),
         404: notFoundResponse(`${NOT_A_MEMBER}, or the target is not a member`),
         409: errorResponse(
           "LAST_ADMIN_REQUIRED: the organization must retain an ADMIN",
@@ -145,6 +178,63 @@ export function createOrganizationOperations(
         503: retryableConflictResponse,
       },
       handler: controller.changeMembershipRole,
+    },
+    {
+      method: "put",
+      path: "/organizations/{organizationId}/memberships/{userId}/permissions",
+      summary:
+        "Replace the four invoice permissions of an organization membership",
+      tag: TAG,
+      secured: true,
+      params: MembershipParamsSchema,
+      requestBody: PermissionsUpdateRequestSchema,
+      responses: {
+        200: {
+          description:
+            "Permissions replaced atomically; they apply from the next request of that user",
+          schema: MembershipResponseSchema,
+        },
+        400: validationResponse(
+          "a flag is missing or not a boolean, or a field is unknown; nothing is persisted",
+        ),
+        401: unauthenticatedResponse,
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator changes permissions",
+        ),
+        404: notFoundResponse(`${NOT_A_MEMBER}, or the target is not a member`),
+        503: retryableConflictResponse,
+      },
+      handler: controller.updateMembershipPermissions,
+    },
+    {
+      method: "put",
+      path: "/organizations/{organizationId}/memberships/permissions",
+      summary:
+        "Replace the four invoice permissions of several organization memberships at once",
+      tag: TAG,
+      secured: true,
+      params: OrganizationParamsSchema,
+      requestBody: BulkPermissionsUpdateRequestSchema,
+      largeBody: true,
+      responses: {
+        200: {
+          description:
+            "Permissions of every listed member replaced atomically (all or nothing), in request order",
+          schema: MembershipsResponseSchema,
+        },
+        400: validationResponse(
+          "userIds is empty, over 200, has duplicates or non-UUID values, a flag is missing, or a field is unknown; nothing is persisted",
+        ),
+        401: unauthenticatedResponse,
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator changes permissions",
+        ),
+        404: notFoundResponse(
+          `${NOT_A_MEMBER}, or any listed user is not a member (nothing is persisted)`,
+        ),
+        503: retryableConflictResponse,
+      },
+      handler: controller.updateMembershipsPermissions,
     },
     {
       method: "delete",
@@ -157,7 +247,9 @@ export function createOrganizationOperations(
       responses: {
         204: { description: "Membership and its group memberships removed" },
         401: unauthenticatedResponse,
-        403: forbiddenResponse("only an organization ADMIN removes members"),
+        403: forbiddenResponse(
+          "only an organization ADMIN or the platform administrator removes members",
+        ),
         404: notFoundResponse(`${NOT_A_MEMBER}, or the target is not a member`),
         409: errorResponse(
           "LAST_ADMIN_REQUIRED: the organization must retain an ADMIN",

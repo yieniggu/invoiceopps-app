@@ -33,29 +33,45 @@ describe("RP0-04 auth OpenAPI contract", () => {
     );
   });
 
-  it("documents authorized contexts in AuthProfile", async () => {
+  it("documents memberships with permissions and groups, and no contexts, in AuthProfile", async () => {
     const schemas = ((await documentation()).components as Json)
       .schemas as Record<string, Json>;
     const profile = schemas.AuthProfile;
-    const contexts = (profile.properties as Record<string, Json>).contexts;
+    const properties = profile.properties as Record<string, Json>;
 
-    expect(profile.required).toEqual(expect.arrayContaining(["contexts"]));
-    expect(contexts.type).toBe("array");
-    const item = contexts.items as Json;
-    expect(Object.keys(item.properties as Json).sort()).toEqual([
-      "capabilities",
-      "groupId",
-      "groupName",
-      "organizationId",
-      "organizationName",
+    expect(profile.required).not.toContain("contexts");
+    expect(properties.contexts).toBeUndefined();
+    expect(profile.required).toEqual(
+      expect.arrayContaining(["memberships", "isPlatformAdministrator"]),
+    );
+    const membership = properties.memberships.items as Json;
+    expect(Object.keys(membership.properties as Json).sort()).toEqual([
+      "groups",
+      "organization",
+      "permissions",
+      "role",
     ]);
-    const capabilities = (item.properties as Record<string, Json>).capabilities;
-    expect(Object.keys(capabilities.properties as Json).sort()).toEqual([
-      "createInvoices",
-      "deleteOthersInvoices",
-      "deleteOwnInvoices",
-      "readInvoices",
+    const group = (
+      (membership.properties as Record<string, Json>).groups as Json
+    ).items as Json;
+    expect(Object.keys(group.properties as Json).sort()).toEqual([
+      "effective",
+      "group",
+      "permissions",
     ]);
+    for (const holder of [
+      (membership.properties as Record<string, Json>).permissions,
+      (group.properties as Record<string, Json>).permissions,
+      (group.properties as Record<string, Json>).effective,
+    ]) {
+      expect(holder.additionalProperties).toBe(false);
+      expect(Object.keys(holder.properties as Json).sort()).toEqual([
+        "createInvoices",
+        "deleteOthersInvoices",
+        "deleteOwnInvoices",
+        "readInvoices",
+      ]);
+    }
   });
 
   it("documents the rotated cookie and PASSWORD_REUSE on change-password", async () => {

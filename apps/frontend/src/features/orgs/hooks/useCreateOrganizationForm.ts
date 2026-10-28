@@ -17,7 +17,9 @@ const EMPTY: OrganizationFormValues = {
 type Field = "name" | "slug";
 
 /** Form state, validation and submission of the create-organization screen. */
-export function useCreateOrganizationForm(onCreated: (name: string) => void) {
+export function useCreateOrganizationForm(
+  onCreated: (created: { name: string; firstAdminRut: string }) => void,
+) {
   const create = useCreateOrganization();
   const [values, setValues] = useState(EMPTY);
   const [submitted, setSubmitted] = useState(false);
@@ -55,14 +57,15 @@ export function useCreateOrganizationForm(onCreated: (name: string) => void) {
       rutInput.current?.focus();
       return;
     }
+    const firstAdminRut = toApiRut(captured.rut);
     create.mutate(
       {
         name: captured.name,
         slug: captured.slug,
         ...(captured.description ? { description: captured.description } : {}),
-        firstAdminRut: toApiRut(captured.rut),
+        firstAdminRut,
       },
-      { onSuccess: () => onCreated(captured.name) },
+      { onSuccess: () => onCreated({ name: captured.name, firstAdminRut }) },
     );
   };
 

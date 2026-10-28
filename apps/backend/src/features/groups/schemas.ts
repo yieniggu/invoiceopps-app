@@ -1,22 +1,7 @@
 import { z } from "zod";
 
 import { UserSummarySchema } from "../orgs/schemas.js";
-
-const flag = z.boolean();
-
-export const GroupPermissionsSchema = z
-  .object({
-    readInvoices: flag,
-    createInvoices: flag,
-    deleteOwnInvoices: flag,
-    deleteOthersInvoices: flag,
-  })
-  .strict()
-  .meta({
-    id: "GroupPermissions",
-    description:
-      "Four independent flags shared by every member of the group; none implies another.",
-  });
+import { InvoicePermissionsSchema } from "./permissions-schema.js";
 
 export const GroupParamsSchema = z.object({
   organizationId: z.string(),
@@ -42,15 +27,38 @@ export const GroupCreateRequestSchema = z
   .strict()
   .meta({ id: "GroupCreateRequest" });
 
-export const GroupPermissionsUpdateRequestSchema = z
-  .object({ permissions: GroupPermissionsSchema })
-  .strict()
-  .meta({ id: "GroupPermissionsUpdateRequest" });
-
 export const GroupMembershipCreateRequestSchema = z
-  .object({ userId: z.string().trim().min(1) })
+  .object({
+    userId: z.uuid(),
+    // Absent means every flag false.
+    permissions: InvoicePermissionsSchema.optional(),
+  })
   .strict()
   .meta({ id: "GroupMembershipCreateRequest" });
+
+export const GroupMembershipBulkCreateRequestSchema = z
+  .object({
+    members: z
+      .array(
+        z
+          .object({
+            userId: z.uuid(),
+            // Absent means every flag false.
+            permissions: InvoicePermissionsSchema.optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200)
+      .refine(
+        (members) =>
+          new Set(members.map((member) => member.userId)).size ===
+          members.length,
+        { message: "userId values must be unique" },
+      ),
+  })
+  .strict()
+  .meta({ id: "GroupMembershipBulkCreateRequest" });
 
 export const GroupSchema = z
   .object({
@@ -58,7 +66,6 @@ export const GroupSchema = z
     organizationId: z.string(),
     name: z.string(),
     description: z.string().nullable(),
-    permissions: GroupPermissionsSchema,
   })
   .meta({ id: "Group" });
 
@@ -67,6 +74,7 @@ export const GroupMembershipSchema = z
     userId: z.string(),
     groupId: z.string(),
     organizationId: z.string(),
+    permissions: InvoicePermissionsSchema,
   })
   .meta({ id: "GroupMembership" });
 
@@ -89,3 +97,7 @@ export const GroupMembershipListResponseSchema = z
 export const GroupMembershipResponseSchema = z
   .object({ membership: GroupMembershipSchema })
   .meta({ id: "GroupMembershipResponse" });
+
+export const GroupMembershipsResponseSchema = z
+  .object({ memberships: z.array(GroupMembershipSchema) })
+  .meta({ id: "GroupMembershipsResponse" });

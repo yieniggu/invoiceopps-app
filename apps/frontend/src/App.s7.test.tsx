@@ -1,3 +1,4 @@
+import { membership, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -9,7 +10,17 @@ import {
 import { focusManager } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Profile } from "./features/profile/ProfileScreen";
+import { openPolicies } from "./test/policiesRoute";
 import { renderApp } from "./test/renderApp";
+
+// Políticas is disabled in the product; the screen is kept unrouted. The
+// policy-ledger test keeps exercising it through the test-only route.
+vi.mock("./features/session/AppRoutes", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("./features/session/AppRoutes")>();
+  const { withPoliciesRoute } = await import("./test/policiesRoute");
+  return { ...original, AppRoutes: withPoliciesRoute(original.AppRoutes) };
+});
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -19,6 +30,8 @@ const other = {
   userId: id(4),
   organizationId: org.id,
   role: "USER",
+  permissions: NO_PERMISSIONS,
+  groups: [],
   user: { id: id(4), name: "Otra Persona", rut: "190347907" },
 };
 function json(value: unknown, status = 200) {
@@ -35,7 +48,7 @@ function http(platform = true, role = "USER", member = true) {
     email: null,
     username: null,
     isPlatformAdministrator: platform,
-    memberships: member ? [{ organization: org, role }] : [],
+    memberships: member ? [membership(org, role as "ADMIN" | "USER")] : [],
   };
   const reads = vi
     .fn<() => Promise<Response>>()
@@ -49,6 +62,8 @@ function http(platform = true, role = "USER", member = true) {
             userId: profile.id,
             organizationId: org.id,
             role,
+            permissions: NO_PERMISSIONS,
+            groups: [],
             user: { id: profile.id, name: "Persona", rut: "123456785" },
           },
           other,
@@ -87,6 +102,13 @@ function http(platform = true, role = "USER", member = true) {
       if (path === "/api/v1/auth/profile") return reads();
       if (path === "/api/v1/groups") return json({ groups: [] });
       if (path === "/api/v1/organizations") return discovery();
+      if (path === base && method === "GET")
+        return json({
+          organization: { ...org, description: null },
+          summary: { memberCount: 2, groupCount: 0 },
+        });
+      if (path === `${base}/groups` && method === "GET")
+        return json({ groups: [] });
       if (path === `${base}/memberships` && method === "GET") return members();
       if (path.startsWith(`${base}/memberships`))
         return writes(path, init ?? {});
@@ -118,17 +140,34 @@ function dashboardContext() {
   );
   return screen.getByRole("region", { name: "Tu espacio de trabajo" });
 }
-/** People are managed on the organization detail, reached from the list. */
+/** The organization summary, reached from the list. */
 async function openOrganization() {
   fireEvent.click(await screen.findByRole("link", { name: "Organizaciones" }));
   fireEvent.click(
     await screen.findByRole("link", { name: "Ver detalle de Academia" }),
   );
 }
+/** People are managed on their own screens: members table, then the person. */
+async function openMembers() {
+  await openOrganization();
+  fireEvent.click(await screen.findByRole("link", { name: "Miembros" }));
+  await screen.findByRole("link", { name: "Otra Persona" });
+}
+async function openMember(name: string) {
+  fireEvent.click(await screen.findByRole("link", { name }));
+  await screen.findByRole("heading", { level: 1, name });
+}
 async function open() {
   const view = renderApp();
+  await openMembers();
+  return view;
+}
+/** The add-member screen, with the "existing person" tab selected. */
+async function openAddMember() {
+  const view = renderApp();
   await openOrganization();
-  await screen.findByText("Otra Persona");
+  fireEvent.click(await screen.findByRole("link", { name: "Agregar miembro" }));
+  await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
   return view;
 }
 function refocus() {
@@ -147,7 +186,7 @@ describe("APP12 S7 administration", () => {
     [false, "ADMIN"],
     [true, "USER"],
   ] as const)(
-    "exposes people management on the organization detail for platform=%s role=%s",
+    "exposes people management on the organization screens for platform=%s role=%s",
     async (platform, role) => {
       const api = http(platform, role);
       renderApp();
@@ -160,13 +199,41 @@ describe("APP12 S7 administration", () => {
       expect(
         await screen.findByRole("heading", { level: 1, name: "Academia" }),
       ).toBeTruthy();
-      if (role === "ADMIN") {
-        expect(await screen.findByText("Otra Persona")).toBeTruthy();
-        expect(screen.getByLabelText(/RUT de la persona/)).toBeTruthy();
+      // v2: organization ADMIN and platform administrator both manage people.
+      expect(
+        await screen.findByRole("link", { name: "Miembros" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: "Agregar miembro" }),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("link", { name: "Miembros" }));
+      expect(
+        await screen.findByRole("link", { name: "Otra Persona" }),
+      ).toBeTruthy();
+      expect(api.members).toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("link", { name: "Agregar miembro" }));
+      await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
+      expect(screen.getByLabelText(/RUT de la persona/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("tab", { name: "Crear persona nueva" }));
+      if (platform) {
+        // The platform can also use the multi-organization wizard, org preselected.
+        expect(
+          screen
+            .getByRole("link", {
+              name: /Usa el asistente de administración/,
+            })
+            .getAttribute("href"),
+        ).toBe(`/admin/users/new?organizationId=${org.id}`);
       } else {
-        // Platform authority alone administers no organization's people.
-        expect(screen.queryByLabelText(/RUT de la persona/)).toBeNull();
-        expect(api.members).not.toHaveBeenCalled();
+        // The ADMIN creates users in place: single-organization wizard.
+        expect(
+          screen.queryByRole("link", {
+            name: /Usa el asistente de administración/,
+          }),
+        ).toBeNull();
+        expect(
+          screen.getByRole("heading", { name: "Crear usuario nuevo" }),
+        ).toBeTruthy();
       }
       expect(
         screen.queryByRole("link", { name: "Crear organización" }),
@@ -185,10 +252,10 @@ describe("APP12 S7 administration", () => {
     expect(api.members).not.toHaveBeenCalled();
     await openOrganization();
     await screen.findByRole("heading", { level: 1, name: "Academia" });
+    // A plain member sees the summary and the groups, not the people screens.
+    expect(screen.queryByRole("link", { name: "Miembros" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Agregar miembro" })).toBeNull();
     expect(screen.queryByLabelText(/RUT de la persona/)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Asignar persona" }),
-    ).toBeNull();
     expect(api.members).not.toHaveBeenCalled();
   });
 
@@ -210,26 +277,33 @@ describe("APP12 S7 administration", () => {
             init.method === "POST" ? 201 : 200,
           ),
     );
-    await open();
+    await openAddMember();
 
-    // POST: assign by RUT; the API form of the RUT and the exact enum travel.
+    // POST: add by RUT; the API form of the RUT and the exact enum travel.
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
       target: { value: "190347907" },
     });
     fireEvent.change(screen.getByLabelText("Rol a asignar"), {
       target: { value: "ADMIN" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Asignar persona" }));
-    await screen.findByText("Persona asignada a la organización.");
+    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
+    // Success goes back to the members list with a status message.
+    await screen.findByText("Persona agregada a la organización.");
+    expect(window.location.pathname).toBe(`/organizations/${org.id}/members`);
     const [postPath, post] = api.writes.mock.calls[0];
     expect(postPath).toBe(`${base}/memberships`);
     expect(post.method).toBe("POST");
     expect(post.credentials).toBe("same-origin");
     expect(post.body).toBe(
-      JSON.stringify({ rut: "19034790-7", role: "ADMIN" }),
+      JSON.stringify({
+        rut: "19034790-7",
+        role: "ADMIN",
+        permissions: NO_PERMISSIONS,
+      }),
     );
 
     // PATCH: the exact ADMIN enum, never a translated role label.
+    await openMember("Otra Persona");
     fireEvent.change(screen.getByLabelText("Rol de Otra Persona"), {
       target: { value: "ADMIN" },
     });
@@ -242,13 +316,15 @@ describe("APP12 S7 administration", () => {
 
     // DELETE: asks for confirmation first; cancelling sends nothing.
     const remove = screen.getByRole("button", {
-      name: "Quitar a Otra Persona",
+      name: "Quitar a Otra Persona de la organización",
     });
     fireEvent.click(remove);
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(api.writes).toHaveBeenCalledTimes(2);
     fireEvent.click(
-      screen.getByRole("button", { name: "Quitar a Otra Persona" }),
+      screen.getByRole("button", {
+        name: "Quitar a Otra Persona de la organización",
+      }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Confirmar quitar a Otra Persona" }),
@@ -268,11 +344,11 @@ describe("APP12 S7 administration", () => {
 
   it("validates the RUT and exposes no global directory", async () => {
     const api = http(false, "ADMIN");
-    await open();
+    await openAddMember();
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
       target: { value: "190347908" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Asignar persona" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
     expect(screen.getByText("RUT inválido")).toBeTruthy();
     expect(api.writes).not.toHaveBeenCalled();
     expect(screen.queryByLabelText(/correo/i)).toBeNull();
@@ -294,11 +370,11 @@ describe("APP12 S7 administration", () => {
     async (status, code, text) => {
       const api = http(false, "ADMIN");
       api.writes.mockResolvedValueOnce(failure(status, code));
-      await open();
+      await openAddMember();
       fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
         target: { value: "190347907" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Asignar persona" }));
+      fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toContain(text);
       expect(document.body.textContent).not.toContain("private-stack");
@@ -309,7 +385,7 @@ describe("APP12 S7 administration", () => {
       expect(screen.getByRole("navigation")).toBeTruthy();
       expect(api.writes).toHaveBeenCalledTimes(1);
       expect(
-        screen.getByRole("button", { name: "Asignar persona" }),
+        screen.getByRole("button", { name: "Agregar persona" }),
       ).toHaveProperty("disabled", false);
     },
   );
@@ -319,12 +395,14 @@ describe("APP12 S7 administration", () => {
     await open();
     api.setProfile({
       ...api.getProfile(),
-      memberships: [{ organization: org, role: "USER" }],
+      memberships: [membership(org, "USER")],
     });
     refocus();
-    await waitFor(() =>
-      expect(screen.queryByLabelText(/RUT de la persona/)).toBeNull(),
-    );
+    expect(
+      await screen.findByText(
+        "Solo los administradores de la organización pueden ver a sus miembros.",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByText("Otra Persona")).toBeNull();
     expect(api.writes).not.toHaveBeenCalled();
   });
@@ -332,6 +410,7 @@ describe("APP12 S7 administration", () => {
   it("keeps a confirmed write when the refresh fails and retries only the read", async () => {
     const api = http(false, "ADMIN");
     await open();
+    await openMember("Otra Persona");
     api.members.mockResolvedValueOnce(json({}, 500));
     fireEvent.change(screen.getByLabelText("Rol de Otra Persona"), {
       target: { value: "ADMIN" },
@@ -339,26 +418,33 @@ describe("APP12 S7 administration", () => {
     await screen.findByText("Rol actualizado.");
     expect(
       await screen.findByText(
-        "No fue posible actualizar la lista de miembros. Tus cambios ya se guardaron; no repitas la operación.",
+        "No fue posible actualizar los datos del miembro. Tus cambios ya se guardaron; no repitas la operación.",
       ),
     ).toBeTruthy();
-    // The members already on screen stay visible.
-    expect(screen.getByText("Otra Persona")).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reintentar miembros" }),
-    );
-    await waitFor(() => expect(api.members).toHaveBeenCalledTimes(3));
+    // The member already on screen stays visible.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Otra Persona" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar miembro" }));
+    // The list, the member page mounting on a stale list, the refresh after
+    // the write (500) and the single retried read.
+    await waitFor(() => expect(api.members).toHaveBeenCalledTimes(4));
     expect(api.writes).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes self removal from the real profile and clears the revoked workspace without falling back", async () => {
     const api = http(true, "ADMIN");
     await open();
+    await openMember("Persona");
     api.writes.mockImplementationOnce(async () => {
       api.setProfile({ ...api.getProfile(), memberships: [] });
       return new Response(null, { status: 204 });
     });
-    fireEvent.click(screen.getByRole("button", { name: "Quitar a Persona" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Quitar a Persona de la organización",
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Confirmar quitar a Persona" }),
     );
@@ -385,6 +471,7 @@ describe("APP12 S7 administration", () => {
     const api = http(false, "ADMIN");
     api.writes.mockResolvedValueOnce(failure(401, "UNAUTHENTICATED"));
     await open();
+    await openMember("Otra Persona");
     fireEvent.change(screen.getByLabelText("Rol de Otra Persona"), {
       target: { value: "ADMIN" },
     });
@@ -395,7 +482,8 @@ describe("APP12 S7 administration", () => {
   it("preserves the unrelated policy operation ledger through a same-actor self-membership refresh", async () => {
     const api = http(true, "ADMIN");
     renderApp();
-    fireEvent.click(await screen.findByRole("link", { name: /^Políticas$/ }));
+    await screen.findByRole("heading", { name: "Panel principal" });
+    await openPolicies();
     fireEvent.click(await screen.findByRole("button", { name: "Editar v1" }));
     fireEvent.change(
       screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
@@ -403,12 +491,12 @@ describe("APP12 S7 administration", () => {
     );
     fireEvent.submit(screen.getByRole("form", { name: "Editar política" }));
     await screen.findByText(/resultado es desconocido/i);
-    await openOrganization();
-    await screen.findByText("Otra Persona");
+    await openMembers();
+    await openMember("Persona");
     api.writes.mockImplementationOnce(async () => {
       api.setProfile({
         ...api.getProfile(),
-        memberships: [{ organization: org, role: "USER" }],
+        memberships: [membership(org, "USER")],
       });
       return json({
         membership: {
@@ -421,12 +509,16 @@ describe("APP12 S7 administration", () => {
     fireEvent.change(screen.getByLabelText("Rol de Persona"), {
       target: { value: "USER" },
     });
+    // It is the actor's own role: nothing is sent until they confirm.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirmar cambio de rol" }),
+    );
     await screen.findByText("Rol actualizado.");
     // The refreshed profile arrives for the same actor.
     await waitFor(() =>
       expect(api.reads.mock.calls.length).toBeGreaterThanOrEqual(2),
     );
-    fireEvent.click(screen.getByRole("link", { name: /^Políticas$/ }));
+    await openPolicies();
     fireEvent.click(await screen.findByRole("button", { name: "Editar v1" }));
     await screen.findByText(/resultado es desconocido/i);
     expect(

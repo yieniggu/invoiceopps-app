@@ -2,18 +2,74 @@ import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
 import {
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+} from "../auth/password-policy.js";
+import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
+import {
   MembershipSchema,
   RutInputSchema,
   UserSummarySchema,
 } from "../orgs/schemas.js";
 
-export const UserProvisionRequestSchema = z
+export const MAX_GROUPS_PER_USER_CREATION = 200;
+
+const name = z.string().trim().min(1).max(120);
+
+/** A group the new user joins, with its own invoice permissions. */
+export const GroupGrantSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
-    rut: RutInputSchema,
-    role: z.enum(OrganizationRole),
+    groupId: z.string().trim().min(1),
+    // Absent means every flag false.
+    permissions: InvoicePermissionsSchema.optional(),
   })
   .strict()
+  .meta({ id: "GroupGrant" });
+
+/** Rejects a repeated groupId within one list. */
+export function uniqueGroupIds(
+  groups: ReadonlyArray<{ groupId: string }> | undefined,
+  context: z.RefinementCtx,
+  path: Array<string | number> = ["groups"],
+) {
+  const seen = new Set<string>();
+  groups?.forEach((group, index) => {
+    if (seen.has(group.groupId)) {
+      context.addIssue({
+        code: "custom",
+        message: "Duplicate groupId",
+        path: [...path, index, "groupId"],
+      });
+    }
+    seen.add(group.groupId);
+  });
+}
+
+/** Optional admin-defined temporary password; absent means "generate one". */
+export const DefinedTemporaryPasswordSchema = z
+  .string()
+  .min(MIN_PASSWORD_LENGTH)
+  .max(MAX_PASSWORD_LENGTH)
+  .meta({
+    description: `Optional temporary password chosen by the administrator (${MIN_PASSWORD_LENGTH}..${MAX_PASSWORD_LENGTH} characters). When omitted the server generates one and returns it once. The user must change it at first login.`,
+  });
+
+export const UserProvisionRequestSchema = z
+  .object({
+    name,
+    rut: RutInputSchema,
+    role: z.enum(OrganizationRole),
+    // Absent means every flag false.
+    permissions: InvoicePermissionsSchema.optional(),
+    // Only groups of this organization; absent means none.
+    groups: z
+      .array(GroupGrantSchema)
+      .max(MAX_GROUPS_PER_USER_CREATION)
+      .optional(),
+    temporaryPassword: DefinedTemporaryPasswordSchema.optional(),
+  })
+  .strict()
+  .superRefine((request, context) => uniqueGroupIds(request.groups, context))
   .meta({ id: "UserProvisionRequest" });
 
 export const OrganizationUserSchema = UserSummarySchema.extend({
@@ -24,13 +80,24 @@ export const OrganizationUserListResponseSchema = z
   .object({ users: z.array(OrganizationUserSchema) })
   .meta({ id: "OrganizationUserListResponse" });
 
+export const GroupGrantResultSchema = z
+  .object({ groupId: z.string(), permissions: InvoicePermissionsSchema })
+  .meta({ id: "GroupGrantResult" });
+
+export const ProvisionedUserSchema = UserSummarySchema.extend({
+  mustChangePassword: z.boolean(),
+}).meta({ id: "ProvisionedUser" });
+
+export const TemporaryPasswordSchema = z.string().meta({
+  description:
+    "Present only when the server generated the password (the request omitted temporaryPassword). Shown once; it is never stored in clear text and never logged.",
+});
+
 export const UserProvisionResponseSchema = z
   .object({
-    user: UserSummarySchema.extend({ mustChangePassword: z.boolean() }),
+    user: ProvisionedUserSchema,
     membership: MembershipSchema,
-    temporaryPassword: z.string().meta({
-      description:
-        "Shown once; it is never stored in clear text and never logged.",
-    }),
+    groups: z.array(GroupGrantResultSchema),
+    temporaryPassword: TemporaryPasswordSchema.optional(),
   })
   .meta({ id: "UserProvisionResponse" });

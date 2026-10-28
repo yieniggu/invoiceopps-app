@@ -1,6 +1,7 @@
 import { LogOut } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { PasswordInput } from "../../../components/PasswordInput";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { isApiError } from "../api/apiError";
 import { useChangePasswordMutation } from "../hooks/useAuthMutations";
@@ -16,7 +17,7 @@ interface PasswordError {
   nonce: number;
 }
 
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 256;
 const PASSWORD_ERROR_ID = "password-change-error";
 const NEW_PASSWORD_LENGTH_MESSAGE = `La contraseña nueva debe tener entre ${MIN_PASSWORD_LENGTH} y ${MAX_PASSWORD_LENGTH} caracteres.`;
@@ -109,7 +110,7 @@ export function ChangePasswordScreen() {
   return (
     <main className="shell" aria-labelledby="password-change-title">
       <div className="shell-toolbar">
-        <ThemeToggle showLabels />
+        <ThemeToggle />
       </div>
       <p className="eyebrow">InvoiceOps</p>
       <h1 id="password-change-title">Cambia tu contraseña temporal</h1>
@@ -118,44 +119,38 @@ export function ChangePasswordScreen() {
         aplicación.
       </p>
       <form noValidate aria-busy={pending} onSubmit={submit}>
-        <label>
-          Contraseña temporal
-          <input
-            ref={fields.currentPassword}
-            name="currentPassword"
-            type="password"
-            autoComplete="current-password"
-            value={current}
-            onChange={(event) => setCurrent(event.target.value)}
-            required
-            aria-invalid={passwordError?.field === "currentPassword"}
-            aria-describedby={
-              passwordError?.field === "currentPassword"
-                ? PASSWORD_ERROR_ID
-                : undefined
-            }
-          />
-        </label>
-        <label>
-          Contraseña nueva
-          <input
-            ref={fields.newPassword}
-            name="newPassword"
-            type="password"
-            autoComplete="new-password"
-            value={next}
-            onChange={(event) => setNext(event.target.value)}
-            minLength={MIN_PASSWORD_LENGTH}
-            maxLength={MAX_PASSWORD_LENGTH}
-            required
-            aria-invalid={passwordError?.field === "newPassword"}
-            aria-describedby={
-              passwordError?.field === "newPassword"
-                ? PASSWORD_ERROR_ID
-                : undefined
-            }
-          />
-        </label>
+        <PasswordInput
+          label="Contraseña temporal"
+          inputRef={fields.currentPassword}
+          name="currentPassword"
+          autoComplete="current-password"
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+          required
+          aria-invalid={passwordError?.field === "currentPassword"}
+          aria-describedby={
+            passwordError?.field === "currentPassword"
+              ? PASSWORD_ERROR_ID
+              : undefined
+          }
+        />
+        <PasswordInput
+          label="Contraseña nueva"
+          inputRef={fields.newPassword}
+          name="newPassword"
+          autoComplete="new-password"
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+          minLength={MIN_PASSWORD_LENGTH}
+          maxLength={MAX_PASSWORD_LENGTH}
+          required
+          aria-invalid={passwordError?.field === "newPassword"}
+          aria-describedby={
+            passwordError?.field === "newPassword"
+              ? PASSWORD_ERROR_ID
+              : undefined
+          }
+        />
         <button type="submit" disabled={pending}>
           {pending ? "Cambiando contraseña..." : "Cambiar contraseña"}
         </button>

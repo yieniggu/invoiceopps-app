@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertRecoveryTarget,
+  expectedDatabasePort,
   parseResetArguments,
   safeDecode,
   sanitizeTarget,
@@ -28,6 +29,48 @@ describe("recovery reset guards", () => {
         expect(target.maintenanceUrl).toContain("/postgres");
       }
     }
+  });
+
+  it("checks the port against LOCAL_APP_DB_PORT only when it is configured", () => {
+    const at = (port: string) => local(test, `127.0.0.1:${port}`);
+    const options = (expectedPort?: string) => ({
+      confirmReset: test,
+      allowedNames: [test],
+      expectedPort,
+    });
+    // Configured: only that port is this project's database.
+    expect(() =>
+      assertRecoveryTarget(at("5545"), options("5545")),
+    ).not.toThrow();
+    expect(() => assertRecoveryTarget(at("5432"), options("5545"))).toThrow(
+      /port must be 5545/,
+    );
+    // An omitted port means 5432.
+    expect(() =>
+      assertRecoveryTarget(local(test, "127.0.0.1"), options("5545")),
+    ).toThrow(/port must be 5545/);
+    // Not configured (a CI service container): no expectation.
+    expect(() => assertRecoveryTarget(at("5432"), options())).not.toThrow();
+    // A unix socket has no port to compare.
+    expect(() =>
+      assertRecoveryTarget(`postgresql:///${test}?host=/var/run/postgresql`, {
+        confirmReset: test,
+        allowedNames: [test],
+        expectedPort: "5545",
+      }),
+    ).not.toThrow();
+    // The message never carries the URL or the password.
+    try {
+      assertRecoveryTarget(at("5432"), options("5545"));
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  it("reads the expected port from LOCAL_APP_DB_PORT, blank meaning none", () => {
+    expect(expectedDatabasePort({ LOCAL_APP_DB_PORT: " 5545 " })).toBe("5545");
+    expect(expectedDatabasePort({ LOCAL_APP_DB_PORT: "  " })).toBeUndefined();
+    expect(expectedDatabasePort({})).toBeUndefined();
   });
 
   it("accepts a unix socket path host", () => {

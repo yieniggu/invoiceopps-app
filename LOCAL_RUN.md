@@ -137,6 +137,12 @@ pnpm dev
   queda solo en el backend).
 - Backend: http://127.0.0.1:4380/health/ready
 
+El backend escucha en `HOST` (por defecto `127.0.0.1`, solo tu máquina) y en
+`PORT` (por defecto 4380). No cambies `HOST` para desarrollar con pnpm: en la
+ruta B (Docker) la imagen y `docker-compose.yml` ya fijan `HOST=0.0.0.0`, porque
+dentro del contenedor el proceso debe atender todas las interfaces; el puerto
+sigue publicado solo en `127.0.0.1` del anfitrión.
+
 ### Límite de intentos de login (desarrollo)
 
 El backend limita `POST /api/v1/auth/login` en memoria, solo por credenciales
@@ -200,16 +206,16 @@ desde el host.
 
 ## 6. Comprobaciones
 
-| Qué            | Cómo                                                                 | Resultado esperado                             |
-| -------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
-| Backend vivo   | `curl -fsS <backend>/health/live`                                    | `{"status":"ok"}`                              |
-| Base accesible | `curl -fsS <backend>/health/ready`                                   | HTTP 200                                       |
-| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña    | Se abre la app                                 |
-| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma     | **Organizaciones** ofrece «Crear organización» |
-| Organizaciones | En `/organizaciones/nueva`, crea una con el RUT de su primer ADMIN   | Aparece en **Organizaciones** tras refrescar   |
-| Usuarios       | Como ADMIN, en `/organizaciones/:id` crea un usuario (rol `USER`)    | Contraseña temporal visible una sola vez       |
-| Grupos         | En **Grupos** crea un grupo; en su detalle marca permisos y miembros | El grupo y sus permisos persisten al recargar  |
-| Facturas       | Abre **Facturas**                                                    | Bandeja vacía: el alta llega en RP0-09/RP0-14  |
+| Qué            | Cómo                                                              | Resultado esperado                                                           |
+| -------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Backend vivo   | `curl -fsS <backend>/health/live`                                 | `{"status":"ok"}`                                                            |
+| Base accesible | `curl -fsS <backend>/health/ready`                                | HTTP 200                                                                     |
+| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña | Se abre la app                                                               |
+| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma  | **Organizaciones** ofrece «Crear organización»                               |
+| Organizaciones | En `/organizations/new`, crea una con el RUT de su primer ADMIN   | Aparece en **Organizaciones** tras refrescar                                 |
+| Usuarios       | Como ADMIN, en `/organizations/:id/members/new` crea un usuario   | Contraseña temporal visible una sola vez (o la definida por ti, no mostrada) |
+| Grupos         | En **Grupos** crea un grupo y luego agrega miembros con permisos  | Grupo y permisos persisten al recargar                                       |
+| Facturas       | Abre **Facturas**                                                 | Bandeja vacía: el alta llega en RP0-09/RP0-14                                |
 
 ## Tests
 
@@ -231,6 +237,77 @@ set -a; . ./.env; set +a
 export RECOVERY_TEST_DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${LOCAL_APP_DB_PORT}/invoiceops_recovery_test?schema=public"
 pnpm test:recovery:postgres
 ```
+
+### Pruebas E2E del navegador (Playwright)
+
+El paquete `apps/e2e` levanta la pila real (backend + Vite) contra la base aislada
+`invoiceops_recovery_test`, que **recrea, migra y siembra en cada ejecución**
+(personas, organizaciones, grupos y facturas deterministas). Nunca toca `invoiceops`.
+Usa los puertos 4391 (backend) y 5391 (frontend), distintos de los de desarrollo.
+`E2E_BACKEND_PORT` y `E2E_FRONTEND_PORT` pueden cambiarse, pero la suite **se niega
+a arrancar** con un puerto de desarrollo: 4380, 5380, los de Docker (3000, 5173,
+5300, 5174) o cualquiera que tu `.env`/shell configure (`PORT`, `BACKEND_PORT`,
+`FRONTEND_PORT`, `LOCAL_BACKEND_PORT`, `LOCAL_FRONTEND_PORT`). Si `LOCAL_APP_DB_PORT`
+está definido, la URL de la base de pruebas debe usar ese puerto. Antes de
+cualquier prueba, `globalSetup` comprueba que lo que responde en esos puertos es la
+pila de la suite: el administrador de plataforma sembrado debe iniciar sesión con la
+contraseña de las pruebas y ver las organizaciones sembradas (así falla con un
+servidor reutilizado que no sea el de la suite). El backend de la suite escucha solo
+en `127.0.0.1` (`HOST`).
+
+Antes de la primera ejecución:
+
+```sh
+pnpm install                                     # dependencias de todos los paquetes, incluido @invoiceops/e2e
+pnpm --filter @invoiceops/e2e install:browsers   # una sola vez (solo chromium)
+# Linux (CI o máquina nueva): agrega las librerías del sistema que necesita chromium
+pnpm --filter @invoiceops/e2e install:browsers -- --with-deps
+```
+
+```sh
+set -a; . ./.env; set +a   # POSTGRES_* y LOCAL_APP_DB_PORT; o define RECOVERY_TEST_DATABASE_URL
+pnpm test:e2e              # escritorio 1440x900, móvil 375x812 y escritorio oscuro
+```
+
+Qué debes saber antes de correrlas:
+
+- **No las ejecutes a la vez que `pnpm test:recovery:postgres`**: ambas
+  **recrean la misma base** `invoiceops_recovery_test`; una borraría los datos de
+  la otra a mitad de la ejecución y fallaría de forma aparentemente aleatoria.
+  Corre una, espera a que termine y luego la otra.
+- **Tardan unos 3 minutos** (102 pruebas; medido en esta máquina): recrean y siembran la base, arrancan dos servidores y
+  corren todos los specs en los tres proyectos (escritorio, móvil y escritorio
+  oscuro) con 3 trabajadores (`E2E_WORKERS`). Reintentos: ninguno (un fallo es un
+  fallo).
+- `E2E_REUSE_SERVERS=1` reutiliza servidores ya levantados, pero **solo sirve
+  para servidores iniciados con `pnpm --filter @invoiceops/backend e2e:server`**
+  (el que recrea y siembra la base de la suite) y el Vite de la suite en el puerto 5391. No lo uses con tu `pnpm dev`: apuntaría a la base de desarrollo y a
+  otros puertos, y sin la siembra las pruebas fallarían o dejarían datos.
+  Con servidores reutilizados la base **no se recrea**: reinicia el servidor de
+  la suite para volver a un estado limpio. Se pueden encadenar ejecuciones sobre
+  los mismos servidores: los RUT que crean las pruebas llevan un bloque por
+  ejecución (`E2E_RUN_SLOT`, derivado del reloj en `globalSetup`, más el
+  trabajador y un contador), así que una segunda ejecución no choca (`409`) con
+  las personas de la primera. Dos ejecuciones simultáneas sobre la misma base no
+  están soportadas, y los bloques se reutilizan tras unas 33 horas.
+- Las capturas de página completa quedan en `apps/e2e/e2e-artifacts/<proyecto>/`
+  (ignoradas por git; se vacía la carpeta al empezar cada ejecución) para
+  revisarlas a ojo; los trazos de fallos, en `apps/e2e/test-results/`. **Los
+  artefactos pueden contener credenciales de prueba** (la contraseña compartida de
+  la base aislada y, en los trazos, cuerpos de solicitudes). La contraseña temporal
+  del diálogo del asistente de usuario se enmascara en su captura deliberada, pero
+  **no** se enmascaran las capturas ni los trazos de fallo de Playwright
+  (`screenshot: "only-on-failure"` y `trace: "retain-on-failure"` en
+  `playwright.config.ts`): no los publiques ni los adjuntes a tickets. Los specs que
+  muestran una contraseña generada por el servidor (`admin-wizard.spec.ts` y
+  `member-creation-secret.spec.ts`) desactivan la captura y la traza de fallo
+  (`test.use({ screenshot: "off", trace: "off" })`, que Playwright solo permite a nivel
+  de archivo); un fallo ahí deja menos evidencia a cambio de no guardar el secreto.
+- La administración de plataforma está sembrada como USER, sin permisos ni grupos,
+  en una única organización (`Gamma Plataforma`): las pantallas de organización parten
+  de las membresías de la persona y los specs que necesitan a la plataforma dentro
+  de una organización la leen en vez de agregarla a las suyas (los datos sembrados
+  son de solo lectura).
 
 ## Pasar de Docker (5B) a desarrollo (5A)
 

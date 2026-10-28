@@ -299,7 +299,7 @@ export function InvoiceWorkspace({
     return (
       <section
         aria-labelledby="invoice-detail-title"
-        className="workspace-content space-y-4 rounded-lg border border-(--color-border) bg-(--color-surface-muted) p-4"
+        className="workspace-content space-y-4"
       >
         <button
           type="button"
@@ -334,7 +334,7 @@ export function InvoiceWorkspace({
   return (
     <section
       aria-labelledby="invoices-title"
-      className="workspace-content space-y-4 rounded-lg border border-(--color-border) bg-(--color-surface-muted) p-4"
+      className="workspace-content space-y-4"
     >
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 id="invoices-title">Facturas</h2>

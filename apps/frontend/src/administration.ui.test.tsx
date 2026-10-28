@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderApp } from "./test/renderApp";
 import {
+  NO_PERMISSIONS,
   deferred,
   errorResponse,
   jsonResponse,
@@ -31,12 +32,18 @@ const members = [
     userId: "user-1",
     organizationId: "org-1",
     role: "ADMIN",
+    permissions: NO_PERMISSIONS,
+    groups: [],
     user: { id: "user-1", name: "Ada Lovelace", rut: "123456785" },
   },
   {
     userId: "user-3",
     organizationId: "org-1",
     role: "USER",
+    permissions: NO_PERMISSIONS,
+    groups: [
+      { groupId: "group-a", name: "Equipo A", permissions: NO_PERMISSIONS },
+    ],
     user: { id: "user-3", name: "Carla Soto", rut: "190347907" },
   },
 ];
@@ -57,8 +64,40 @@ function baseRoutes() {
           },
         ],
       }),
+    "GET /api/v1/organizations/org-1": () =>
+      jsonResponse({
+        organization: {
+          ...org,
+          slug: "org-1",
+          description: null,
+        },
+        summary: { memberCount: 2, groupCount: 1 },
+      }),
     "GET /api/v1/organizations/org-1/memberships": () =>
       jsonResponse({ memberships: members }),
+    "GET /api/v1/organizations/org-1/groups": () =>
+      jsonResponse({
+        groups: [
+          {
+            id: "group-a",
+            organizationId: "org-1",
+            name: "Equipo A",
+            description: null,
+          },
+        ],
+      }),
+    "GET /api/v1/organizations/org-1/groups/group-a/memberships": () =>
+      jsonResponse({
+        memberships: [
+          {
+            userId: "user-3",
+            groupId: "group-a",
+            organizationId: "org-1",
+            permissions: NO_PERMISSIONS,
+            user: members[1].user,
+          },
+        ],
+      }),
     "GET /api/v1/organizations/org-1/users": () =>
       jsonResponse({
         users: members.map(({ user, role }) => ({ ...user, role })),
@@ -66,19 +105,50 @@ function baseRoutes() {
   };
 }
 
-/** Opens the organization detail as a deep link, like a reload would. */
-async function openAdministration() {
-  await screen.findByRole("heading", { level: 1, name: "Academia Norte" });
+/** Fills the data step and walks the wizard to its summary. */
+async function fillWizard(name: string, rut: string) {
+  fireEvent.change(screen.getByLabelText("Nombre completo"), {
+    target: { value: name },
+  });
+  fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
+    target: { value: rut },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+  await screen.findByRole("heading", { name: /Paso 2 de 4/ });
+  fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+  await screen.findByRole("heading", { name: /Paso 3 de 4/ });
+  fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+  await screen.findByRole("heading", { name: /Paso 4 de 4/ });
+}
+
+const MEMBERS = "/organizations/org-1/members";
+
+/** Opens a person's own page as a deep link, like a reload would. */
+async function openMemberPage(userId: string, name: string) {
+  renderApp({ route: `${MEMBERS}/${userId}` });
+  await screen.findByRole("heading", { level: 1, name });
+}
+
+/** Opens the "Crear persona nueva" tab of the add-member screen. */
+async function openNewPerson(options: { route?: string } = {}) {
+  const view = renderApp({ route: `${MEMBERS}/new`, ...options });
+  await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
+  fireEvent.click(screen.getByRole("tab", { name: "Crear persona nueva" }));
+  return view;
 }
 
 describe("organization members (AC-11)", () => {
   it("lists members with canonical RUTs formatted for display", async () => {
     mockTransport(baseRoutes());
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
+    renderApp({ route: MEMBERS });
     expect(await screen.findByText("Carla Soto")).toBeTruthy();
     expect(screen.getByText("19.034.790-7")).toBeTruthy();
     expect(screen.getByText("12.345.678-5")).toBeTruthy();
+    // Role, groups and the permission summary travel in the same row.
+    const row = screen.getByText("Carla Soto").closest("tr") as HTMLElement;
+    expect(within(row).getByText("Usuario")).toBeTruthy();
+    expect(within(row).getByText("Equipo A")).toBeTruthy();
+    expect(within(row).getByText("0 de 4 permisos")).toBeTruthy();
   });
 
   it("changes a role with PATCH {role} and refetches only this organization's memberships", async () => {
@@ -93,8 +163,7 @@ describe("organization members (AC-11)", () => {
           },
         }),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
+    await openMemberPage("user-3", "Carla Soto");
     const select = await screen.findByLabelText("Rol de Carla Soto");
     fireEvent.change(select, { target: { value: "ADMIN" } });
     await waitFor(() =>
@@ -121,16 +190,19 @@ describe("organization members (AC-11)", () => {
       "PATCH /api/v1/organizations/org-1/memberships/user-1": () =>
         errorResponse(409, "LAST_ADMIN_REQUIRED"),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
+    await openMemberPage("user-1", "Ada Lovelace");
     const select = (await screen.findByLabelText(
       "Rol de Ada Lovelace",
     )) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "USER" } });
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe(
+    // Ada is the signed-in actor: her own role change asks first.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirmar cambio de rol" }),
+    );
+    const alert = await screen.findByText(
       "No puedes quitar ni cambiar el rol del último administrador de la organización.",
     );
+    expect(alert.getAttribute("role")).toBe("alert");
     expect(select.value).toBe("ADMIN");
   });
 
@@ -140,10 +212,9 @@ describe("organization members (AC-11)", () => {
       "DELETE /api/v1/organizations/org-1/memberships/user-1": () =>
         new Response(null, { status: 204 }),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
+    await openMemberPage("user-1", "Ada Lovelace");
     const trigger = await screen.findByRole("button", {
-      name: "Quitar a Ada Lovelace",
+      name: "Quitar a Ada Lovelace de la organización",
     });
     fireEvent.click(trigger);
     // Nothing is sent until the removal is confirmed.
@@ -165,6 +236,27 @@ describe("organization members (AC-11)", () => {
     );
   });
 
+  it("goes back to the members list with a status message after removing someone else", async () => {
+    mockTransport({
+      ...baseRoutes(),
+      "DELETE /api/v1/organizations/org-1/memberships/user-3": () =>
+        new Response(null, { status: 204 }),
+    });
+    await openMemberPage("user-3", "Carla Soto");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Quitar a Carla Soto de la organización",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+    );
+    expect(
+      await screen.findByText("Se quitó a Carla Soto de la organización."),
+    ).toBeTruthy();
+    expect(window.location.pathname).toBe(MEMBERS);
+  });
+
   it("CR-109 marks this organization's group memberships stale after a removal, not another organization's", async () => {
     const groupKey = (organizationId: string, groupId: string) => [
       "identity",
@@ -180,15 +272,16 @@ describe("organization members (AC-11)", () => {
       "DELETE /api/v1/organizations/org-1/memberships/user-3": () =>
         new Response(null, { status: 204 }),
     });
-    const { store } = renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+    const { store } = renderApp({ route: `${MEMBERS}/user-3` });
+    await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const client = store.getSnapshot().client;
-    client.setQueryData(groupKey("org-1", "group-a"), { memberships: [] });
+    client.setQueryData(groupKey("org-1", "group-z"), { memberships: [] });
     client.setQueryData(groupKey("org-2", "group-z"), { memberships: [] });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Quitar a Carla Soto" }),
+      screen.getByRole("button", {
+        name: "Quitar a Carla Soto de la organización",
+      }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
@@ -196,7 +289,7 @@ describe("organization members (AC-11)", () => {
 
     await waitFor(() =>
       expect(
-        client.getQueryState(groupKey("org-1", "group-a"))?.isInvalidated,
+        client.getQueryState(groupKey("org-1", "group-z"))?.isInvalidated,
       ).toBe(true),
     );
     expect(
@@ -204,7 +297,7 @@ describe("organization members (AC-11)", () => {
     ).toBe(false);
   });
 
-  it("assigns an existing person by RUT and resets the form", async () => {
+  it("adds an existing person by RUT and goes back to the members list with a status message", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
       "POST /api/v1/organizations/org-1/memberships": () =>
@@ -219,20 +312,23 @@ describe("organization members (AC-11)", () => {
           201,
         ),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+    renderApp({ route: `${MEMBERS}/new` });
+    await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
       target: { value: "190347907" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Asignar persona" }));
-    await screen.findByText("Persona asignada a la organización.");
+    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
+    await screen.findByText("Persona agregada a la organización.");
     expect(
       transport.calls("POST /api/v1/organizations/org-1/memberships")[0].body,
-    ).toEqual({ rut: "19034790-7", role: "USER" });
-    expect(
-      (screen.getByLabelText(/RUT de la persona/) as HTMLInputElement).value,
-    ).toBe("");
+    ).toEqual({
+      rut: "19034790-7",
+      role: "USER",
+      permissions: NO_PERMISSIONS,
+    });
+    expect(window.location.pathname).toBe(MEMBERS);
+    // The members table loads and the member count of the summary is stale.
+    expect(await screen.findByText("Carla Soto")).toBeTruthy();
   });
 
   it("explains USER_NOT_FOUND for an unknown RUT", async () => {
@@ -241,16 +337,16 @@ describe("organization members (AC-11)", () => {
       "POST /api/v1/organizations/org-1/memberships": () =>
         errorResponse(404, "USER_NOT_FOUND"),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+    renderApp({ route: `${MEMBERS}/new` });
+    await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
       target: { value: "190347907" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Asignar persona" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
       "No existe una persona registrada con ese RUT.",
     );
+    expect(window.location.pathname).toBe(`${MEMBERS}/new`);
   });
 });
 
@@ -263,22 +359,19 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       ...baseRoutes(),
       "POST /api/v1/organizations/org-1/users": () => gate.promise,
     });
-    const { store } = renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+    const { store } = await openNewPerson();
 
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego Rojas" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
-    // Values were captured at submit: editing the form while the request is in
-    // flight must not change what is sent.
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Otro nombre" },
-    });
+    await fillWizard("Diego Rojas", "111111111");
+    const create = screen.getByRole("button", { name: "Crear usuario" });
+    fireEvent.click(create);
+    // No duplicate submit: the control is disabled while the request is in
+    // flight, and so is going back to edit what is being sent.
+    await waitFor(() => expect(create).toHaveProperty("disabled", true));
+    fireEvent.click(create);
+    expect(screen.getByRole("button", { name: "Atrás" })).toHaveProperty(
+      "disabled",
+      true,
+    );
     gate.resolve(
       jsonResponse(
         {
@@ -309,7 +402,12 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       name: "Diego Rojas",
       rut: "11111111-1",
       role: "USER",
+      permissions: NO_PERMISSIONS,
+      groups: [],
     });
+    expect(
+      transport.calls("POST /api/v1/organizations/org-1/users"),
+    ).toHaveLength(1);
     expect(dialog.contains(document.activeElement)).toBe(true);
 
     const dump = serializeClient(store.getSnapshot().client);
@@ -318,22 +416,37 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       store.getSnapshot().client.getMutationCache().getAll(),
     ).not.toHaveLength(0);
 
+    // The person lands on the members list (fresh read) with a status message.
+    expect(
+      await screen.findByText(
+        "Usuario «Diego Rojas» creado y agregado a la organización. La persona deberá cambiar su contraseña temporal al iniciar sesión.",
+      ),
+    ).toBeTruthy();
+    expect(window.location.pathname).toBe(MEMBERS);
     await waitFor(() =>
       expect(
         transport.calls("GET /api/v1/organizations/org-1/memberships"),
-      ).toHaveLength(2),
+      ).toHaveLength(1),
     );
-    expect(
-      (screen.getByLabelText("Nombre completo") as HTMLInputElement).value,
-    ).toBe("");
+    // Navigation does not take focus away from the open dialog.
+    expect(dialog.contains(document.activeElement)).toBe(true);
 
+    // Escape does not discard the only copy of the password: it moves focus to
+    // the confirmation button, which is what closes the dialog.
     fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeTruthy();
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole("button", { name: "Ya copié la contraseña" }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ya copié la contraseña" }),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.body.textContent).not.toContain(issued);
     expect(serializeClient(store.getSnapshot().client)).not.toContain(issued);
   });
 
-  it("closes the dialog with its button and returns focus to the submit button", async () => {
+  it("closes the dialog with its button and returns focus to the page title", async () => {
     mockTransport({
       ...baseRoutes(),
       "POST /api/v1/organizations/org-1/users": () =>
@@ -355,22 +468,23 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
           201,
         ),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
-    const submit = screen.getByRole("button", { name: "Crear usuario" });
-    submit.focus();
-    fireEvent.click(submit);
+    await openNewPerson();
+    await fillWizard("Diego", "111111111");
+    fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar" }));
+    // The dialog opens when the response arrives; the app moves to the members
+    // list once its lists are fresh. Close it only after that move, or focus
+    // would return to the page title of the screen that is about to leave.
+    await screen.findByRole("heading", { level: 1, name: "Miembros" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ya copié la contraseña" }),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(submit);
+    // The form that opened the dialog is gone (the app moved to the members
+    // list), so focus lands on the title of the page the person is on.
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 1, name: "Miembros" }),
+    );
   });
 
   it("keeps Tab inside the dialog and labels it for assistive technology", async () => {
@@ -395,40 +509,35 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
           201,
         ),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
+    await openNewPerson();
+    await fillWizard("Diego", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Contraseña temporal",
     });
     expect(dialog.getAttribute("aria-modal")).toBe("true");
-    const close = within(dialog).getByRole("button", { name: "Cerrar" });
+    const copy = within(dialog).getByRole("button", { name: "Copiar" });
+    const close = within(dialog).getByRole("button", {
+      name: "Ya copié la contraseña",
+    });
+    // Tab wraps from the last control to the first, and back with Shift+Tab.
     close.focus();
     fireEvent.keyDown(close, { key: "Tab" });
-    expect(dialog.contains(document.activeElement)).toBe(true);
-    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(copy);
+    fireEvent.keyDown(copy, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
   });
 
   it("blocks the submit for an invalid RUT, names the problem and focuses the field", async () => {
     const transport = mockTransport(baseRoutes());
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+    await openNewPerson();
     fireEvent.change(screen.getByLabelText("Nombre completo"), {
       target: { value: "Diego" },
     });
     const rut = screen.getByLabelText(/RUT del usuario/) as HTMLInputElement;
     fireEvent.change(rut, { target: { value: "190347908" } });
     expect(rut.value).toBe("19.034.790-8");
-    fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     expect(screen.getByText("RUT inválido")).toBeTruthy();
     expect(document.activeElement).toBe(rut);
     expect(
@@ -443,61 +552,44 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
         throw new TypeError("offline");
       },
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
+    await openNewPerson();
+    await fillWizard("Diego", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(
       /No fue posible conectar con el servidor/,
     );
-    expect(
-      (screen.getByLabelText("Nombre completo") as HTMLInputElement).value,
-    ).toBe("Diego");
+    // Nothing was lost: the summary still shows what was typed.
+    expect(screen.getByText("Diego")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("marks this organization's users stale after provisioning, leaving other organizations alone", async () => {
-    const { store } = (() => {
-      mockTransport({
-        ...baseRoutes(),
-        "POST /api/v1/organizations/org-1/users": () =>
-          jsonResponse(
-            {
-              user: {
-                id: "user-9",
-                name: "Diego",
-                rut: "111111111",
-                mustChangePassword: true,
-              },
-              membership: {
-                userId: "user-9",
-                organizationId: "org-1",
-                role: "USER",
-              },
-              temporaryPassword: "Tmp-Secret-1",
+    mockTransport({
+      ...baseRoutes(),
+      "POST /api/v1/organizations/org-1/users": () =>
+        jsonResponse(
+          {
+            user: {
+              id: "user-9",
+              name: "Diego",
+              rut: "111111111",
+              mustChangePassword: true,
             },
-            201,
-          ),
-      });
-      return renderApp({ route: "/organizaciones/org-1" });
-    })();
-    await openAdministration();
-    await screen.findByText("Carla Soto");
+            membership: {
+              userId: "user-9",
+              organizationId: "org-1",
+              role: "USER",
+            },
+            temporaryPassword: "Tmp-Secret-1",
+          },
+          201,
+        ),
+    });
+    const { store } = await openNewPerson();
     const client = store.getSnapshot().client;
     client.setQueryData(["identity", "user-1", "org", "org-1", "users"], []);
     client.setQueryData(["identity", "user-1", "org", "org-2", "users"], []);
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
+    await fillWizard("Diego", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     await screen.findByRole("dialog");
     const stale = (org: string) =>
@@ -513,19 +605,19 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       "POST /api/v1/organizations/org-1/users": () =>
         errorResponse(409, "USER_CONFLICT"),
     });
-    renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
+    await openNewPerson();
+    await fillWizard("Diego", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "Ya existe un usuario con ese RUT.",
-    );
+    // The wizard goes back to the data step and flags the RUT field.
+    await screen.findByRole("heading", { name: /Paso 1 de 4/ });
+    expect(
+      await screen.findByText("Ya existe un usuario con ese RUT."),
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByLabelText(/RUT del usuario/) as HTMLInputElement
+      ).getAttribute("aria-invalid"),
+    ).toBe("true");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
@@ -554,15 +646,8 @@ describe("CR-104 issued credential survives navigation within the identity", () 
       "POST /api/v1/organizations/org-1/users": () => gate.promise,
       "POST /api/v1/auth/logout": () => new Response(null, { status: 204 }),
     });
-    const view = renderApp({ route: "/organizaciones/org-1" });
-    await openAdministration();
-    await screen.findByText("Carla Soto");
-    fireEvent.change(screen.getByLabelText("Nombre completo"), {
-      target: { value: "Diego Rojas" },
-    });
-    fireEvent.change(screen.getByLabelText(/RUT del usuario/), {
-      target: { value: "111111111" },
-    });
+    const view = await openNewPerson();
+    await fillWizard("Diego Rojas", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     fireEvent.click(
       within(screen.getByRole("navigation")).getByRole("link", {
@@ -583,7 +668,9 @@ describe("CR-104 issued credential survives navigation within the identity", () 
     expect(within(dialog).getByText(issued)).toBeTruthy();
     expect(serializeClient(store.getSnapshot().client)).not.toContain(issued);
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ya copié la contraseña" }),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.body.textContent).not.toContain(issued);
   });
