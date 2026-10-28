@@ -18,6 +18,7 @@
     "recovery:bootstrap": "pnpm --filter @invoiceops/backend recovery:bootstrap",
     "recovery:local:reset": "pnpm --filter @invoiceops/backend recovery:local:reset",
     "test": "pnpm run test:unit",
+    "test:e2e": "pnpm --filter @invoiceops/e2e test:e2e",
     "test:integration": "pnpm --filter @invoiceops/backend test:integration",
     "test:recovery:contracts": "pnpm --filter @invoiceops/backend test:recovery:contracts",
     "test:recovery:http": "pnpm --filter @invoiceops/backend test:recovery:http",

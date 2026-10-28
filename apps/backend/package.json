@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm run generate && tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "e2e:server": "node scripts/e2e-backend.mjs",
     "generate": "prisma generate",
     "platform-administrator": "tsx src/bootstrap-platform-administrator.ts",
     "recovery:bootstrap": "tsx src/recovery-bootstrap.ts",
