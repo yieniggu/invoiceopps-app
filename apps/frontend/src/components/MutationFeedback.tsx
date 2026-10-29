@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { describeError } from "../features/auth/api/apiError";
+import { describeError, isApiError } from "../features/auth/api/apiError";
 
 /**
  * Accessible outcome of a mutation: alert on failure, status on success. With
@@ -15,6 +15,7 @@ export function MutationFeedback({
   success,
   fallback,
   focusOnError = false,
+  messages,
 }: {
   isError: boolean;
   error: unknown;
@@ -22,6 +23,8 @@ export function MutationFeedback({
   success: string;
   fallback: string;
   focusOnError?: boolean;
+  /** Screen-specific text for error codes (wins over the shared catalogue). */
+  messages?: Record<string, string>;
 }) {
   const alert = useRef<HTMLParagraphElement>(null);
   // Focus is DOM synchronisation: move it when the failure appears.
@@ -33,7 +36,9 @@ export function MutationFeedback({
     <>
       {isError ? (
         <p ref={alert} role="alert" tabIndex={focusOnError ? -1 : undefined}>
-          {describeError(error, fallback)}
+          {(isApiError(error) && error.code
+            ? messages?.[error.code]
+            : undefined) ?? describeError(error, fallback)}
         </p>
       ) : null}
       {isSuccess ? <p role="status">{success}</p> : null}

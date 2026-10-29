@@ -89,14 +89,16 @@ test.describe("profile", () => {
       await expect(
         page.getByRole("heading", { level: 2, name: "Identidad" }),
       ).toBeVisible();
-      await page.getByLabel("Correo electrónico").fill("persona@example.com");
-      await page.getByLabel("Nombre de usuario").fill("persona.prueba");
+      // Email and username are unique among users: one pair per person.
+      const email = `persona.${person.id}@example.com`;
+      await page.getByLabel("Correo electrónico").fill(email);
+      await page
+        .getByLabel("Nombre de usuario")
+        .fill(`persona-${person.id.slice(0, 8)}`);
       await page.getByRole("button", { name: "Guardar cambios" }).click();
       await expect(page.getByText("Perfil actualizado.")).toBeVisible();
       await page.reload();
-      await expect(page.getByLabel("Correo electrónico")).toHaveValue(
-        "persona@example.com",
-      );
+      await expect(page.getByLabel("Correo electrónico")).toHaveValue(email);
       await app.shot("profile-saved");
     } finally {
       await s.dispose();

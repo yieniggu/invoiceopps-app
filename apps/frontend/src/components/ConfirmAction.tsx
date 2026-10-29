@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * A destructive action that asks first: the trigger swaps for a confirm and a
@@ -13,14 +13,17 @@ export function ConfirmAction({
   confirmLabel,
   disabled = false,
   onConfirm,
+  triggerRef,
 }: {
   label: string;
   confirmLabel: string;
   disabled?: boolean;
   onConfirm: () => void;
+  /** Lets a flow that finishes later (a dialog) return focus to the trigger. */
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
   const restoreFocus = useRef(false);
 
   // Focus returns to the trigger once it is back in the DOM (synchronisation).
@@ -34,7 +37,10 @@ export function ConfirmAction({
   if (!confirming) {
     return (
       <button
-        ref={trigger}
+        ref={(node) => {
+          trigger.current = node;
+          if (triggerRef) triggerRef.current = node;
+        }}
         type="button"
         className="danger-button"
         disabled={disabled}

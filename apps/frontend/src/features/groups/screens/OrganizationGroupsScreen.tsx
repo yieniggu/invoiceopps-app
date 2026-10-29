@@ -1,26 +1,40 @@
-import { useParams } from "react-router";
-
 import { BackLink } from "../../../components/BackLink";
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import type { Profile } from "../../auth/types";
-import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
-import { useOrganizationAccess } from "../../orgs/hooks/useOrganizationAccess";
+import { OrganizationGate } from "../../orgs/components/OrganizationGate";
 import { GroupsList } from "../components/GroupsList";
 
 /** The groups of a single organization. */
 export function OrganizationGroupsScreen({ profile }: { profile: Profile }) {
-  const { organizationId = "" } = useParams();
-  const { organization, canManage, membership } = useOrganizationAccess(
-    profile,
-    organizationId,
+  return (
+    <OrganizationGate profile={profile}>
+      {({ organization, canManage }) => (
+        <GroupsView
+          key={organization.id}
+          organization={organization}
+          canManage={canManage}
+          memberGroups={
+            profile.memberships.find(
+              (entry) => entry.organization.id === organization.id,
+            )?.groups
+          }
+        />
+      )}
+    </OrganizationGate>
   );
-  if (!organization) {
-    return (
-      <NotFoundScreen description="No encontramos esa organización entre las tuyas." />
-    );
-  }
+}
+
+function GroupsView({
+  organization,
+  canManage,
+  memberGroups,
+}: {
+  organization: { id: string; name: string };
+  canManage: boolean;
+  memberGroups: Profile["memberships"][number]["groups"] | undefined;
+}) {
   return (
     <div className="screen-stack">
       <BackLink to={paths.organization(organization.id)}>
@@ -45,7 +59,7 @@ export function OrganizationGroupsScreen({ profile }: { profile: Profile }) {
       <GroupsList
         organizationId={organization.id}
         isAdmin={canManage}
-        memberGroups={membership?.groups}
+        memberGroups={memberGroups}
       />
     </div>
   );

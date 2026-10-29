@@ -183,11 +183,12 @@ describe("MemberPermissionsEditor, draft mode", () => {
 });
 
 describe("MemberPermissionsEditor, saved mode", () => {
-  const PUT = "PUT /api/v1/organizations/org-1/memberships/user-3/permissions";
+  const PUT =
+    "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003/permissions";
   const target = {
     level: "organization" as const,
-    organizationId: "org-1",
-    userId: "user-3",
+    organizationId: "00000000-0000-4000-9000-000000000001",
+    userId: "00000000-0000-4000-8000-000000000003",
   };
   const renderSaved = (saved = NO_PERMISSIONS) =>
     renderWithIdentity(
@@ -287,7 +288,7 @@ describe("MemberPermissionsEditor, saved mode", () => {
 
   it("uses the group endpoint at group level", async () => {
     const transport = mockTransport({
-      "PUT /api/v1/organizations/org-1/groups/group-a/memberships/user-3/permissions":
+      "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003/permissions":
         () => jsonResponse({ membership: {} }),
     });
     renderWithIdentity(
@@ -295,9 +296,9 @@ describe("MemberPermissionsEditor, saved mode", () => {
         memberName="Carla Soto"
         target={{
           level: "group",
-          organizationId: "org-1",
-          groupId: "group-a",
-          userId: "user-3",
+          organizationId: "00000000-0000-4000-9000-000000000001",
+          groupId: "00000000-0000-4000-a000-000000000097",
+          userId: "00000000-0000-4000-8000-000000000003",
         }}
         saved={NO_PERMISSIONS}
       />,

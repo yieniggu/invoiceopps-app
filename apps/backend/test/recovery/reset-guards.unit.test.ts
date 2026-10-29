@@ -432,6 +432,13 @@ describe("recovery reset statements", () => {
     expect(events.join("\n")).not.toContain(secret);
   });
 
+  it("reports that the migrations (all of them, not one baseline) were applied", async () => {
+    const { events, run } = recordingReset(dev);
+    await run();
+    expect(events).toContain("log:reset: migrations applied");
+    expect(events.join("\n")).not.toContain("consolidated");
+  });
+
   it("terminates sessions, drops with FORCE and creates the quoted dev database in order", async () => {
     const { queries, run } = recordingReset(dev);
     await run();

@@ -88,7 +88,15 @@ function http(platform = true, role = "USER", member = true) {
     );
   const discovery = vi
     .fn<() => Promise<Response>>()
-    .mockImplementation(async () => json({ organizations: [] }));
+    // The platform directory lists every organization (paginated).
+    .mockImplementation(async () =>
+      json({
+        organizations: [{ ...org, description: null }],
+        page: 1,
+        pageSize: 20,
+        total: 1,
+      }),
+    );
   const policyWrite = vi
     .fn<() => Promise<Response>>()
     .mockImplementation(async () => {
@@ -110,6 +118,27 @@ function http(platform = true, role = "USER", member = true) {
       if (path === `${base}/groups` && method === "GET")
         return json({ groups: [] });
       if (path === `${base}/memberships` && method === "GET") return members();
+      // The reduced list every member may read (plain members use it).
+      if (path === `${base}/members` && method === "GET")
+        return json({
+          members: [
+            {
+              userId: id(2),
+              name: "Persona",
+              email: null,
+              recentlyActive: true,
+            },
+            {
+              userId: other.userId,
+              name: other.user.name,
+              email: null,
+              recentlyActive: false,
+            },
+          ],
+          page: 1,
+          pageSize: 20,
+          total: 2,
+        });
       if (path.startsWith(`${base}/memberships`))
         return writes(path, init ?? {});
       if (path.startsWith("/api/v1/business-policies"))
@@ -252,8 +281,9 @@ describe("APP12 S7 administration", () => {
     expect(api.members).not.toHaveBeenCalled();
     await openOrganization();
     await screen.findByRole("heading", { level: 1, name: "Academia" });
-    // A plain member sees the summary and the groups, not the people screens.
-    expect(screen.queryByRole("link", { name: "Miembros" })).toBeNull();
+    // A plain member sees the summary, the groups and the reduced member list
+    // (AC-22), but none of the people-management screens.
+    expect(screen.getByRole("link", { name: "Miembros" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Agregar miembro" })).toBeNull();
     expect(screen.queryByLabelText(/RUT de la persona/)).toBeNull();
     expect(api.members).not.toHaveBeenCalled();
@@ -398,12 +428,18 @@ describe("APP12 S7 administration", () => {
       memberships: [membership(org, "USER")],
     });
     refocus();
+    // The management table is replaced by the reduced list (AC-22): the name
+    // stays, every administrative control goes.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Editar permisos en bloque" }),
+      ).toBeNull(),
+    );
     expect(
-      await screen.findByText(
-        "Solo los administradores de la organización pueden ver a sus miembros.",
-      ),
+      await screen.findByRole("link", { name: "Otra Persona" }),
     ).toBeTruthy();
-    expect(screen.queryByText("Otra Persona")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Agregar miembro" })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(api.writes).not.toHaveBeenCalled();
   });
 
@@ -433,7 +469,9 @@ describe("APP12 S7 administration", () => {
   });
 
   it("refreshes self removal from the real profile and clears the revoked workspace without falling back", async () => {
-    const api = http(true, "ADMIN");
+    // Not a platform administrator: their directory lists every organization,
+    // while a member's list is the profile's memberships (the point here).
+    const api = http(false, "ADMIN");
     await open();
     await openMember("Persona");
     api.writes.mockImplementationOnce(async () => {

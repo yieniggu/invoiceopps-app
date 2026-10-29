@@ -7,7 +7,7 @@ import { SessionStore } from "./sessionStore";
 
 const ada = profileFixture() as unknown as Profile;
 const bruno = profileFixture({
-  id: "user-2",
+  id: "00000000-0000-4000-8000-000000000002",
   name: "Bruno",
 }) as unknown as Profile;
 
@@ -20,13 +20,23 @@ describe("a retired partition stays empty and idle", () => {
     const first = store.getSnapshot().client;
     store.accept(first, ada);
     const adaClient = store.getSnapshot().client;
-    adaClient.setQueryData(["identity", "user-1", "workspace", "groups"], [1]);
+    adaClient.setQueryData(
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "workspace",
+        "groups",
+      ],
+      [1],
+    );
     expect(adaClient.getQueryCache().getAll()).toHaveLength(2);
 
     expect(store.accept(adaClient, bruno)).toBe(true);
 
     expect(adaClient.getQueryCache().getAll()).toHaveLength(0);
-    expect(store.getSnapshot().identityId).toBe("user-2");
+    expect(store.getSnapshot().identityId).toBe(
+      "00000000-0000-4000-8000-000000000002",
+    );
   });
 
   it("does not store or fetch what an observer of the old tree builds afterwards", async () => {
@@ -36,7 +46,12 @@ describe("a retired partition stays empty and idle", () => {
     const queryFn = vi.fn(async () => "late");
     // The observer exists before the swap, like the one in the old tree.
     const observer = new QueryObserver(adaClient, {
-      queryKey: ["identity", "user-1", "workspace", "groups"],
+      queryKey: [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "workspace",
+        "groups",
+      ],
       queryFn,
       enabled: false,
     });
@@ -44,7 +59,12 @@ describe("a retired partition stays empty and idle", () => {
     store.end(adaClient, "logout");
     // The late call: setOptions with the options the old component renders.
     observer.setOptions({
-      queryKey: ["identity", "user-1", "workspace", "groups"],
+      queryKey: [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "workspace",
+        "groups",
+      ],
       queryFn,
       enabled: true,
     });

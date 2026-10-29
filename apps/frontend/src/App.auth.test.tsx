@@ -11,7 +11,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-const user = { id: "user-1", name: "Ada Lovelace", rut: "12345678-5" };
+const user = {
+  id: "00000000-0000-4000-8000-000000000001",
+  name: "Ada Lovelace",
+  rut: "12345678-5",
+};
 const password = "test-password-123";
 const loginName = /iniciar sesión|ingresar/i;
 const signupName = /crear cuenta|registrar(?:se|me)?/i;
@@ -24,7 +28,7 @@ const profile = {
   memberships: [
     {
       organization: {
-        id: "organization-1",
+        id: "00000000-0000-4000-9000-000000000001",
         name: "AI Academy",
         slug: "ai-academy",
       },

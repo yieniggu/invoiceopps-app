@@ -490,3 +490,82 @@ describe("RP0-04 credential serialization", () => {
     );
   });
 });
+
+describe("CR-310 PATCH /profile contact data in PostgreSQL", () => {
+  async function session(password = "correct-horse-battery") {
+    const user = await createUser(password);
+    const app = createApp(database, auth);
+    const login = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ rut: user.rut, password });
+    const cookie = String(login.headers["set-cookie"]).split(";")[0];
+    const patch = (body: object) =>
+      request(app)
+        .patch("/api/v1/profile")
+        .set(SAME_ORIGIN)
+        .set("Cookie", cookie)
+        .send(body);
+    return { user, patch };
+  }
+  const stored = (id: string) =>
+    prisma.user.findUniqueOrThrow({
+      where: { id },
+      select: { email: true, username: true },
+    });
+
+  it("stores blank values as null and trimmed values as given", async () => {
+    const { user, patch } = await session();
+    const tag = randomUUID().slice(0, 8);
+    const saved = await patch({
+      email: ` Ada.${tag}@Example.Test `,
+      username: ` ada-${tag} `,
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(await stored(user.id)).toEqual({
+      email: `ada.${tag}@example.test`,
+      username: `ada-${tag}`,
+    });
+    const cleared = await patch({ email: "  ", username: "" });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.profile).toMatchObject({ email: null, username: null });
+    expect(await stored(user.id)).toEqual({ email: null, username: null });
+  });
+
+  it("answers 409 USER_CONFLICT when another user has that email or username", async () => {
+    const owner = await session();
+    const other = await session();
+    const tag = randomUUID().slice(0, 8);
+    expect(
+      (
+        await owner.patch({
+          email: `taken.${tag}@example.test`,
+          username: `taken-${tag}`,
+        })
+      ).status,
+    ).toBe(200);
+
+    const sameEmail = await other.patch({
+      email: `Taken.${tag}@Example.Test`,
+    });
+    expect(sameEmail.status).toBe(409);
+    expect(sameEmail.body.error.code).toBe("USER_CONFLICT");
+    const sameUsername = await other.patch({ username: `taken-${tag}` });
+    expect(sameUsername.status).toBe(409);
+    expect(sameUsername.body.error.code).toBe("USER_CONFLICT");
+    // Nothing of the failed attempts was stored, and the owner is untouched.
+    expect(await stored(other.user.id)).toEqual({
+      email: null,
+      username: null,
+    });
+    expect(await stored(owner.user.id)).toEqual({
+      email: `taken.${tag}@example.test`,
+      username: `taken-${tag}`,
+    });
+    // Saving one's own values again is not a conflict, and many users may
+    // have no email at all.
+    expect(
+      (await owner.patch({ email: `taken.${tag}@example.test` })).status,
+    ).toBe(200);
+    expect((await other.patch({ email: null })).status).toBe(200);
+  });
+});

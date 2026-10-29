@@ -57,6 +57,8 @@ export interface Operation {
   secured: boolean;
   /** Path parameters; names must match the `{name}` segments of `path`. */
   params?: ZodObject;
+  /** Query parameters, documented one by one; the handler validates them. */
+  query?: ZodObject;
   requestBody?: ZodType;
   responses: Record<number, OperationResponse>;
   /** Accepts a JSON body up to LARGE_JSON_BODY_LIMIT instead of 16 kB. */

@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { NoticeRegionProvider } from "../../components/NoticeRegion";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { paths } from "./paths";
 
@@ -218,96 +219,102 @@ export function AppShell({
   const logoutLabel = isLoggingOut ? "Saliendo..." : "Salir";
 
   return (
-    <div
-      className={`app-shell app-layout${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}
-    >
-      <a className="skip-link" href="#workspace-main" inert={drawerOpen}>
-        Saltar al contenido
-      </a>
-      <header className="topbar" inert={drawerOpen}>
-        <button
-          ref={drawerTrigger}
-          type="button"
-          className="icon-button"
-          aria-label="Abrir menú"
-          aria-expanded={drawerOpen}
-          aria-controls="app-sidebar"
-          onClick={() => setDrawerOpen(true)}
-        >
-          <Menu aria-hidden="true" focusable="false" size={20} />
-        </button>
-        <span className="topbar-brand" aria-hidden="true">
-          InvoiceOps
-        </span>
-        <div className="topbar-actions">
-          <ThemeToggle />
-        </div>
-      </header>
-      {drawerOpen ? (
-        <div
-          className="sidebar-backdrop"
-          aria-hidden="true"
-          onClick={() => closeDrawer("trigger")}
-        />
-      ) : null}
-      <aside id="app-sidebar" className="sidebar">
-        <div className="sidebar-header">
-          <p className="sidebar-brand">InvoiceOps</p>
-          <button
-            type="button"
-            className="icon-button sidebar-collapse-toggle"
-            aria-label={collapsed ? "Expandir menú" : "Contraer menú"}
-            onClick={toggleCollapsed}
-          >
-            {collapsed ? (
-              <PanelLeftOpen aria-hidden="true" focusable="false" size={20} />
-            ) : (
-              <PanelLeftClose aria-hidden="true" focusable="false" size={20} />
-            )}
-          </button>
-          <button
-            ref={drawerClose}
-            type="button"
-            className="icon-button sidebar-drawer-close"
-            aria-label="Cerrar menú"
-            onClick={() => closeDrawer("trigger")}
-          >
-            <X aria-hidden="true" focusable="false" size={20} />
-          </button>
-        </div>
-        <nav id="app-sidebar-nav" aria-label="Navegación principal">
-          <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
-          <ul className="nav-group nav-group-bottom">
-            {isPlatformAdministrator ? (
-              <>
-                {renderItem(adminDestination)}
-                <li role="separator" className="nav-divider" />
-              </>
-            ) : null}
-            {renderItem(profileDestination)}
-            <li>
-              <button
-                type="button"
-                className="nav-item"
-                title={collapsed ? "Salir" : undefined}
-                disabled={isLoggingOut}
-                onClick={logout}
-              >
-                <LogOut aria-hidden="true" focusable="false" size={20} />
-                <span className={labelClass}>{logoutLabel}</span>
-              </button>
-            </li>
-          </ul>
-        </nav>
-      </aside>
-      <main
-        id="workspace-main"
-        aria-labelledby="page-title"
-        tabIndex={-1}
-        inert={drawerOpen}
+    <NoticeRegionProvider>
+      <div
+        className={`app-shell app-layout${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}
       >
-        {children}
-      </main>
-    </div>
+        <a className="skip-link" href="#workspace-main" inert={drawerOpen}>
+          Saltar al contenido
+        </a>
+        <header className="topbar" inert={drawerOpen}>
+          <button
+            ref={drawerTrigger}
+            type="button"
+            className="icon-button"
+            aria-label="Abrir menú"
+            aria-expanded={drawerOpen}
+            aria-controls="app-sidebar"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Menu aria-hidden="true" focusable="false" size={20} />
+          </button>
+          <span className="topbar-brand" aria-hidden="true">
+            InvoiceOps
+          </span>
+          <div className="topbar-actions">
+            <ThemeToggle />
+          </div>
+        </header>
+        {drawerOpen ? (
+          <div
+            className="sidebar-backdrop"
+            aria-hidden="true"
+            onClick={() => closeDrawer("trigger")}
+          />
+        ) : null}
+        <aside id="app-sidebar" className="sidebar">
+          <div className="sidebar-header">
+            <p className="sidebar-brand">InvoiceOps</p>
+            <button
+              type="button"
+              className="icon-button sidebar-collapse-toggle"
+              aria-label={collapsed ? "Expandir menú" : "Contraer menú"}
+              onClick={toggleCollapsed}
+            >
+              {collapsed ? (
+                <PanelLeftOpen aria-hidden="true" focusable="false" size={20} />
+              ) : (
+                <PanelLeftClose
+                  aria-hidden="true"
+                  focusable="false"
+                  size={20}
+                />
+              )}
+            </button>
+            <button
+              ref={drawerClose}
+              type="button"
+              className="icon-button sidebar-drawer-close"
+              aria-label="Cerrar menú"
+              onClick={() => closeDrawer("trigger")}
+            >
+              <X aria-hidden="true" focusable="false" size={20} />
+            </button>
+          </div>
+          <nav id="app-sidebar-nav" aria-label="Navegación principal">
+            <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
+            <ul className="nav-group nav-group-bottom">
+              {isPlatformAdministrator ? (
+                <>
+                  {renderItem(adminDestination)}
+                  <li role="separator" className="nav-divider" />
+                </>
+              ) : null}
+              {renderItem(profileDestination)}
+              <li>
+                <button
+                  type="button"
+                  className="nav-item"
+                  title={collapsed ? "Salir" : undefined}
+                  disabled={isLoggingOut}
+                  onClick={logout}
+                >
+                  <LogOut aria-hidden="true" focusable="false" size={20} />
+                  <span className={labelClass}>{logoutLabel}</span>
+                </button>
+              </li>
+            </ul>
+          </nav>
+        </aside>
+        <main
+          id="workspace-main"
+          aria-labelledby="page-title"
+          tabIndex={-1}
+          inert={drawerOpen}
+        >
+          {children}
+        </main>
+      </div>
+    </NoticeRegionProvider>
   );
 }

@@ -12,7 +12,7 @@ import { TemporaryPasswordDialog } from "./features/users/components/TemporaryPa
 
 const SECRET = "Tmp-Secret-4821-xyz";
 const credential = {
-  userId: "user-9",
+  userId: "00000000-0000-4000-8000-000000000009",
   name: "Diego Rojas",
   temporaryPassword: SECRET,
 };
@@ -107,6 +107,18 @@ describe("TemporaryPasswordDialog (CR-214)", () => {
       ),
     );
     expect(window.getSelection()?.toString()).toBe(SECRET);
+  });
+
+  // AC-14 / CR-116: focus starts on a live control and is not lost to a page
+  // that history navigation just replaced.
+  it("starts focus on the acknowledge button and takes it back after a popstate", async () => {
+    const { confirm } = open();
+    expect(document.activeElement).toBe(confirm);
+
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() => expect(document.activeElement).toBe(confirm));
   });
 
   it("does not close on Escape: it moves focus to the confirmation button", () => {

@@ -383,6 +383,8 @@ describe("APP-02.1 PostgreSQL session lifecycle", () => {
   });
 });
 
+const FIRST_PAGE = { page: 1, pageSize: 20 };
+
 const NO_FLAGS = {
   readInvoices: false,
   createInvoices: false,
@@ -461,8 +463,11 @@ describe("APP-04 PostgreSQL organization groups", () => {
     });
     expect(
       (
-        await groups.listMemberships(admin.id, firstOrganization.id, alpha.id)
-      ).map(({ user }) => user),
+        await groups.listMemberships(admin.id, firstOrganization.id, alpha.id, {
+          page: 1,
+          pageSize: 20,
+        })
+      ).memberships.map(({ user }) => user),
     ).toEqual([{ id: student.id, name: "Grace Hopper", rut: student.rut }]);
     await expect(
       prisma.groupMembership.create({
@@ -572,7 +577,7 @@ describe("Organization group listing PostgreSQL integration", () => {
     const { organization, foreign, admin, student, groups, first } =
       await listingFixture();
     await expect(
-      groups.listMemberships(student.id, organization.id, first.id),
+      groups.listMemberships(student.id, organization.id, first.id, FIRST_PAGE),
     ).rejects.toMatchObject({ status: 403 });
     await expect(groups.listGroups(admin.id, foreign.id)).rejects.toMatchObject(
       { status: 404 },
@@ -596,7 +601,7 @@ describe("Organization group listing PostgreSQL integration", () => {
       ),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      groups.listMemberships(admin.id, organization.id, first.id),
+      groups.listMemberships(admin.id, organization.id, first.id, FIRST_PAGE),
     ).rejects.toMatchObject({ status: 403 });
   });
 
@@ -836,22 +841,28 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
       createdAt: organization.createdAt.toISOString(),
     };
 
+    const firstPage = { page: 1, pageSize: 20 };
     await expect(
-      organizations.listOrganizations(unauthorizedUser.id),
-    ).resolves.toEqual([]);
+      organizations.listOrganizations(unauthorizedUser.id, firstPage),
+    ).resolves.toEqual({ organizations: [], ...firstPage, total: 0 });
     await expect(
-      organizations.listOrganizations(platformUser.id),
-    ).resolves.toEqual([expected]);
+      organizations.listOrganizations(platformUser.id, firstPage),
+    ).resolves.toEqual({ organizations: [expected], ...firstPage, total: 1 });
     await expect(
-      organizations.listOrganizations(organizationAdministrator.id),
-    ).resolves.toEqual([expected]);
+      organizations.listOrganizations(organizationAdministrator.id, firstPage),
+    ).resolves.toEqual({ organizations: [expected], ...firstPage, total: 1 });
     // Administrative authority only: the platform administrator administers
     // every existing organization without being a member of it.
     await expect(
       groups.listGroups(platformUser.id, organization.id),
     ).resolves.toEqual([expect.objectContaining({ id: group.id })]);
     await expect(
-      groups.listMemberships(platformUser.id, organization.id, group.id),
+      groups.listMemberships(
+        platformUser.id,
+        organization.id,
+        group.id,
+        FIRST_PAGE,
+      ),
     ).resolves.toEqual([]);
     await expect(
       groups.listGroups(platformUser.id, randomUUID()),

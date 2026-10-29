@@ -10,12 +10,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import {
+  ACCESS_NONE,
   deferred,
+  groupMembershipsPage,
   jsonResponse,
   mockTransport,
-  profileFixture,
-  ACCESS_NONE,
   NO_PERMISSIONS,
+  organizationsPage,
+  profileFixture,
+  usersPage,
 } from "./test/transport";
 
 // Profile and group tests exercise destinations through the real shell.
@@ -41,7 +44,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
-              id: "user-1",
+              id: "00000000-0000-4000-8000-000000000001",
               name: "Ada Lovelace",
               rut: "12345678-5",
               email: "ada@example.test",
@@ -49,7 +52,7 @@ describe("APP-03 profile", () => {
               memberships: [
                 {
                   organization: {
-                    id: "organization-1",
+                    id: "00000000-0000-4000-9000-000000000001",
                     name: "AI Academy",
                     slug: "ai-academy",
                   },
@@ -121,7 +124,7 @@ describe("APP-03 profile", () => {
     patchGate.resolve(
       jsonResponse({
         profile: {
-          id: "user-1",
+          id: "00000000-0000-4000-8000-000000000001",
           name: "Ada Lovelace",
           rut: "12345678-5",
           email: "ada.updated@example.test",
@@ -162,7 +165,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
-              id: "user-1",
+              id: "00000000-0000-4000-8000-000000000001",
               name: "Ada Lovelace",
               rut: "12345678-5",
               email: null,
@@ -198,7 +201,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
-              id: "user-1",
+              id: "00000000-0000-4000-8000-000000000001",
               name: "Ada Lovelace",
               rut: "12345678-5",
               email: null,
@@ -235,7 +238,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
-              id: "user-1",
+              id: "00000000-0000-4000-8000-000000000001",
               name: "Ada Lovelace",
               rut: "12345678-5",
               email: "ada@example.test",
@@ -287,7 +290,7 @@ describe("APP-03 profile", () => {
         new Response(
           JSON.stringify({
             profile: {
-              id: "user-1",
+              id: "00000000-0000-4000-8000-000000000001",
               name: "Ada Lovelace",
               rut: "12345678-5",
               email: "ada@example.test",
@@ -318,18 +321,18 @@ describe("APP-03 profile", () => {
 
 describe("APP-04 organization groups", () => {
   const academy = {
-    id: "organization-1",
+    id: "00000000-0000-4000-9000-000000000001",
     name: "AI Academy",
     slug: "ai-academy",
   };
   const orgGroup = (name: string) => ({
-    id: "group-1",
-    organizationId: "organization-1",
+    id: "00000000-0000-4000-a000-000000000001",
+    organizationId: "00000000-0000-4000-9000-000000000001",
     name,
     description: null,
   });
 
-  it("keeps platform authority out of organizations, groups and invoices for an administrator without memberships", async () => {
+  it("keeps platform authority out of groups and invoices for an administrator without memberships", async () => {
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
@@ -338,13 +341,13 @@ describe("APP-04 organization groups", () => {
             isPlatformAdministrator: true,
           }),
         }),
+      // AC-15: the organization directory is the one platform-wide read.
+      "GET /api/v1/organizations": () => jsonResponse(organizationsPage([])),
     });
 
     render(<App />);
     await navigate("Organizaciones");
-    expect(
-      await screen.findByText(/Aún no perteneces a ninguna organización/),
-    ).toBeTruthy();
+    expect(await screen.findByText("Aún no hay organizaciones")).toBeTruthy();
     // Platform authority creates organizations; it is not membership.
     expect(
       screen.getByRole("link", { name: "Crear organización" }),
@@ -364,7 +367,7 @@ describe("APP-04 organization groups", () => {
       transport.requests.some(
         ({ path }) =>
           path.startsWith("/api/v1/invoices") ||
-          path.startsWith("/api/v1/organizations") ||
+          path.startsWith("/api/v1/organizations/") ||
           path.includes("/groups"),
       ),
     ).toBe(false);
@@ -384,7 +387,13 @@ describe("APP-04 organization groups", () => {
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/organization-1": () => {
+      "GET /api/v1/organizations": () =>
+        jsonResponse(
+          organizationsPage([
+            { ...academy, description: null, enabled: true, createdAt: "x" },
+          ]),
+        ),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001": () => {
         summaryRequests += 1;
         return summaryRequests === 1
           ? new Response(null, { status: 500 })
@@ -396,10 +405,10 @@ describe("APP-04 organization groups", () => {
               summary: { memberCount: 3, groupCount: 1 },
             });
       },
-      "GET /api/v1/organizations/organization-1/groups": () =>
-        jsonResponse({ groups: [orgGroup("Local group")] }),
-      "GET /api/v1/organizations/organization-1/memberships": () =>
-        jsonResponse({ memberships: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [orgGroup("Local group")] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () => jsonResponse({ memberships: [] }),
     });
 
     render(<App />);
@@ -431,27 +440,27 @@ describe("APP-04 organization groups", () => {
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/organization-1/groups": () =>
-        jsonResponse({ groups: [orgGroup("Advanced topics")] }),
-      "GET /api/v1/organizations/organization-1/groups/group-1/memberships":
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [orgGroup("Advanced topics")] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000001/memberships":
         () =>
-          jsonResponse({
-            memberships: [
+          jsonResponse(
+            groupMembershipsPage([
               {
-                userId: "student-1",
-                groupId: "group-1",
-                organizationId: "organization-1",
+                userId: "00000000-0000-4000-8000-0000000000a1",
+                groupId: "00000000-0000-4000-a000-000000000001",
+                organizationId: "00000000-0000-4000-9000-000000000001",
                 permissions: NO_PERMISSIONS,
                 user: {
-                  id: "student-1",
+                  id: "00000000-0000-4000-8000-0000000000a1",
                   name: "Grace Hopper",
                   rut: "123456793",
                 },
               },
-            ],
-          }),
-      "GET /api/v1/organizations/organization-1/users": () =>
-        jsonResponse({ users: [] }),
+            ]),
+          ),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => jsonResponse(usersPage([])),
     });
 
     render(<App />);
@@ -480,7 +489,7 @@ describe("APP-04 organization groups", () => {
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
           profile: profileFixture({
-            id: "student-1",
+            id: "00000000-0000-4000-8000-0000000000a1",
             name: "Grace Hopper",
             memberships: [
               { organization: academy, role: "USER", ...ACCESS_NONE },
@@ -488,8 +497,8 @@ describe("APP-04 organization groups", () => {
           }),
         }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/organization-1/groups": () =>
-        jsonResponse({ groups: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [] }),
     });
 
     render(<App />);

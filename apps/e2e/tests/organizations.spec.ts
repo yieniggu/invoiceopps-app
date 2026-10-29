@@ -1,4 +1,9 @@
-import { expect, test } from "../support/test.ts";
+import {
+  expect,
+  expectNoHorizontalOverflow,
+  expectSettled,
+  test,
+} from "../support/test.ts";
 import { expectNoStateWordsInToggles } from "../support/layout.ts";
 import {
   asPlatform,
@@ -8,12 +13,13 @@ import {
   unique,
 } from "../support/scenario.ts";
 import { login, seededIds } from "../support/seeded.ts";
+import { notice } from "../support/notice.ts";
 
 const h1 = (page: import("@playwright/test").Page, name: string | RegExp) =>
   page.getByRole("heading", { level: 1, name });
 
 test.describe("organizations", () => {
-  test("the platform administrator creates an organization and is told why it is not listed", async ({
+  test("the platform administrator creates an organization and finds it in the platform list", async ({
     page,
     app,
   }) => {
@@ -37,18 +43,57 @@ test.describe("organizations", () => {
     await page.getByRole("button", { name: "Crear organización" }).click();
 
     await expect(h1(page, "Organizaciones")).toBeVisible();
-    // The platform administrator is not a member of what they create: no card,
-    // and a notice that says so instead of leaving the organization unexplained.
-    const notice = page.getByRole("status").filter({ hasText: "creada" });
-    await expect(notice).toContainText(`Organización «Nueva ${token}» creada.`);
-    await expect(notice).toContainText("No aparece en esta lista");
-    // What the notice says about opening it is true: the screens resolve an
-    // organization through the person's memberships (see the unit test).
-    await expect(notice).toContainText("no lista ni abre organizaciones");
+    // The platform administrator is not a member of what they create, but the
+    // platform lists and opens every organization (B3c): the notice says so
+    // and the card is there.
+    const created = page.locator(".toast");
+    await expect(created).toContainText(
+      `Organización «Nueva ${token}» creada.`,
+    );
+    // The same text reaches screen readers through the shell's live region.
+    await expect(page.locator("[data-notice-region]")).toContainText(
+      `Organización «Nueva ${token}» creada.`,
+    );
+    await expect(created).toContainText("Aparece en esta lista");
+    await expect(created).toContainText("puedes abrirla para administrarla");
+    await page.getByLabel("Buscar organización").fill(`Nueva ${token}`);
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await expect(page).toHaveURL(/[?&]search=/);
     await expect(
       page.getByRole("heading", { level: 2, name: `Nueva ${token}` }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await app.shot("organization-created");
+  });
+
+  test("at 375px the platform lists neither scroll sideways nor lose the pagination at the bottom", async ({
+    page,
+    app,
+  }) => {
+    // The same narrow viewport in every project, so the guard also runs on
+    // desktop projects: it is a layout contract, not a device check.
+    const viewport = { width: 375, height: 812 };
+    await page.setViewportSize(viewport);
+    for (const [path, title] of [
+      ["/organizations", "Organizaciones"],
+      ["/admin", "Administración"],
+    ] as const) {
+      await app.openAs(login(people.platform), path);
+      await expect(h1(page, title)).toBeVisible();
+      const pagination = page.getByRole("group", { name: "Paginación" });
+      await expect(pagination).toBeVisible();
+      await expectSettled(page);
+      await expectNoHorizontalOverflow(page);
+
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await expect(pagination).toBeInViewport({ ratio: 1 });
+      // At the bottom of the screen, under the list: not wedged in the middle.
+      const box = await pagination.boundingBox();
+      expect(box, `${path} pagination box`).not.toBeNull();
+      expect(
+        box!.y + box!.height,
+        `${path}: pagination ends in the lower part of the viewport`,
+      ).toBeGreaterThan(viewport.height - 120);
+    }
   });
 
   test("members: select, select all and bulk permissions survive a reload", async ({
@@ -70,7 +115,9 @@ test.describe("organizations", () => {
       });
       await expect(bulk).toBeDisabled();
       await page.getByRole("checkbox", { name: "Seleccionar todos" }).check();
-      await expect(page.getByText("4 personas seleccionadas.")).toBeVisible();
+      await expect(
+        page.getByText("4 personas seleccionadas en esta página."),
+      ).toBeVisible();
       await page.getByRole("checkbox", { name: "Seleccionar todos" }).uncheck();
       await expect(page.getByText(/Selecciona personas/)).toBeVisible();
 
@@ -80,7 +127,9 @@ test.describe("organizations", () => {
       await page
         .getByRole("checkbox", { name: `Seleccionar a ${b.name}` })
         .check();
-      await expect(page.getByText("2 personas seleccionadas.")).toBeVisible();
+      await expect(
+        page.getByText("2 personas seleccionadas en esta página."),
+      ).toBeVisible();
       await app.shot("organization-members-selected");
       await bulk.click();
 
@@ -132,7 +181,7 @@ test.describe("organizations", () => {
       await page.getByLabel("RUT de la persona").fill(rut.api);
       await page.getByRole("button", { name: "Agregar persona" }).click();
       await expect(
-        page.getByText("Persona agregada a la organización."),
+        notice(page, "Persona agregada a la organización."),
       ).toBeVisible();
       await expect(page.getByRole("link", { name })).toBeVisible();
     } finally {
@@ -218,7 +267,7 @@ test.describe("organizations", () => {
         .getByRole("button", { name: `Confirmar quitar a ${member.name}` })
         .click();
       await expect(
-        page.getByText(`Se quitó a ${member.name} de la organización.`),
+        notice(page, `Se quitó a ${member.name} de la organización.`),
       ).toBeVisible();
       await expect(page.getByRole("link", { name: member.name })).toHaveCount(
         0,

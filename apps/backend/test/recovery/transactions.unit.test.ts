@@ -135,3 +135,96 @@ describe("runSerializable backoff and timeouts", () => {
     });
   });
 });
+
+describe("runSerializable conflict logging", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function captureWarnings() {
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      callback: () => void,
+    ) => {
+      callback();
+      return 0;
+    }) as unknown as typeof setTimeout);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    return () =>
+      warn.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+      );
+  }
+
+  it("warns on every retry and when it gives up, with the operation name and attempt only", async () => {
+    const warnings = captureWarnings();
+
+    await runSerializable(
+      async () => {
+        throw rawQueryFailure("40001");
+      },
+      undefined,
+      "test.operation",
+    ).catch(() => undefined);
+
+    expect(warnings()).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        event: "transaction.conflict",
+        operation: "test.operation",
+        attempt: 1,
+        outcome: "retry",
+      }),
+      expect.objectContaining({
+        event: "transaction.conflict",
+        operation: "test.operation",
+        attempt: 2,
+        outcome: "retry",
+      }),
+      expect.objectContaining({
+        event: "transaction.conflict",
+        operation: "test.operation",
+        attempt: 3,
+        outcome: "gave_up",
+      }),
+    ]);
+    for (const entry of warnings()) {
+      expect(Object.keys(entry).sort()).toEqual([
+        "attempt",
+        "event",
+        "level",
+        "operation",
+        "outcome",
+        "time",
+      ]);
+    }
+  });
+
+  it("logs a transaction timeout as gave_up and nothing for a success or another error", async () => {
+    const warnings = captureWarnings();
+
+    await runSerializable(async () => "ok", undefined, "test.ok");
+    await runSerializable(
+      async () => {
+        throw new Error("boom");
+      },
+      undefined,
+      "test.other",
+    ).catch(() => undefined);
+    expect(warnings()).toEqual([]);
+
+    await runSerializable(
+      async () => {
+        throw Object.assign(new Error("closed"), { code: "P2028" });
+      },
+      undefined,
+      "test.timeout",
+    ).catch(() => undefined);
+    expect(warnings()).toEqual([
+      expect.objectContaining({
+        operation: "test.timeout",
+        attempt: 1,
+        outcome: "gave_up",
+      }),
+    ]);
+  });
+});

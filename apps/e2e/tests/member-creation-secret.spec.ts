@@ -1,5 +1,6 @@
 import { expect, test } from "../support/test.ts";
 import { createScenario, freshRut, unique } from "../support/scenario.ts";
+import { notice } from "../support/notice.ts";
 
 // This spec shows a password the server generated. Playwright's failure
 // screenshot and trace (DOM snapshots and the network log with the response
@@ -48,7 +49,7 @@ test("an organization admin creates a person in place, without the platform link
       .click();
     await expect(dialog).toBeHidden();
     await expect(
-      page.getByText(/creado y agregado a la organización/),
+      notice(page, /creado y agregado a la organización/),
     ).toBeVisible();
   } finally {
     await s.dispose();

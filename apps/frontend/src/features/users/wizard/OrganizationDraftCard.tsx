@@ -5,20 +5,10 @@ import { CollapsibleSection } from "../../../components/CollapsibleSection";
 import { FieldMessage } from "../../../components/FieldMessage";
 import type { OrganizationRole } from "../../auth/types";
 import { MemberPermissionsEditor } from "../../permissions/components/MemberPermissionsEditor";
-import type { OrganizationDraft } from "./draft";
+import type { OrganizationDraft, OrganizationOption } from "./draft";
+import { OrganizationPicker } from "./OrganizationPicker";
 import { memberRoleLabel } from "../../orgs/types/roles";
 import { organizationSummary } from "./summaries";
-
-export interface OrganizationOption {
-  id: string;
-  name: string;
-  /** Shown next to the name in pickers to tell similar names apart. */
-  slug?: string;
-}
-
-/** "Name (slug)" when the slug is known, otherwise just the name. */
-export const organizationOptionLabel = ({ name, slug }: OrganizationOption) =>
-  slug ? `${name} (${slug})` : name;
 
 /**
  * Step 2 card of one organization of the new user: which organization, the
@@ -31,6 +21,8 @@ export function OrganizationDraftCard({
   memberName,
   draft,
   organizations,
+  pickerOptions,
+  organizationsTotal,
   takenOrganizationIds,
   fixed,
   errorMessage,
@@ -43,8 +35,12 @@ export function OrganizationDraftCard({
   index: number;
   memberName: string;
   draft: OrganizationDraft;
-  /** Everything that can be chosen; in fixed mode just the one organization. */
+  /** Every organization the wizard can name (the page plus those found by searching). */
   organizations: OrganizationOption[];
+  /** The preloaded page the picker offers before any search. */
+  pickerOptions: OrganizationOption[];
+  /** How many organizations exist in all (more than a page when there are many). */
+  organizationsTotal: number;
   /** Organizations already chosen by the other cards. */
   takenOrganizationIds: ReadonlySet<string>;
   /** Single-organization mode: the organization cannot change or be removed. */
@@ -60,9 +56,6 @@ export function OrganizationDraftCard({
   const organizationMessageId = useId();
   const organization = organizations.find(
     ({ id }) => id === draft.organizationId,
-  );
-  const choices = organizations.filter(
-    ({ id }) => id === draft.organizationId || !takenOrganizationIds.has(id),
   );
   const title = fixed
     ? `Organización ${organization?.name ?? ""}`.trim()
@@ -97,30 +90,25 @@ export function OrganizationDraftCard({
       <div className="screen-stack">
         {fixed ? null : (
           <>
-            <label>
-              Organización
-              <select
-                value={draft.organizationId}
-                disabled={disabled}
-                aria-invalid={errorMessage !== ""}
-                aria-describedby={organizationMessageId}
-                onChange={(event) =>
-                  // Groups belong to one organization: a new choice drops them.
-                  onChange({
-                    ...draft,
-                    organizationId: event.target.value,
-                    groups: [],
-                  })
-                }
-              >
-                <option value="">Selecciona una organización</option>
-                {choices.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {organizationOptionLabel(option)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <OrganizationPicker
+              value={draft.organizationId}
+              current={draft.picked}
+              options={pickerOptions}
+              total={organizationsTotal}
+              taken={takenOrganizationIds}
+              disabled={disabled}
+              invalid={errorMessage !== ""}
+              describedBy={organizationMessageId}
+              onPick={(option) =>
+                // Groups belong to one organization: a new choice drops them.
+                onChange({
+                  ...draft,
+                  organizationId: option?.id ?? "",
+                  picked: option,
+                  groups: [],
+                })
+              }
+            />
             <FieldMessage id={organizationMessageId} text={errorMessage} />
           </>
         )}

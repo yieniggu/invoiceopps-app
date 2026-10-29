@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
@@ -7,6 +7,7 @@ import { MutationFeedback } from "../../../components/MutationFeedback";
 import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
 import { fromApiRut } from "../../../lib/rut";
+import { isUuid } from "../../../lib/uuid";
 import { useIdentityId } from "../../auth/hooks/useSession";
 import type { Profile } from "../../auth/types";
 import { AddToGroupForm } from "../../groups/components/AddToGroupForm";
@@ -19,7 +20,7 @@ import { SavedMemberPermissionsEditor } from "../../permissions/components/Membe
 import { OrganizationGate } from "../components/OrganizationGate";
 import {
   useChangeRole,
-  useOrgMembersQuery,
+  useOrgMembersByIdsQuery,
   useRefreshIdentity,
   useRemoveMember,
 } from "../hooks/useOrgMembers";
@@ -56,7 +57,12 @@ function MemberLoader({
   organization: { id: string; name: string };
   userId: string;
 }) {
-  const members = useOrgMembersQuery(organization.id);
+  // A malformed id is not a member: no request (the server answers 404 NOT_FOUND to a malformed path id).
+  const wellFormed = isUuid(userId);
+  const userIds = useMemo(() => [userId], [userId]);
+  const members = useOrgMembersByIdsQuery(organization.id, userIds, {
+    enabled: wellFormed,
+  });
   // The person being removed. The refresh that follows the removal drops them
   // from the list before the screen navigates away: keeping them here stops
   // the "not found" page from flashing in between.
@@ -69,7 +75,7 @@ function MemberLoader({
     </BackLink>
   );
 
-  if (members.data && !member) {
+  if (!wellFormed || (members.data && !member)) {
     return (
       <NotFoundScreen description="No encontramos a esa persona entre los miembros de la organización." />
     );

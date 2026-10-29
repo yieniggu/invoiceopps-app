@@ -1,3 +1,4 @@
+import { namedId } from "../../../test/ids";
 import { describe, expect, it } from "vitest";
 
 import { MAX_TOTAL_GROUP_GRANTS } from "../../../lib/limits";
@@ -22,7 +23,7 @@ function draftWith(perOrganization: number[]): {
   const draft = emptyUser();
   const options = new Map<string, Array<{ id: string }>>();
   perOrganization.forEach((count, index) => {
-    const organization = emptyOrganization(`org-${index}`);
+    const organization = emptyOrganization(namedId("org", index));
     const ids = Array.from({ length: count }, (_u, n) => `g-${index}-${n}`);
     organization.groups = ids.map((groupId) => ({
       ...emptyGroup(),
@@ -75,7 +76,9 @@ describe("groups that are not loaded (CR-258)", () => {
     const [first, second] = draft.organizations[0].groups;
     const errors = validateGroups(
       draft,
-      new Map([["org-0", [{ id: first.groupId }]]]),
+      new Map([
+        ["00000000-0000-4000-9000-000000000000", [{ id: first.groupId }]],
+      ]),
     );
     expect(errors).toEqual({ [second.key]: STALE_GROUP_MESSAGE });
   });

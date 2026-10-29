@@ -13,10 +13,13 @@ import { App } from "./App";
 import { renderApp } from "./test/renderApp";
 import {
   errorResponse,
+  groupMembershipsPage,
   jsonResponse,
   membership,
   mockTransport,
+  organizationsPage,
   profileFixture,
+  usersPage,
 } from "./test/transport";
 
 afterEach(() => {
@@ -24,10 +27,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const org = { id: "org-1", name: "Academia Norte", slug: "norte" };
+const org = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+  slug: "norte",
+};
 const group = {
-  id: "group-a",
-  organizationId: "org-1",
+  id: "00000000-0000-4000-a000-000000000097",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   name: "Contabilidad",
   description: null,
 };
@@ -36,10 +43,15 @@ const ada = profileFixture({
   memberships: [membership(org, "ADMIN")],
 });
 const bruno = profileFixture({
-  id: "user-2",
+  id: "00000000-0000-4000-8000-000000000002",
   name: "Bruno Díaz",
   rut: "111111111",
-  memberships: [membership({ id: "org-2", name: "Instituto Sur" }, "USER")],
+  memberships: [
+    membership(
+      { id: "00000000-0000-4000-9000-000000000002", name: "Instituto Sur" },
+      "USER",
+    ),
+  ],
 });
 
 /** Everything any route of the app may read, answered with valid empty data. */
@@ -47,21 +59,34 @@ function appRoutes(profile: () => Response | Promise<Response>) {
   return {
     "GET /api/v1/auth/profile": profile,
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-    "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
-    "GET /api/v1/organizations/org-1": () =>
+    // AC-15: the platform administrator's /organizations lists every
+    // organization, so the fixture carries the one the tests open.
+    "GET /api/v1/organizations": () =>
+      jsonResponse(
+        organizationsPage([
+          {
+            ...org,
+            description: null,
+            enabled: true,
+            createdAt: "2026-10-01T00:00:00.000Z",
+          },
+        ]),
+      ),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001": () =>
       jsonResponse({
         organization: { ...org, description: null },
         summary: { memberCount: 1, groupCount: 1 },
       }),
-    "GET /api/v1/organizations/org-1/groups": () =>
-      jsonResponse({ groups: [group] }),
-    "GET /api/v1/organizations/org-1/memberships": () =>
-      jsonResponse({ memberships: [] }),
-    "GET /api/v1/organizations/org-1/users": () => jsonResponse({ users: [] }),
-    "GET /api/v1/organizations/org-1/groups/group-a/memberships": () =>
-      jsonResponse({ memberships: [] }),
-    "GET /api/v1/organizations/org-2/groups": () =>
-      jsonResponse({ groups: [] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+      () => jsonResponse({ groups: [group] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+      () => jsonResponse({ memberships: [] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      () => jsonResponse(usersPage([])),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships":
+      () => jsonResponse(groupMembershipsPage([])),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/groups":
+      () => jsonResponse({ groups: [] }),
     "GET /api/v1/invoices": () =>
       jsonResponse({ invoices: [], nextCursor: null }),
     "GET /api/v1/business-policies": () => jsonResponse({ policies: [] }),
@@ -76,15 +101,30 @@ describe("deep links", () => {
     ["/profile", "Mi perfil"],
     ["/organizations", "Organizaciones"],
     ["/organizations/new", "Crear organización"],
-    ["/organizations/org-1", "Academia Norte"],
-    ["/organizations/org-1/groups", "Grupos de la organización"],
-    ["/organizations/org-1/groups/new", "Crear grupo"],
-    ["/organizations/org-1/members", "Miembros"],
-    ["/organizations/org-1/members/new", "Agregar miembro"],
-    ["/organizations/org-1/groups/group-a", "Contabilidad"],
-    ["/organizations/org-1/groups/group-a/members", "Miembros del grupo"],
+    ["/organizations/00000000-0000-4000-9000-000000000001", "Academia Norte"],
     [
-      "/organizations/org-1/groups/group-a/members/new",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups",
+      "Grupos de la organización",
+    ],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/new",
+      "Crear grupo",
+    ],
+    ["/organizations/00000000-0000-4000-9000-000000000001/members", "Miembros"],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/members/new",
+      "Agregar miembro",
+    ],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097",
+      "Contabilidad",
+    ],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members",
+      "Miembros del grupo",
+    ],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
       "Agregar miembros al grupo",
     ],
     ["/groups", "Grupos"],
@@ -99,8 +139,8 @@ describe("deep links", () => {
   });
 
   it.each([
-    "/organizations/org-1/members/permissions?userIds=user-1,user-3",
-    "/organizations/org-1/groups/group-a/members/permissions?userIds=user-1",
+    "/organizations/00000000-0000-4000-9000-000000000001/members/permissions?userIds=00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000003",
+    "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/permissions?userIds=00000000-0000-4000-8000-000000000001",
   ])(
     "opens the bulk permissions deep link %s and keeps its query on a reload",
     async (route) => {
@@ -151,7 +191,7 @@ describe("deep links", () => {
     "/cambiar-contrasena",
     "/organizaciones",
     "/organizaciones/nueva",
-    "/organizaciones/org-1/grupos",
+    "/organizaciones/00000000-0000-4000-9000-000000000001/grupos",
     "/grupos",
     "/admin/usuarios/nuevo",
   ])(
@@ -178,7 +218,9 @@ describe("deep links", () => {
 
   it("keeps the screen after a reload of a deep link", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    const first = renderApp({ route: "/organizations/org-1/groups" });
+    const first = renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups",
+    });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",
@@ -192,7 +234,9 @@ describe("deep links", () => {
         name: "Grupos de la organización",
       }),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe("/organizations/org-1/groups");
+    expect(window.location.pathname).toBe(
+      "/organizations/00000000-0000-4000-9000-000000000001/groups",
+    );
   });
 
   it("answers an unknown path with a not-found screen that links back to the panel", async () => {
@@ -251,7 +295,9 @@ describe("sidebar navigation", () => {
 
   it("marks Grupos, not Organizaciones, on an organization's group screens", async () => {
     mockTransport(appRoutes(() => jsonResponse({ profile: ada })));
-    renderApp({ route: "/organizations/org-1/groups" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups",
+    });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",
@@ -281,7 +327,9 @@ describe("onboarding and anonymous access", () => {
     const transport = mockTransport(
       appRoutes(() => jsonResponse({ profile: pending })),
     );
-    renderApp({ route: "/organizations/org-1/groups" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups",
+    });
     await screen.findByRole("heading", {
       name: "Cambia tu contraseña temporal",
     });
@@ -360,7 +408,9 @@ describe("leaving the session", () => {
         return jsonResponse({ user: {} });
       },
     });
-    const { store } = renderApp({ route: "/organizations/org-1" });
+    const { store } = renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001",
+    });
     await screen.findByRole("heading", { level: 1, name: "Academia Norte" });
     const adaClient = store.getSnapshot().client;
 
@@ -391,7 +441,7 @@ describe("leaving the session", () => {
           : jsonResponse({ profile: ada }),
       ),
     );
-    renderApp({ route: "/organizations/org-1" });
+    renderApp({ route: "/organizations/00000000-0000-4000-9000-000000000001" });
     await screen.findByRole("heading", { level: 1, name: "Academia Norte" });
     expired = true;
     act(() => {
@@ -407,7 +457,9 @@ describe("leaving the session", () => {
   it("another person answering the profile resets the URL to the panel", async () => {
     let answer = ada;
     mockTransport(appRoutes(() => jsonResponse({ profile: answer })));
-    renderApp({ route: "/organizations/org-1/groups" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups",
+    });
     await screen.findByRole("heading", {
       level: 1,
       name: "Grupos de la organización",

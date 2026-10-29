@@ -122,15 +122,32 @@ describe("RP0-06 GET /organizations", () => {
     const member = await makeUser();
     await join(member.id, orgA.id, "USER");
 
-    const all = await call("get", "/organizations", platformCookie);
+    const all = await call(
+      "get",
+      "/organizations?pageSize=100&search=Org",
+      platformCookie,
+    );
     expect(all.status).toBe(200);
-    const allIds = (all.body.organizations as Array<{ id: string }>).map(
+    expect(all.body).toMatchObject({ page: 1, pageSize: 100 });
+    expect(all.body.total).toBeGreaterThanOrEqual(2);
+    // Control: the unfiltered platform list is paginated too.
+    const unfiltered = await call("get", "/organizations", platformCookie);
+    expect(unfiltered.body.organizations.length).toBeLessThanOrEqual(20);
+    expect(unfiltered.body.total).toBeGreaterThanOrEqual(all.body.total);
+    const byName = await call(
+      "get",
+      `/organizations?search=${encodeURIComponent(orgA.name)}`,
+      platformCookie,
+    );
+    const allIds = (byName.body.organizations as Array<{ id: string }>).map(
       (organization) => organization.id,
     );
-    expect(allIds).toEqual(expect.arrayContaining([orgA.id, orgB.id]));
+    expect(allIds).toContain(orgA.id);
+    expect(allIds).not.toContain(orgB.id);
 
     const own = await call("get", "/organizations", await cookieFor(member));
     expect(own.status).toBe(200);
+    expect(own.body).toMatchObject({ page: 1, pageSize: 20, total: 1 });
     expect(own.body.organizations).toEqual([
       {
         id: orgA.id,
@@ -148,7 +165,7 @@ describe("RP0-06 GET /organizations", () => {
       await cookieFor(await makeUser()),
     );
     expect(outsider.status).toBe(200);
-    expect(outsider.body.organizations).toEqual([]);
+    expect(outsider.body).toMatchObject({ organizations: [], total: 0 });
   });
 });
 
@@ -416,8 +433,15 @@ describe("RP0-08 memberships", () => {
       role: "USER",
       permissions: NO_FLAGS,
       groups: [],
-      user: { id: member.id, name: "Uma User", rut: member.rawRut },
+      user: {
+        id: member.id,
+        name: "Uma User",
+        rut: member.rawRut,
+        disabled: false,
+        recentlyActive: false,
+      },
     });
+    expect(response.body).toMatchObject({ page: 1, pageSize: 20, total: 2 });
   });
 
   it("adds an existing user by RUT without touching credentials", async () => {
@@ -695,6 +719,7 @@ describe("RP0-08 organization users", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ page: 1, pageSize: 20, total: 2 });
     expect(response.body.users).toHaveLength(2);
     expect(response.body.users).toContainEqual({
       id: member.id,
@@ -705,5 +730,103 @@ describe("RP0-08 organization users", () => {
     expect(
       (response.body.users as Array<{ id: string }>).map((user) => user.id),
     ).not.toContain(foreign.id);
+  });
+
+  it("searches the users of an organization by name or RUT, escaping LIKE wildcards", async () => {
+    const [org, other] = [await makeOrg("u-search"), await makeOrg("u-other")];
+    const admin = await makeUser("Aaa Admin");
+    const ana = await makeUser("Ana Pérez");
+    const percent = await makeUser("Cien% Real");
+    const underscore = await makeUser("Guion_Bajo");
+    const foreign = await makeUser("Ana Foreign");
+    for (const user of [admin, ana, percent, underscore])
+      await join(user.id, org.id, user === admin ? "ADMIN" : "USER");
+    await join(foreign.id, other.id, "USER");
+    const cookie = await cookieFor(admin);
+    const path = `/organizations/${org.id}/users`;
+    const names = (r: { body: { users: Array<{ name: string }> } }) =>
+      r.body.users.map((u) => u.name);
+
+    // Case-insensitive fragment of the name, only this organization.
+    const byName = await call("get", `${path}?search=ANA`, cookie);
+    expect(byName.status).toBe(200);
+    expect(names(byName)).toEqual(["Ana Pérez"]);
+    expect(byName.body.total).toBe(1);
+
+    // RUT fragment typed with dots and hyphen, like the admin directory.
+    const formatted = formatRut(ana.rawRut);
+    const byRut = await call(
+      "get",
+      `${path}?search=${encodeURIComponent(formatted)}`,
+      cookie,
+    );
+    expect(names(byRut)).toEqual(["Ana Pérez"]);
+    const partialRut = await call(
+      "get",
+      `${path}?search=${encodeURIComponent(ana.rawRut.slice(0, 5))}`,
+      cookie,
+    );
+    expect(names(partialRut)).toContain("Ana Pérez");
+
+    // LIKE wildcards are literal.
+    expect(names(await call("get", `${path}?search=%25`, cookie))).toEqual([
+      "Cien% Real",
+    ]);
+    expect(names(await call("get", `${path}?search=_`, cookie))).toEqual([
+      "Guion_Bajo",
+    ]);
+    // Punctuation alone has no RUT part: it must not select everybody.
+    expect(
+      names(
+        await call("get", `${path}?search=${encodeURIComponent("-")}`, cookie),
+      ),
+    ).toEqual([]);
+
+    // total and paging follow the filter.
+    const paged = await call(
+      "get",
+      `${path}?search=a&page=1&pageSize=1`,
+      cookie,
+    );
+    expect(paged.body.users).toHaveLength(1);
+    expect(paged.body.total).toBeGreaterThan(1);
+    const none = await call("get", `${path}?search=zzzz`, cookie);
+    expect(none.body).toMatchObject({ users: [], total: 0 });
+    // A search never widens access.
+    expect(
+      (await call("get", `${path}?search=ana`, await cookieFor(ana))).status,
+    ).toBe(403);
+  });
+
+  it("paginates users by name with a consistent total and bounds", async () => {
+    const org = await makeOrg("u-page");
+    const admin = await makeUser("Aaa Admin");
+    const twins = [await makeUser("Bob One"), await makeUser("Bob Two")];
+    const zed = await makeUser("Zed Last");
+    for (const user of [admin, ...twins, zed]) {
+      await join(user.id, org.id, user === admin ? "ADMIN" : "USER");
+    }
+    const cookie = await cookieFor(admin);
+    const path = `/organizations/${org.id}/users`;
+    const expected = [admin.id, ...twins.map((t) => t.id), zed.id];
+
+    const pages = [
+      await call("get", `${path}?page=1&pageSize=2`, cookie),
+      await call("get", `${path}?page=2&pageSize=2`, cookie),
+      await call("get", `${path}?page=3&pageSize=2`, cookie),
+    ];
+    const ids = (r: { body: { users: Array<{ id: string }> } }) =>
+      r.body.users.map((u) => u.id);
+
+    expect(pages.map((p) => p.body.total)).toEqual([4, 4, 4]);
+    expect(pages[1]!.body).toMatchObject({ page: 2, pageSize: 2 });
+    expect([...ids(pages[0]!), ...ids(pages[1]!)]).toEqual(expected);
+    expect(ids(pages[2]!)).toEqual([]);
+    expect((await call("get", `${path}?pageSize=100`, cookie)).status).toBe(
+      200,
+    );
+    for (const bad of ["pageSize=101", "page=0", "page=10001", "foo=1"]) {
+      expect((await call("get", `${path}?${bad}`, cookie)).status).toBe(400);
+    }
   });
 });

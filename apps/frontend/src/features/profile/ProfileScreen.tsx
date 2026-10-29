@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { fromApiRut } from "../../lib/rut";
+import { isApiError } from "../auth/api/apiError";
 import type { Profile } from "../auth/types";
 import { memberRoleLabel } from "../orgs/types/roles";
 import { usePendingContact, useUpdateProfile } from "./hooks/useUpdateProfile";
@@ -10,6 +11,22 @@ export function roleLabel(role: string) {
   return role === "ADMIN" || role === "USER"
     ? memberRoleLabel(role)
     : "Rol no disponible";
+}
+
+const SAVE_FAILED = "No fue posible actualizar el perfil. Intenta nuevamente.";
+
+/** Spanish text for a refused save: what the server found wrong, if known. */
+export function describeSaveError(error: unknown) {
+  if (!isApiError(error)) return SAVE_FAILED;
+  if (error.status === 409 && error.code === "USER_CONFLICT")
+    return "Ese correo electrónico o nombre de usuario ya lo usa otra persona.";
+  if (error.status === 400 && error.fields) {
+    if ("email" in error.fields)
+      return "El correo electrónico no es válido (máximo 254 caracteres, sin caracteres de control).";
+    if ("username" in error.fields)
+      return "El nombre de usuario no es válido (máximo 64 caracteres, sin caracteres de control).";
+  }
+  return SAVE_FAILED;
 }
 
 export function ProfileScreen({ profile }: { profile: Profile }) {
@@ -25,7 +42,7 @@ export function ProfileScreen({ profile }: { profile: Profile }) {
   const message = update.isSuccess
     ? "Perfil actualizado."
     : update.isError
-      ? "No fue posible actualizar el perfil. Intenta nuevamente."
+      ? describeSaveError(update.error)
       : undefined;
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -90,9 +107,7 @@ export function ProfileScreen({ profile }: { profile: Profile }) {
         {isSaving ? (
           <p role="status">Guardando cambios del perfil...</p>
         ) : message ? (
-          <p role={message.startsWith("No fue") ? "alert" : "status"}>
-            {message}
-          </p>
+          <p role={update.isError ? "alert" : "status"}>{message}</p>
         ) : null}
       </form>
       <section

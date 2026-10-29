@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
@@ -8,13 +8,17 @@ import { MutationFeedback } from "../../../components/MutationFeedback";
 import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
 import { fromApiRut } from "../../../lib/rut";
+import { isUuid } from "../../../lib/uuid";
 import type { Profile } from "../../auth/types";
 import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
 import { useNavigateAfter } from "../../navigation/useNavigateAfter";
 import { SavedMemberPermissionsEditor } from "../../permissions/components/MemberPermissionsEditor";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
-import { useGroupMembersQuery, useRemoveGroupMember } from "../hooks/useGroups";
+import {
+  useGroupMembersByIdsQuery,
+  useRemoveGroupMember,
+} from "../hooks/useGroups";
 
 /** One person of a group: their group permissions and leaving the group. */
 export function GroupMemberScreen({ profile }: { profile: Profile }) {
@@ -33,7 +37,17 @@ export function GroupMemberScreen({ profile }: { profile: Profile }) {
 function MemberView({ organization, group }: GroupContext) {
   const { userId = "" } = useParams();
   const navigateAfter = useNavigateAfter();
-  const members = useGroupMembersQuery(organization.id, group.id);
+  // A malformed id is not a member: no request (the server answers 404 NOT_FOUND to a malformed path id).
+  const wellFormed = isUuid(userId);
+  const userIds = useMemo(() => [userId], [userId]);
+  const members = useGroupMembersByIdsQuery(
+    organization.id,
+    group.id,
+    userIds,
+    {
+      enabled: wellFormed,
+    },
+  );
   const remove = useRemoveGroupMember(organization.id);
   // Kept while being removed: the refresh that follows drops the person from
   // the list before the navigation, and "not found" must not flash between.
@@ -47,7 +61,7 @@ function MemberView({ organization, group }: GroupContext) {
     </BackLink>
   );
 
-  if (members.data && !member) {
+  if (!wellFormed || (members.data && !member)) {
     return (
       <NotFoundScreen description="No encontramos a esa persona entre los miembros del grupo." />
     );

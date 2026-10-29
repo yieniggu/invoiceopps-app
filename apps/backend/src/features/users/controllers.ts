@@ -3,7 +3,10 @@ import type { RequestHandler } from "express";
 import { ApiError, parseWith } from "../../http/errors.js";
 import type { AuthService } from "../auth/services.js";
 import { requireSessionProfile } from "../auth/session.js";
-import { UserProvisionRequestSchema } from "./schemas.js";
+import {
+  OrganizationUserListQuerySchema,
+  UserProvisionRequestSchema,
+} from "./schemas.js";
 import type { UserService } from "./services.js";
 
 function wired(service: UserService | undefined) {
@@ -17,11 +20,17 @@ export function createUserController(
 ) {
   const list: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
+    const query = parseWith(
+      OrganizationUserListQuerySchema,
+      request.query,
+      "Invalid query",
+    );
     const result = await wired(users).listUsers(
       actor.id,
       String(request.params.organizationId),
+      query,
     );
-    response.status(200).json({ users: result });
+    response.status(200).json(result);
   };
 
   const provision: RequestHandler = async (request, response) => {
@@ -41,5 +50,14 @@ export function createUserController(
     response.status(201).json(provisioned);
   };
 
-  return { list, provision };
+  const get: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    response
+      .status(200)
+      .json(
+        await wired(users).getUser(actor.id, String(request.params.userId)),
+      );
+  };
+
+  return { list, provision, get };
 }

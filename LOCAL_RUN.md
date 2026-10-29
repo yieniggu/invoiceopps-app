@@ -16,8 +16,8 @@ Hay dos rutas que comparten la misma base de datos:
 En ambas, PostgreSQL corre en Docker bajo el proyecto Compose `invoiceops-dev`,
 publicado solo en loopback.
 
-> Desde RP0-01 el esquema es una única migración consolidada en la base de
-> desarrollo `invoiceops`; una base creada con las migraciones históricas no es
+> Desde RP0-01 el esquema parte de una migración consolidada en la base de
+> desarrollo `invoiceops` (más migraciones incrementales posteriores); una base creada con las migraciones históricas no es
 > compatible y debe recrearse con el reset del paso 3. El primer administrador
 > se crea con `pnpm recovery:bootstrap` (paso 4).
 
@@ -88,14 +88,26 @@ pnpm recovery:local:reset -- --confirm-reset=invoiceops
 > `127.0.0.1:$LOCAL_APP_DB_PORT/invoiceops`. El `printf` anterior muestra solo
 > `host:puerto/base` sin credenciales; si no coincide, no continúes.
 
+> **Cambio de esquema (B3c):** la migración idempotente
+> `20261028000000_user_status_activity` agrega `User.disabledAt`,
+> `User.lastActiveAt`, los tipos de auditoría `USER_DEACTIVATED`,
+> `USER_REACTIVATED`, `USER_UPDATED`, `PASSWORD_RESET` y `ORGANIZATION_UPDATED`, y
+> los índices trigram de las búsquedas. Una base `invoiceops` existente la recibe
+> con `pnpm --filter @invoiceops/backend exec prisma migrate deploy` (con
+> `DATABASE_URL` cargada), sin reset. Si tu base se creó con la edición anterior de
+> la migración inicial (checksum distinto), `migrate dev` reportará esa migración
+> como modificada: recrea la base una vez con
+> `pnpm recovery:local:reset -- --confirm-reset=invoiceops` y vuelve a ejecutar
+> `pnpm recovery:bootstrap`. La base de pruebas se recrea sola en cada ejecución.
+
 El reset **destruye y recrea** la base de desarrollo `invoiceops` (se pierden
-sus datos) y aplica la migración consolidada. Antes de conectarse exige: protocolo `postgres`/`postgresql`, host
+sus datos) y aplica las migraciones. Antes de conectarse exige: protocolo `postgres`/`postgresql`, host
 `localhost`, `127.0.0.1`, `::1` o socket unix, nombre de base exactamente
 `invoiceops` o `invoiceops_recovery_test` y la confirmación
 `--confirm-reset=<nombre>`. Imprime solo `host:puerto/base`, nunca credenciales.
 Si falla una guarda termina con código distinto de cero sin tocar la base.
 
-Esperado: `db` saludable y `reset: consolidated migration applied`. Las
+Esperado: `db` saludable y `reset: migrations applied`. Las
 migraciones nunca corren solas al arrancar el backend. En la ruta B el contenedor
 backend usa la base `invoiceops` (usuario y contraseña de `.env`) definida en
 `docker-compose.yml`, por lo que el reset debe ejecutarse antes de levantar el
@@ -206,16 +218,17 @@ desde el host.
 
 ## 6. Comprobaciones
 
-| Qué            | Cómo                                                              | Resultado esperado                                                           |
-| -------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Backend vivo   | `curl -fsS <backend>/health/live`                                 | `{"status":"ok"}`                                                            |
-| Base accesible | `curl -fsS <backend>/health/ready`                                | HTTP 200                                                                     |
-| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña | Se abre la app                                                               |
-| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma  | **Organizaciones** ofrece «Crear organización»                               |
-| Organizaciones | En `/organizations/new`, crea una con el RUT de su primer ADMIN   | Aparece en **Organizaciones** tras refrescar                                 |
-| Usuarios       | Como ADMIN, en `/organizations/:id/members/new` crea un usuario   | Contraseña temporal visible una sola vez (o la definida por ti, no mostrada) |
-| Grupos         | En **Grupos** crea un grupo y luego agrega miembros con permisos  | Grupo y permisos persisten al recargar                                       |
-| Facturas       | Abre **Facturas**                                                 | Bandeja vacía: el alta llega en RP0-09/RP0-14                                |
+| Qué            | Cómo                                                                                  | Resultado esperado                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Backend vivo   | `curl -fsS <backend>/health/live`                                                     | `{"status":"ok"}`                                                                                     |
+| Base accesible | `curl -fsS <backend>/health/ready`                                                    | HTTP 200                                                                                              |
+| Login          | Abre el frontend e inicia sesión con `11111111-1` y tu contraseña                     | Se abre la app                                                                                        |
+| Plataforma     | **Mi perfil** muestra la insignia de administrador de plataforma                      | **Organizaciones** ofrece «Crear organización»                                                        |
+| Organizaciones | En `/organizations/new`, crea una con el RUT de su primer ADMIN                       | Aparece en **Organizaciones** (directorio de la plataforma) aunque no seas miembro                    |
+| Administración | Como plataforma, abre **Admin** (`/admin`), busca por nombre o RUT y abre una persona | Puedes editarla, restablecer su contraseña (clave temporal una sola vez) y desactivarla o reactivarla |
+| Usuarios       | Como ADMIN, en `/organizations/:id/members/new` crea un usuario                       | Contraseña temporal visible una sola vez (o la definida por ti, no mostrada)                          |
+| Grupos         | En **Grupos** crea un grupo y luego agrega miembros con permisos                      | Grupo y permisos persisten al recargar                                                                |
+| Facturas       | Abre **Facturas**                                                                     | Bandeja vacía: el alta llega en RP0-09/RP0-14                                                         |
 
 ## Tests
 
@@ -228,7 +241,7 @@ pnpm test:recovery:ui   # onboarding, organizaciones, grupos, usuarios y membres
 
 `pnpm test:integration` no usa la base de esta guía y se niega a correr si `DATABASE_URL` o `TEST_DATABASE_URL` están definidas en la shell; por eso se ejecuta con `env -u`.
 
-Pruebas contra PostgreSQL real (esquema consolidado). Usan una base distinta,
+Pruebas contra PostgreSQL real (todas las migraciones aplicadas). Usan una base distinta,
 `invoiceops_recovery_test`, que el runner **recrea en cada ejecución**; sin
 `RECOVERY_TEST_DATABASE_URL` fallan (no se omiten):
 
@@ -275,7 +288,7 @@ Qué debes saber antes de correrlas:
   **recrean la misma base** `invoiceops_recovery_test`; una borraría los datos de
   la otra a mitad de la ejecución y fallaría de forma aparentemente aleatoria.
   Corre una, espera a que termine y luego la otra.
-- **Tardan unos 3 minutos** (102 pruebas; medido en esta máquina): recrean y siembran la base, arrancan dos servidores y
+- **Tardan unos 2 minutos** (120 pruebas, 40 por proyecto; medido en esta máquina): recrean y siembran la base, arrancan dos servidores y
   corren todos los specs en los tres proyectos (escritorio, móvil y escritorio
   oscuro) con 3 trabajadores (`E2E_WORKERS`). Reintentos: ninguno (un fallo es un
   fallo).
@@ -299,15 +312,27 @@ Qué debes saber antes de correrlas:
   **no** se enmascaran las capturas ni los trazos de fallo de Playwright
   (`screenshot: "only-on-failure"` y `trace: "retain-on-failure"` en
   `playwright.config.ts`): no los publiques ni los adjuntes a tickets. Los specs que
-  muestran una contraseña generada por el servidor (`admin-wizard.spec.ts` y
-  `member-creation-secret.spec.ts`) desactivan la captura y la traza de fallo
+  muestran una contraseña generada por el servidor (`admin-wizard.spec.ts`,
+  `member-creation-secret.spec.ts` y `admin-users.spec.ts`) desactivan la captura y la traza de fallo
   (`test.use({ screenshot: "off", trace: "off" })`, que Playwright solo permite a nivel
   de archivo); un fallo ahí deja menos evidencia a cambio de no guardar el secreto.
+  Aun con la captura y la traza apagadas, Playwright escribe en cada fallo un
+  `test-results/<prueba>/error-context.md` con una instantánea ARIA de la página, que
+  puede incluir la contraseña temporal del diálogo abierto. Por eso
+  `apps/e2e/support/global-teardown.ts` (`globalTeardown` de `playwright.config.ts`)
+  borra, al terminar la ejecución, los `error-context.md` de las carpetas de esos tres
+  specs (`admin-users-*`, `admin-wizard-*` y `member-creation-secret-*`). El de los
+  demás specs se conserva y no contiene secretos del servidor. Si interrumpes la
+  ejecución con Ctrl+C antes de que termine, el borrado puede no correr: elimina esos
+  archivos a mano antes de compartir `test-results/`.
 - La administración de plataforma está sembrada como USER, sin permisos ni grupos,
-  en una única organización (`Gamma Plataforma`): las pantallas de organización parten
-  de las membresías de la persona y los specs que necesitan a la plataforma dentro
-  de una organización la leen en vez de agregarla a las suyas (los datos sembrados
-  son de solo lectura).
+  en una única organización (`Gamma Plataforma`). Aun así lista y abre **todas** las
+  organizaciones desde su directorio (también las que no son suyas, para
+  administrarlas; nunca ve sus facturas), y los specs que la necesitan dentro de una
+  organización la leen en vez de agregarla a las suyas (los datos sembrados son de
+  solo lectura). `admin-users.spec.ts` cubre AC-19: crear usuario con el asistente,
+  restablecer contraseña y primer ingreso, desactivar y reactivar, editar una
+  organización ajena, la lista reducida de un miembro común y la búsqueda por RUT.
 
 ## Pasar de Docker (5B) a desarrollo (5A)
 

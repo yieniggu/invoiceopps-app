@@ -14,6 +14,8 @@ const ORGANIZATION_OPERATIONS = [
   ["get", "/api/v1/organizations"],
   ["post", "/api/v1/organizations"],
   ["get", "/api/v1/organizations/{organizationId}"],
+  ["patch", "/api/v1/organizations/{organizationId}"],
+  ["get", "/api/v1/organizations/{organizationId}/members"],
   ["get", "/api/v1/organizations/{organizationId}/memberships"],
   ["put", "/api/v1/organizations/{organizationId}/memberships/permissions"],
   ["post", "/api/v1/organizations/{organizationId}/memberships"],

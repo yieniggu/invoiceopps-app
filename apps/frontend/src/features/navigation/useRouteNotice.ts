@@ -3,6 +3,13 @@ import { useLocation } from "react-router";
 
 import type { RouteNotice } from "./paths";
 
+/** The message on screen and the identity of its arrival. */
+export interface ActiveNotice {
+  message: string | undefined;
+  /** Changes with every arrival, even of the same text. */
+  id: string;
+}
+
 /**
  * The one-shot message the previous screen handed over through navigation
  * state. It is shown for as long as this screen stays mounted, and it is
@@ -15,12 +22,18 @@ import type { RouteNotice } from "./paths";
  * router already has the notice in memory for this render. The router's own
  * keys in `history.state` are kept.
  */
-export function useRouteNotice(): string | undefined {
+export function useRouteNotice(): ActiveNotice {
   const location = useLocation();
   const incoming = (location.state as RouteNotice | null)?.notice;
-  const [notice, setNotice] = useState(incoming);
+  const [active, setActive] = useState<ActiveNotice>({
+    message: incoming,
+    id: location.key,
+  });
   // A newer notice can arrive while the screen is mounted (same route again).
-  if (incoming !== undefined && incoming !== notice) setNotice(incoming);
+  // Each arrival is its own navigation entry, so its key tells an identical
+  // text arriving a second time from a re-render of the first.
+  if (incoming !== undefined && location.key !== active.id)
+    setActive({ message: incoming, id: location.key });
 
   useEffect(() => {
     if (incoming === undefined) return;
@@ -34,8 +47,9 @@ export function useRouteNotice(): string | undefined {
       stored?.usr?.notice === incoming
     )
       window.history.replaceState({ ...stored, usr: null }, "");
-    // Only the arrival of a notice matters, not later location changes.
-  }, [incoming]);
+    // Only the arrival of a notice matters, not later location changes (the
+    // key tells a repeated identical text from a re-render).
+  }, [incoming, location.key]);
 
-  return notice;
+  return active;
 }

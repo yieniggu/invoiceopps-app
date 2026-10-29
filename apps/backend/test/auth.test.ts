@@ -896,18 +896,25 @@ describe("organization membership HTTP contract", () => {
           updateMembershipsPermissions: unused,
           getOrganization: unused,
           listMemberships: unused,
+          listMembers: unused,
+          updateOrganization: unused,
           async listOrganizations(actorUserId) {
             calls.push(["list", actorUserId]);
-            return [
-              {
-                id: "organization-1",
-                name: "AI Academy",
-                slug: "ai-academy",
-                description: null,
-                enabled: true,
-                createdAt: "2026-10-26T00:00:00.000Z",
-              },
-            ];
+            return {
+              organizations: [
+                {
+                  id: "organization-1",
+                  name: "AI Academy",
+                  slug: "ai-academy",
+                  description: null,
+                  enabled: true,
+                  createdAt: "2026-10-26T00:00:00.000Z",
+                },
+              ],
+              page: 1,
+              pageSize: 20,
+              total: 1,
+            };
           },
           async createMembership(actorUserId, organizationId, input) {
             calls.push([
@@ -981,6 +988,9 @@ describe("organization membership HTTP contract", () => {
           createdAt: "2026-10-26T00:00:00.000Z",
         },
       ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
     });
     expect(created.status).toBe(201);
     expect(changed.status).toBe(200);

@@ -1,3 +1,4 @@
+import { namedId } from "./test/ids";
 import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
@@ -14,6 +15,7 @@ import {
   workspaceGroupsKey,
 } from "./features/auth/session/queryKeys";
 import { renderApp } from "./test/renderApp";
+import { uuid } from "./test/ids";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -40,7 +42,11 @@ function profile(id: string, admin = false) {
     isPlatformAdministrator: admin,
     memberships: [
       {
-        organization: { id: `org-${id}`, name: `Organization ${id}`, slug: id },
+        organization: {
+          id: namedId("org", id),
+          name: `Organization ${id}`,
+          slug: id,
+        },
         role: "ADMIN",
         ...ACCESS_NONE,
       },
@@ -49,18 +55,18 @@ function profile(id: string, admin = false) {
 }
 function group(id: string) {
   return {
-    id: `group-${id}`,
+    id: namedId("group", id),
     name: `Group ${id}`,
     description: null,
-    organization: { id: `org-${id}`, name: `Organization ${id}` },
+    organization: { id: namedId("org", id), name: `Organization ${id}` },
     members: [],
   };
 }
 // Organization-scoped shape behind the Grupos screens.
 function scopedGroup(id: string) {
   return {
-    id: `group-${id}`,
-    organizationId: `org-${id}`,
+    id: namedId("group", id),
+    organizationId: namedId("org", id),
     name: `Group ${id}`,
     description: null,
   };
@@ -68,11 +74,15 @@ function scopedGroup(id: string) {
 // v2: permissions live on each member of the group, not on the group.
 function groupMember(id: string) {
   return {
-    userId: `member-${id}`,
-    groupId: `group-${id}`,
-    organizationId: `org-${id}`,
+    userId: uuid(id.charCodeAt(0)),
+    groupId: namedId("group", id),
+    organizationId: namedId("org", id),
     permissions: NO_PERMISSIONS,
-    user: { id: `member-${id}`, name: `Member ${id}`, rut: "190347907" },
+    user: {
+      id: uuid(id.charCodeAt(0)),
+      name: `Member ${id}`,
+      rut: "190347907",
+    },
   };
 }
 function http(admin = false) {
@@ -91,10 +101,13 @@ function http(admin = false) {
     .fn<() => Promise<Response>>()
     .mockImplementation(async () =>
       json({
+        page: 1,
+        pageSize: 20,
+        total: 1,
         organizations: [
           {
-            id: `org-${identity}`,
-            name: `Listed ${identity}`,
+            id: namedId("org", identity),
+            name: `Organization ${identity}`,
             slug: `listed-${identity.toLowerCase()}`,
             description: `Descripción ${identity}`,
             enabled: true,
@@ -109,7 +122,7 @@ function http(admin = false) {
     .mockImplementation(async () =>
       json({
         organization: {
-          id: `org-${identity}`,
+          id: namedId("org", identity),
           name: `Organization ${identity}`,
           slug: identity,
           description: `Descripción ${identity}`,
@@ -137,9 +150,11 @@ function http(admin = false) {
         return json({ user: { id: "B" } });
       }
       if (path === "/api/v1/groups") return groups();
-      if (path === "/api/v1/organizations") return discovery();
+      if (path.split("?")[0] === "/api/v1/organizations") return discovery();
       if (
-        /^\/api\/v1\/organizations\/org-.$/.test(path) &&
+        /^\/api\/v1\/organizations\/00000000-0000-4000-9000-[0-9a-f]{12}$/.test(
+          path,
+        ) &&
         (init?.method ?? "GET") === "GET"
       )
         return summary();
@@ -149,15 +164,30 @@ function http(admin = false) {
       )
         return orgGroups();
       const members =
-        /^\/api\/v1\/organizations\/org-(.)\/groups\/group-.\/memberships$/.exec(
+        /^\/api\/v1\/organizations\/(00000000-0000-4000-9000-[0-9a-f]{12})\/groups\/00000000-0000-4000-a000-[0-9a-f]{12}\/memberships(?:\?.*)?$/.exec(
           path,
         );
       if (members && (init?.method ?? "GET") === "GET")
-        return json({ memberships: [groupMember(members[1])] });
+        return json({
+          memberships: [
+            groupMember(
+              ["A", "B"].find((id) => namedId("org", id) === members[1])!,
+            ),
+          ],
+          page: 1,
+          pageSize: 100,
+          total: 1,
+        });
       // The group detail also reads its members; only writes count as mutations.
       if (path.startsWith("/api/v1/organizations/"))
         return (init?.method ?? "GET") === "GET"
-          ? json({ memberships: [], users: [] })
+          ? json({
+              memberships: [],
+              users: [],
+              page: 1,
+              pageSize: 100,
+              total: 0,
+            })
           : mutation();
       if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
@@ -291,7 +321,7 @@ const cases: ReadCase[] = [
     admin: false,
     read: (api) => api.orgGroups,
     destination: "Grupos",
-    key: orgGroupsKey("A", "org-A"),
+    key: orgGroupsKey("A", "00000000-0000-4000-9000-f9e9c6048aeb"),
     failure: "No fue posible cargar los grupos.",
     retry: "Reintentar grupos",
     expectLoaded: showsText("Group A"),
@@ -303,7 +333,7 @@ const cases: ReadCase[] = [
     destination: "Organizaciones",
     // The organization screen reads its own summary (data and counts).
     drillDown: "Ver detalle de Organization A",
-    key: orgKey("A", "org-A"),
+    key: orgKey("A", "00000000-0000-4000-9000-f9e9c6048aeb"),
     failure: "No fue posible cargar la información de la organización.",
     retry: "Reintentar organización",
     expectLoaded: showsText("Descripción A"),
@@ -402,7 +432,7 @@ describe("CR007 App-owned protected reads", () => {
               testCase.label === "organization summary"
                 ? {
                     organization: {
-                      id: "org-A",
+                      id: "00000000-0000-4000-9000-f9e9c6048aeb",
                       name: "Organization A",
                       slug: "A",
                       description: "Descripción A",
@@ -477,12 +507,17 @@ describe("CR-001 mounted session isolation", () => {
       await start();
       navigate("Facturas");
       fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
-        target: { value: "org-A:group:group-A" },
+        target: {
+          value:
+            "00000000-0000-4000-9000-f9e9c6048aeb:group:00000000-0000-4000-a000-ffdfcbaf90da",
+        },
       });
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls.some(([path]) =>
-            path.toString().includes("ownerId=group-A"),
+            path
+              .toString()
+              .includes("ownerId=00000000-0000-4000-a000-ffdfcbaf90da"),
           ),
         ).toBe(true),
       );
@@ -519,7 +554,9 @@ describe("CR-001 mounted session isolation", () => {
         if (/^\/api\/v1\/invoices\?/.test(path.toString())) {
           const url = new URL(path.toString(), "http://test.invalid");
           expect(url.searchParams.get("ownerId")).toBe("B");
-          expect(url.searchParams.get("organizationId")).toBe("org-B");
+          expect(url.searchParams.get("organizationId")).toBe(
+            "00000000-0000-4000-9000-fa19c6501c7e",
+          );
         }
       }
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
@@ -626,7 +663,7 @@ describe("CR-001 mounted session isolation", () => {
     );
     await screen.findByText("Descripción A");
     api.summary.mockReturnValueOnce(pending.promise);
-    reload(view, orgKey("A", "org-A"));
+    reload(view, orgKey("A", "00000000-0000-4000-9000-f9e9c6048aeb"));
     await waitFor(() => expect(api.summary).toHaveBeenCalledTimes(2));
     await signOut();
     await signInB();
@@ -635,7 +672,7 @@ describe("CR-001 mounted session isolation", () => {
       pending.resolve(
         json({
           organization: {
-            id: "org-A",
+            id: "00000000-0000-4000-9000-f9e9c6048aeb",
             name: "Old summary",
             slug: "old-summary",
             description: "Old description",

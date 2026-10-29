@@ -1,9 +1,12 @@
+import { useMemo } from "react";
+import { useSearchParams } from "react-router";
+
 import type { Profile } from "../../auth/types";
 import { BulkPermissionsView } from "../../members/BulkPermissionsView";
-import { paths } from "../../navigation/paths";
+import { parseUserIds, paths } from "../../navigation/paths";
 import { useBulkSavePermissions } from "../../permissions/hooks/useSavePermissions";
 import { OrganizationGate } from "../components/OrganizationGate";
-import { useOrgMembersQuery } from "../hooks/useOrgMembers";
+import { useOrgMembersByIdsQuery } from "../hooks/useOrgMembers";
 
 /** Organization-level permissions of the members chosen in the list (?userIds=). */
 export function BulkOrganizationPermissionsScreen({
@@ -30,7 +33,9 @@ function BulkView({
 }: {
   organization: { id: string; name: string };
 }) {
-  const members = useOrgMembersQuery(organization.id);
+  const [search] = useSearchParams();
+  const userIds = useMemo(() => parseUserIds(search), [search]);
+  const members = useOrgMembersByIdsQuery(organization.id, userIds);
   const save = useBulkSavePermissions({
     level: "organization",
     organizationId: organization.id,

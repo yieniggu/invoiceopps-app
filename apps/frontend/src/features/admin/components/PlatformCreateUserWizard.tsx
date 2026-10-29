@@ -14,10 +14,16 @@ import { definedPasswordOf, toPlatformInput } from "../../users/wizard/draft";
 /** Platform flow: the create-user wizard over every organization. */
 export function PlatformCreateUserWizard({
   organizations,
+  organizationsTotal,
   initialOrganizationId,
+  initialOrganization,
 }: {
+  /** The first page of the platform's organizations. */
   organizations: Array<{ id: string; name: string; slug?: string }>;
+  /** How many exist in all; the wizard searches the server for the rest. */
+  organizationsTotal: number;
   initialOrganizationId?: string;
+  initialOrganization?: { id: string; name: string; slug?: string };
 }) {
   const present = usePresentIssuedCredential();
   const successFocus = useRef<HTMLButtonElement>(null);
@@ -43,7 +49,9 @@ export function PlatformCreateUserWizard({
   return (
     <CreateUserWizard
       organizations={organizations}
+      organizationsTotal={organizationsTotal}
       initialOrganizationId={initialOrganizationId}
+      initialOrganization={initialOrganization}
       submitter={submitter}
       successFocusRef={successFocus}
       doneAction={

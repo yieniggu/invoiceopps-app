@@ -16,12 +16,12 @@ import {
 afterEach(cleanup);
 
 const first = {
-  userId: "user-1",
+  userId: "00000000-0000-4000-8000-000000000001",
   name: "Diego Rojas",
   temporaryPassword: "Tmp-First-1111",
 };
 const second = {
-  userId: "user-2",
+  userId: "00000000-0000-4000-8000-000000000002",
   name: "Elena Soto",
   temporaryPassword: "Tmp-Second-2222",
 };

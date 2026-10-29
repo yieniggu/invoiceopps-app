@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
 import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
+import { hasNoNul, NO_NUL } from "../../text.js";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password-policy.js";
 
 export const LoginRequestSchema = z
@@ -117,11 +118,40 @@ export const PasswordChangeRequestSchema = z
   .strict()
   .meta({ id: "PasswordChangeRequest" });
 
-export const ProfileUpdateSchema = z
-  .object({
-    email: z.string().nullable().optional(),
-    username: z.string().nullable().optional(),
+export const MAX_EMAIL_LENGTH = 254;
+export const MAX_USERNAME_LENGTH = 64;
+
+// Trimmed; a blank value (or null) clears the field, like a blank description.
+const emailAddress = z.email();
+const profileEmail = z
+  .string()
+  .trim()
+  .max(MAX_EMAIL_LENGTH)
+  .refine(hasNoNul, NO_NUL)
+  .refine((value) => value === "" || emailAddress.safeParse(value).success, {
+    message: "Must be a valid email address",
   })
+  // Compared case-insensitively by storing it in lower case.
+  .transform((value) => (value === "" ? null : value.toLowerCase()))
+  .nullable()
+  .optional()
+  .meta({
+    description: `Email address, trimmed and stored in lower case, at most ${MAX_EMAIL_LENGTH} characters and unique among users; blank or null clears it`,
+  });
+const profileUsername = z
+  .string()
+  .trim()
+  .max(MAX_USERNAME_LENGTH)
+  .refine(hasNoNul, NO_NUL)
+  .transform((value) => value || null)
+  .nullable()
+  .optional()
+  .meta({
+    description: `Username, trimmed, at most ${MAX_USERNAME_LENGTH} characters and unique among users; blank or null clears it`,
+  });
+
+export const ProfileUpdateSchema = z
+  .object({ email: profileEmail, username: profileUsername })
   .strict()
   .refine((update) => Object.keys(update).length > 0, {
     message: "At least one field is required",

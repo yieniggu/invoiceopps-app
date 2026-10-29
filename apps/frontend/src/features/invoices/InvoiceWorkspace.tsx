@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import "./tailwind.css";
+import { FileText } from "lucide-react";
+import { EmptyState } from "../../components/EmptyState";
 import { contextValue, useWorkspace } from "../workspace/WorkspaceContext";
 import { useUnauthorized } from "../auth/components/ProtectedSession";
 import {
@@ -338,12 +340,14 @@ export function InvoiceWorkspace({
     >
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 id="invoices-title">Facturas</h2>
-        <p className="text-sm font-medium text-(--color-text-muted)">
-          {selectedContext?.organizationName} ·{" "}
-          {selectedContext?.ownerType === "user"
-            ? "Trabajo individual"
-            : `Grupo: ${selectedContext?.ownerName}`}
-        </p>
+        {selectedContext ? (
+          <p className="text-sm font-medium text-(--color-text-muted)">
+            {selectedContext.organizationName} ·{" "}
+            {selectedContext.ownerType === "user"
+              ? "Trabajo individual"
+              : `Grupo: ${selectedContext.ownerName}`}
+          </p>
+        ) : null}
       </div>
       <label className="grid gap-1 font-semibold">
         Propietario
@@ -409,7 +413,17 @@ export function InvoiceWorkspace({
           </button>
         </>
       ) : null}
-      {listState.kind === "loaded" && listState.invoices.length === 0 ? (
+      {listState.kind === "loaded" && !selectedContext ? (
+        <EmptyState
+          icon={FileText}
+          headingLevel={3}
+          title="Elige un propietario"
+          description="Las facturas se organizan por propietario: tu trabajo individual o un grupo de una organización. Selecciónalo arriba para ver sus facturas."
+        />
+      ) : null}
+      {listState.kind === "loaded" &&
+      selectedContext &&
+      listState.invoices.length === 0 ? (
         <p>No hay facturas para este propietario.</p>
       ) : null}
       {listState.kind === "loaded" && listState.invoices.length > 0 ? (

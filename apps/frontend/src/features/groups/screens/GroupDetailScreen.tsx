@@ -6,7 +6,7 @@ import type { Profile } from "../../auth/types";
 import { paths } from "../../navigation/paths";
 import { describePermissions } from "../../permissions/types";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
-import { useGroupMembersQuery } from "../hooks/useGroups";
+import { useGroupMembersPageQuery } from "../hooks/useGroups";
 
 /** Summary of one group: its data, its member count and the way to its people. */
 export function GroupDetailScreen({ profile }: { profile: Profile }) {
@@ -25,8 +25,14 @@ function GroupSummary({
   refreshFailed,
   retry,
 }: GroupContext) {
-  // The member list is admin-only; a plain member sees their own flags instead.
-  const members = useGroupMembersQuery(organization.id, group.id, canManage);
+  // The member list is admin-only; a plain member sees their own flags
+  // instead. One row is enough: the summary only shows how many there are.
+  const members = useGroupMembersPageQuery(
+    organization.id,
+    group.id,
+    { page: 1, pageSize: 1 },
+    canManage,
+  );
 
   return (
     <div className="screen-stack">
@@ -76,7 +82,7 @@ function GroupSummary({
           {canManage && members.data ? (
             <div>
               <dt>Miembros</dt>
-              <dd>{members.data.length}</dd>
+              <dd>{members.data.total}</dd>
             </div>
           ) : null}
         </dl>

@@ -1,9 +1,12 @@
+import { useMemo } from "react";
+import { useSearchParams } from "react-router";
+
 import type { Profile } from "../../auth/types";
 import { BulkPermissionsView } from "../../members/BulkPermissionsView";
-import { paths } from "../../navigation/paths";
+import { parseUserIds, paths } from "../../navigation/paths";
 import { useBulkSavePermissions } from "../../permissions/hooks/useSavePermissions";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
-import { useGroupMembersQuery } from "../hooks/useGroups";
+import { useGroupMembersByIdsQuery } from "../hooks/useGroups";
 
 /** Group-level permissions of the members chosen in the list (?userIds=). */
 export function BulkGroupPermissionsScreen({ profile }: { profile: Profile }) {
@@ -20,7 +23,9 @@ export function BulkGroupPermissionsScreen({ profile }: { profile: Profile }) {
 }
 
 function BulkView({ organization, group }: GroupContext) {
-  const members = useGroupMembersQuery(organization.id, group.id);
+  const [search] = useSearchParams();
+  const userIds = useMemo(() => parseUserIds(search), [search]);
+  const members = useGroupMembersByIdsQuery(organization.id, group.id, userIds);
   const save = useBulkSavePermissions({
     level: "group",
     organizationId: organization.id,

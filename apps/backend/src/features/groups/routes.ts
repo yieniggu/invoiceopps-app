@@ -16,6 +16,7 @@ import {
   GroupMembershipBulkCreateRequestSchema,
   GroupMembershipCreateRequestSchema,
   GroupMembershipsResponseSchema,
+  GroupMembershipListQuerySchema,
   GroupMembershipListResponseSchema,
   GroupMembershipParamsSchema,
   GroupMembershipResponseSchema,
@@ -88,11 +89,16 @@ export function createGroupOperations(
       tag: TAG,
       secured: true,
       params: GroupParamsSchema,
+      query: GroupMembershipListQuerySchema,
       responses: {
         200: {
-          description: "Group memberships with a user summary",
+          description:
+            "One page of group memberships with a user summary, ordered by name, RUT and id; total counts every membership, or only those of the requested userIds",
           schema: GroupMembershipListResponseSchema,
         },
+        400: validationResponse(
+          "unknown or repeated query parameter, page outside 1..10000, pageSize outside 1..100, or userIds empty, over 200, with duplicates or non-UUID values",
+        ),
         401: unauthenticatedResponse,
         403: forbiddenResponse(ADMIN_ONLY),
         404: notFoundResponse(NO_GROUP),

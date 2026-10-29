@@ -36,10 +36,11 @@ export function buildOpenApiDocument(operations: Operation[]) {
       summary: operation.summary,
       tags: [operation.tag],
       security: operation.secured ? [{ [SESSION_SECURITY_SCHEME]: [] }] : [],
-      ...(operation.requestBody || operation.params
+      ...(operation.requestBody || operation.params || operation.query
         ? {
             request: {
               ...(operation.params ? { params: operation.params } : {}),
+              ...(operation.query ? { query: operation.query } : {}),
               ...(operation.requestBody
                 ? {
                     body: {

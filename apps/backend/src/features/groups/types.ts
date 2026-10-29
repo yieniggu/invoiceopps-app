@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type {
   GroupCreateRequestSchema,
   GroupMembershipBulkCreateRequestSchema,
+  GroupMembershipListResponseSchema,
   GroupMembershipSchema,
   GroupMembershipWithUserSchema,
   GroupSchema,
@@ -14,6 +15,9 @@ export type GroupMembershipBulkCreateRequest = z.infer<
 >;
 export type GroupDto = z.infer<typeof GroupSchema>;
 export type GroupMembershipDto = z.infer<typeof GroupMembershipSchema>;
+export type GroupMembershipListResponse = z.infer<
+  typeof GroupMembershipListResponseSchema
+>;
 export type GroupMembershipWithUserDto = z.infer<
   typeof GroupMembershipWithUserSchema
 >;

@@ -10,10 +10,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "./test/renderApp";
 import {
   errorResponse,
+  groupMembershipsPage,
   jsonResponse,
   membership,
   mockTransport,
+  pagedList,
   profileFixture,
+  usersPage,
 } from "./test/transport";
 
 afterEach(() => {
@@ -28,25 +31,31 @@ const none = {
   deleteOthersInvoices: false,
 };
 const accounting = {
-  id: "group-a",
-  organizationId: "org-1",
+  id: "00000000-0000-4000-a000-000000000097",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   name: "Contabilidad",
   description: null,
 };
 const sales = {
-  id: "group-b",
-  organizationId: "org-1",
+  id: "00000000-0000-4000-a000-000000000098",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   name: "Ventas",
   description: "Equipo comercial",
 };
 const southGroup = {
-  id: "group-c",
-  organizationId: "org-2",
+  id: "00000000-0000-4000-a000-000000000099",
+  organizationId: "00000000-0000-4000-9000-000000000002",
   name: "Operaciones",
   description: null,
 };
-const north = { id: "org-1", name: "Academia Norte" };
-const south = { id: "org-2", name: "Instituto Sur" };
+const north = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
+const south = {
+  id: "00000000-0000-4000-9000-000000000002",
+  name: "Instituto Sur",
+};
 // The profile carries what each group membership effectively allows; the
 // group catalogue itself carries no permissions (v2).
 const admin = profileFixture({
@@ -54,53 +63,76 @@ const admin = profileFixture({
     membership(north, "ADMIN", {
       groups: [
         {
-          group: { id: "group-b", name: "Ventas" },
+          group: { id: "00000000-0000-4000-a000-000000000098", name: "Ventas" },
           effective: { ...none, readInvoices: true },
         },
       ],
     }),
     membership(south, "ADMIN", {
-      groups: [{ group: { id: "group-c", name: "Operaciones" } }],
+      groups: [
+        {
+          group: {
+            id: "00000000-0000-4000-a000-000000000099",
+            name: "Operaciones",
+          },
+        },
+      ],
     }),
   ],
 });
-const carlaInGroup = (permissions = none, groupId = "group-a") => ({
-  userId: "user-3",
+const carlaInGroup = (
+  permissions = none,
+  groupId = "00000000-0000-4000-a000-000000000097",
+) => ({
+  userId: "00000000-0000-4000-8000-000000000003",
   groupId,
-  organizationId: "org-1",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   permissions,
   user: orgUsers[1],
 });
 const orgUsers = [
-  { id: "user-1", name: "Ada Lovelace", rut: "123456785", role: "ADMIN" },
-  { id: "user-3", name: "Carla Soto", rut: "190347907", role: "USER" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "Ada Lovelace",
+    rut: "123456785",
+    role: "ADMIN",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000003",
+    name: "Carla Soto",
+    rut: "190347907",
+    role: "USER",
+  },
 ];
 
 function baseRoutes(groups: unknown[] = [accounting, sales]) {
   return {
     "GET /api/v1/auth/profile": () => jsonResponse({ profile: admin }),
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-    "GET /api/v1/organizations/org-1/groups": () => jsonResponse({ groups }),
-    "GET /api/v1/organizations/org-2/groups": () =>
-      jsonResponse({ groups: [southGroup] }),
-    "GET /api/v1/organizations/org-1/users": () =>
-      jsonResponse({ users: orgUsers }),
-    "GET /api/v1/organizations/org-2/users": () => jsonResponse({ users: [] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+      () => jsonResponse({ groups }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/groups":
+      () => jsonResponse({ groups: [southGroup] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      () => jsonResponse(usersPage(orgUsers)),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/users":
+      () => jsonResponse(usersPage([])),
   };
 }
 
-const DETAIL = "/organizations/org-1/groups";
-const MEMBERS_A = "GET /api/v1/organizations/org-1/groups/group-a/memberships";
+const DETAIL = "/organizations/00000000-0000-4000-9000-000000000001/groups";
+const MEMBERS_A =
+  "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships";
 const PUT_CARLA =
-  "PUT /api/v1/organizations/org-1/groups/group-a/memberships/user-3/permissions";
+  "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003/permissions";
 const BULK_PUT =
-  "PUT /api/v1/organizations/org-1/groups/group-a/memberships/permissions";
+  "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/permissions";
 const BULK_POST =
-  "POST /api/v1/organizations/org-1/groups/group-a/memberships/bulk";
+  "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/bulk";
 const adaInGroup = (permissions = none) => ({
-  userId: "user-1",
-  groupId: "group-a",
-  organizationId: "org-1",
+  userId: "00000000-0000-4000-8000-000000000001",
+  groupId: "00000000-0000-4000-a000-000000000097",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   permissions,
   user: orgUsers[0],
 });
@@ -110,13 +142,18 @@ describe("group list and creation (AC-11)", () => {
     const groups = [accounting, sales];
     const transport = mockTransport({
       ...baseRoutes(groups),
-      "GET /api/v1/organizations/org-1/groups/group-n/memberships": () =>
-        jsonResponse({ memberships: [] }),
-      "POST /api/v1/organizations/org-1/groups": () => {
-        const created = { ...accounting, id: "group-n", name: "Cobranza" };
-        groups.push(created);
-        return jsonResponse({ group: created }, 201);
-      },
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000110/memberships":
+        () => jsonResponse(groupMembershipsPage([])),
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => {
+          const created = {
+            ...accounting,
+            id: "00000000-0000-4000-a000-000000000110",
+            name: "Cobranza",
+          };
+          groups.push(created);
+          return jsonResponse({ group: created }, 201);
+        },
     });
     renderApp({ route: `${DETAIL}/new` });
     // The form asks for the name and the description, never for people.
@@ -135,9 +172,13 @@ describe("group list and creation (AC-11)", () => {
         name: "Agregar miembros al grupo",
       }),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe(`${DETAIL}/group-n/members/new`);
+    expect(window.location.pathname).toBe(
+      `${DETAIL}/00000000-0000-4000-a000-000000000110/members/new`,
+    );
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/groups")[0].body,
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
+      )[0].body,
     ).toEqual({
       name: "Cobranza",
     });
@@ -145,7 +186,9 @@ describe("group list and creation (AC-11)", () => {
     expect(
       transport.requests.filter(
         ({ method, path }) =>
-          method !== "GET" && path !== "/api/v1/organizations/org-1/groups",
+          method !== "GET" &&
+          path !==
+            "/api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
       ),
     ).toEqual([]);
     // The list is read after the write, so the new group is what the screen shows.
@@ -156,7 +199,8 @@ describe("group list and creation (AC-11)", () => {
       ({ method, path }, index) =>
         index > post &&
         method === "GET" &&
-        path === "/api/v1/organizations/org-1/groups",
+        path ===
+          "/api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
     );
     expect(reread).toBeGreaterThan(post);
   });
@@ -168,7 +212,10 @@ describe("group list and creation (AC-11)", () => {
     expect(screen.getByText("Equipo comercial")).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Ver grupo Contabilidad" }),
-    ).toHaveProperty("href", expect.stringContaining(`${DETAIL}/group-a`));
+    ).toHaveProperty(
+      "href",
+      expect.stringContaining(`${DETAIL}/00000000-0000-4000-a000-000000000097`),
+    );
     expect(screen.getByRole("link", { name: "Ver grupo Ventas" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
     expect(screen.getByRole("link", { name: "Crear grupo" })).toBeTruthy();
@@ -180,7 +227,10 @@ describe("group list and creation (AC-11)", () => {
         membership(north, "USER", {
           groups: [
             {
-              group: { id: "group-b", name: "Ventas" },
+              group: {
+                id: "00000000-0000-4000-a000-000000000098",
+                name: "Ventas",
+              },
               effective: { ...none, readInvoices: true },
             },
           ],
@@ -190,8 +240,8 @@ describe("group list and creation (AC-11)", () => {
     mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: member }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/org-1/groups": () =>
-        jsonResponse({ groups: [sales] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [sales] }),
     });
     renderApp({ route: "/groups" });
     expect(await screen.findByText("Ventas")).toBeTruthy();
@@ -223,7 +273,9 @@ describe("group list and creation (AC-11)", () => {
       screen.getByRole("link", { name: "Crear grupo en Academia Norte" }),
     ).toHaveProperty(
       "href",
-      expect.stringContaining("/organizations/org-1/groups/new"),
+      expect.stringContaining(
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/new",
+      ),
     );
     expect(
       screen.getByRole("link", { name: "Crear grupo en Instituto Sur" }),
@@ -235,19 +287,24 @@ describe("group summary and members table", () => {
   it("shows an ADMIN the group data, the member count and the way to the members", async () => {
     mockTransport({
       ...baseRoutes(),
-      "GET /api/v1/organizations/org-1/groups/group-b/memberships": () =>
-        jsonResponse({
-          memberships: [carlaInGroup({ ...none }, "group-b")],
-        }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000098/memberships":
+        () =>
+          jsonResponse(
+            groupMembershipsPage([
+              carlaInGroup({ ...none }, "00000000-0000-4000-a000-000000000098"),
+            ]),
+          ),
     });
-    renderApp({ route: `${DETAIL}/group-b` });
+    renderApp({ route: `${DETAIL}/00000000-0000-4000-a000-000000000098` });
     await screen.findByRole("heading", { level: 1, name: "Ventas" });
     expect(await screen.findByText("Equipo comercial")).toBeTruthy();
     const summary = screen.getByRole("region", { name: "Resumen" });
     expect(summary.textContent).toContain("Miembros1");
     expect(screen.getByRole("link", { name: "Miembros" })).toHaveProperty(
       "href",
-      expect.stringContaining(`${DETAIL}/group-b/members`),
+      expect.stringContaining(
+        `${DETAIL}/00000000-0000-4000-a000-000000000098/members`,
+      ),
     );
     // Name and description are read-only text: there is no form to edit them.
     expect(screen.queryByLabelText("Nombre del grupo")).toBeNull();
@@ -262,7 +319,10 @@ describe("group summary and members table", () => {
         membership(north, "USER", {
           groups: [
             {
-              group: { id: "group-b", name: "Ventas" },
+              group: {
+                id: "00000000-0000-4000-a000-000000000098",
+                name: "Ventas",
+              },
               effective: { ...none, readInvoices: true },
             },
           ],
@@ -272,10 +332,10 @@ describe("group summary and members table", () => {
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: member }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/org-1/groups": () =>
-        jsonResponse({ groups: [sales] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [sales] }),
     });
-    renderApp({ route: `${DETAIL}/group-b` });
+    renderApp({ route: `${DETAIL}/00000000-0000-4000-a000-000000000098` });
     await screen.findByRole("heading", { level: 1, name: "Ventas" });
     // Presentation only: a sentence from the profile, never editable flags.
     expect(screen.getByText("Puede leer facturas")).toBeTruthy();
@@ -298,10 +358,12 @@ describe("group summary and members table", () => {
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: member }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations/org-1/groups": () =>
-        jsonResponse({ groups: [sales] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [sales] }),
     });
-    renderApp({ route: `${DETAIL}/group-b/members` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000098/members`,
+    });
     expect(
       await screen.findByText(
         "Solo los administradores de la organización pueden ver a los miembros de un grupo.",
@@ -327,14 +389,16 @@ describe("group summary and members table", () => {
     mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () =>
-        jsonResponse({
-          memberships: [
+        jsonResponse(
+          groupMembershipsPage([
             carlaInGroup({ ...none, readInvoices: true, createInvoices: true }),
             adaInGroup(),
-          ],
-        }),
+          ]),
+        ),
     });
-    renderApp({ route: `${DETAIL}/group-a/members` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
+    });
     const carlaRow = (await screen.findByText("Carla Soto")).closest(
       "tr",
     ) as HTMLElement;
@@ -342,7 +406,9 @@ describe("group summary and members table", () => {
     expect(within(carlaRow).getByText("2 de 4 permisos")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Carla Soto" })).toHaveProperty(
       "href",
-      expect.stringContaining(`${DETAIL}/group-a/members/user-3`),
+      expect.stringContaining(
+        `${DETAIL}/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003`,
+      ),
     );
     const bulk = screen.getByRole("button", {
       name: "Editar permisos en bloque",
@@ -352,11 +418,17 @@ describe("group summary and members table", () => {
       screen.getByRole("checkbox", { name: "Seleccionar a Carla Soto" }),
     );
     expect(bulk).toHaveProperty("disabled", false);
-    expect(screen.getByText("1 persona seleccionada.")).toBeTruthy();
+    expect(
+      screen.getByText("1 persona seleccionada en esta página."),
+    ).toBeTruthy();
     // "Seleccionar todos" selects everyone and clears again.
-    const all = screen.getByRole("checkbox", { name: "Seleccionar todos" });
+    const all = screen.getByRole("checkbox", {
+      name: "Seleccionar todos en esta página",
+    });
     fireEvent.click(all);
-    expect(screen.getByText("2 personas seleccionadas.")).toBeTruthy();
+    expect(
+      screen.getByText("2 personas seleccionadas en esta página."),
+    ).toBeTruthy();
     fireEvent.click(all);
     expect(bulk).toHaveProperty("disabled", true);
     fireEvent.click(all);
@@ -366,9 +438,11 @@ describe("group summary and members table", () => {
       name: "Editar permisos en bloque",
     });
     expect(window.location.pathname).toBe(
-      `${DETAIL}/group-a/members/permissions`,
+      `${DETAIL}/00000000-0000-4000-a000-000000000097/members/permissions`,
     );
-    expect(window.location.search).toBe("?userIds=user-3,user-1");
+    expect(window.location.search).toBe(
+      "?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000001",
+    );
   });
 });
 
@@ -378,9 +452,11 @@ describe("group member permissions editor (v2)", () => {
   it("offers four independent labelled toggles per member, off by default", async () => {
     mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+      [MEMBERS_A]: () => jsonResponse(groupMembershipsPage([carlaInGroup()])),
     });
-    renderApp({ route: `${DETAIL}/group-a/members/user-3` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003`,
+    });
     const editor = await screen.findByRole("group", { name: EDITOR });
     const pressed = (label: string) =>
       within(editor)
@@ -406,14 +482,20 @@ describe("group member permissions editor (v2)", () => {
   it("shows the saved flags of the member", async () => {
     mockTransport({
       ...baseRoutes(),
-      "GET /api/v1/organizations/org-1/groups/group-b/memberships": () =>
-        jsonResponse({
-          memberships: [
-            carlaInGroup({ ...none, readInvoices: true }, "group-b"),
-          ],
-        }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000098/memberships":
+        () =>
+          jsonResponse(
+            groupMembershipsPage([
+              carlaInGroup(
+                { ...none, readInvoices: true },
+                "00000000-0000-4000-a000-000000000098",
+              ),
+            ]),
+          ),
     });
-    renderApp({ route: `${DETAIL}/group-b/members/user-3` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000098/members/00000000-0000-4000-8000-000000000003`,
+    });
     const editor = await screen.findByRole("group", {
       name: "Permisos en el grupo «Ventas» — Carla Soto",
     });
@@ -427,30 +509,51 @@ describe("group member permissions editor (v2)", () => {
   it("PUTs all four flags and invalidates only the profile, this group's memberships and this organization's memberships", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+      [MEMBERS_A]: () => jsonResponse(groupMembershipsPage([carlaInGroup()])),
       [PUT_CARLA]: () => jsonResponse({ membership: carlaInGroup() }),
     });
     const { store } = renderApp({
-      route: `${DETAIL}/group-a/members/user-3`,
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003`,
     });
     const editor = await screen.findByRole("group", { name: EDITOR });
     const client = store.getSnapshot().client;
     // Seeded neighbours: the organization's people, another group, another org.
     client.setQueryData(
-      ["identity", "user-1", "org", "org-1", "memberships"],
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "memberships",
+      ],
       [],
     );
     client.setQueryData(
-      ["identity", "user-1", "org", "org-1", "group", "group-b", "memberships"],
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "group",
+        "00000000-0000-4000-a000-000000000098",
+        "memberships",
+      ],
       [],
     );
     client.setQueryData(
-      ["identity", "user-1", "org", "org-2", "memberships"],
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000002",
+        "memberships",
+      ],
       [],
     );
     const before = {
-      groupsNorth: transport.calls("GET /api/v1/organizations/org-1/groups")
-        .length,
+      groupsNorth: transport.calls(
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
+      ).length,
       membersA: transport.calls(MEMBERS_A).length,
       profile: transport.calls("GET /api/v1/auth/profile").length,
     };
@@ -486,39 +589,57 @@ describe("group member permissions editor (v2)", () => {
       ),
     );
     const stale = (key: string[]) => client.getQueryState(key)?.isInvalidated;
-    expect(stale(["identity", "user-1", "org", "org-1", "memberships"])).toBe(
-      true,
-    );
+    expect(
+      stale([
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "memberships",
+      ]),
+    ).toBe(true);
     // Untouched: another group, another organization, the group catalogue.
     expect(
       stale([
         "identity",
-        "user-1",
+        "00000000-0000-4000-8000-000000000001",
         "org",
-        "org-1",
+        "00000000-0000-4000-9000-000000000001",
         "group",
-        "group-b",
+        "00000000-0000-4000-a000-000000000098",
         "memberships",
       ]),
     ).toBe(false);
-    expect(stale(["identity", "user-1", "org", "org-2", "memberships"])).toBe(
-      false,
-    );
     expect(
-      transport.calls("GET /api/v1/organizations/org-1/groups"),
+      stale([
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000002",
+        "memberships",
+      ]),
+    ).toBe(false);
+    expect(
+      transport.calls(
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
+      ),
     ).toHaveLength(before.groupsNorth);
     expect(
-      transport.calls("GET /api/v1/organizations/org-2/groups"),
+      transport.calls(
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/groups",
+      ),
     ).toHaveLength(0);
   });
 
   it("explains a rejected permission change without losing the draft", async () => {
     mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+      [MEMBERS_A]: () => jsonResponse(groupMembershipsPage([carlaInGroup()])),
       [PUT_CARLA]: () => errorResponse(403, "FORBIDDEN"),
     });
-    renderApp({ route: `${DETAIL}/group-a/members/user-3` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003`,
+    });
     const editor = await screen.findByRole("group", { name: EDITOR });
     fireEvent.click(
       within(editor).getByRole("button", { name: "Leer facturas" }),
@@ -541,15 +662,17 @@ describe("group member permissions editor (v2)", () => {
     const transport = mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () => jsonResponse({ memberships }),
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3":
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003":
         () => {
           memberships = memberships.filter(
-            (entry) => entry.userId !== "user-3",
+            (entry) => entry.userId !== "00000000-0000-4000-8000-000000000003",
           );
           return new Response(null, { status: 204 });
         },
     });
-    renderApp({ route: `${DETAIL}/group-a/members/user-3` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003`,
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto del grupo",
@@ -558,7 +681,7 @@ describe("group member permissions editor (v2)", () => {
     // Nothing is sent until the removal is confirmed.
     expect(
       transport.calls(
-        "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3",
+        "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003",
       ),
     ).toHaveLength(0);
     fireEvent.click(
@@ -567,7 +690,9 @@ describe("group member permissions editor (v2)", () => {
     expect(
       await screen.findByText("Se quitó a Carla Soto del grupo."),
     ).toBeTruthy();
-    expect(window.location.pathname).toBe(`${DETAIL}/group-a/members`);
+    expect(window.location.pathname).toBe(
+      `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
+    );
     await waitFor(() =>
       expect(screen.queryByRole("link", { name: "Carla Soto" })).toBeNull(),
     );
@@ -576,13 +701,13 @@ describe("group member permissions editor (v2)", () => {
 });
 
 describe("bulk group permissions", () => {
-  const bulkRoute = `${DETAIL}/group-a/members/permissions?userIds=user-3,user-1`;
+  const bulkRoute = `${DETAIL}/00000000-0000-4000-a000-000000000097/members/permissions?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000001`;
 
   it("sets the same four flags on the selected members and goes back with a status message", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () =>
-        jsonResponse({ memberships: [carlaInGroup(), adaInGroup()] }),
+        jsonResponse(groupMembershipsPage([carlaInGroup(), adaInGroup()])),
       [BULK_PUT]: () =>
         jsonResponse({ memberships: [carlaInGroup(), adaInGroup()] }),
     });
@@ -597,22 +722,27 @@ describe("bulk group permissions", () => {
     );
     await screen.findByText("Permisos actualizados para 2 miembros.");
     expect(transport.calls(BULK_PUT)[0].body).toEqual({
-      userIds: ["user-3", "user-1"],
+      userIds: [
+        "00000000-0000-4000-8000-000000000003",
+        "00000000-0000-4000-8000-000000000001",
+      ],
       permissions: { ...none, readInvoices: true },
     });
-    expect(window.location.pathname).toBe(`${DETAIL}/group-a/members`);
+    expect(window.location.pathname).toBe(
+      `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
+    );
   });
 
   it("starts from the flags everybody shares and says when they differ", async () => {
     mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () =>
-        jsonResponse({
-          memberships: [
+        jsonResponse(
+          groupMembershipsPage([
             carlaInGroup({ ...none, createInvoices: true }),
             adaInGroup({ ...none, createInvoices: true }),
-          ],
-        }),
+          ]),
+        ),
     });
     const { unmount } = renderApp({ route: bulkRoute });
     await screen.findByText("Carla Soto");
@@ -627,12 +757,12 @@ describe("bulk group permissions", () => {
     mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () =>
-        jsonResponse({
-          memberships: [
+        jsonResponse(
+          groupMembershipsPage([
             carlaInGroup({ ...none, createInvoices: true }),
             adaInGroup(),
-          ],
-        }),
+          ]),
+        ),
     });
     renderApp({ route: bulkRoute });
     await screen.findByText("Carla Soto");
@@ -648,7 +778,7 @@ describe("bulk group permissions", () => {
     mockTransport({
       ...baseRoutes(),
       [MEMBERS_A]: () =>
-        jsonResponse({ memberships: [carlaInGroup(), adaInGroup()] }),
+        jsonResponse(groupMembershipsPage([carlaInGroup(), adaInGroup()])),
       [BULK_PUT]: () => errorResponse(404, "NOT_FOUND"),
     });
     renderApp({ route: bulkRoute });
@@ -661,7 +791,7 @@ describe("bulk group permissions", () => {
       "No se encontró el recurso solicitado.",
     );
     expect(window.location.pathname).toBe(
-      `${DETAIL}/group-a/members/permissions`,
+      `${DETAIL}/00000000-0000-4000-a000-000000000097/members/permissions`,
     );
     expect(
       screen
@@ -673,10 +803,10 @@ describe("bulk group permissions", () => {
   it("leaves out selected people who are no longer in the group and asks for a selection when there is none", async () => {
     mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+      [MEMBERS_A]: () => jsonResponse(groupMembershipsPage([carlaInGroup()])),
     });
     renderApp({
-      route: `${DETAIL}/group-a/members/permissions?userIds=user-3,gone`,
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/permissions?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000099`,
     });
     await screen.findByText("Carla Soto");
     expect(
@@ -690,9 +820,11 @@ describe("bulk group permissions", () => {
     cleanup();
     mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+      [MEMBERS_A]: () => jsonResponse(groupMembershipsPage([carlaInGroup()])),
     });
-    renderApp({ route: `${DETAIL}/group-a/members/permissions` });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members/permissions`,
+    });
     expect(
       (await screen.findByText("No hay personas seleccionadas.")).getAttribute(
         "role",
@@ -702,19 +834,34 @@ describe("bulk group permissions", () => {
 });
 
 describe("adding members to a group", () => {
-  const NEW_MEMBERS = `${DETAIL}/group-a/members/new`;
+  const NEW_MEMBERS = `${DETAIL}/00000000-0000-4000-a000-000000000097/members/new`;
   const withExtra = [
     ...orgUsers,
-    { id: "user-5", name: "Diego Peña", rut: "111111111", role: "USER" },
+    {
+      id: "00000000-0000-4000-8000-000000000005",
+      name: "Diego Peña",
+      rut: "111111111",
+      role: "USER",
+    },
   ];
+  // The organization's people page and search like the real server: a fragment
+  // of the name (any case, accents as typed) or of the RUT without dots/dash.
   const routes = () => ({
     ...baseRoutes(),
-    "GET /api/v1/organizations/org-1/users": () =>
-      jsonResponse({ users: withExtra }),
-    [MEMBERS_A]: () => jsonResponse({ memberships: [carlaInGroup()] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      pagedList("users", withExtra, ({ id }) => id, {
+        matches: (user, text) =>
+          user.name.toLowerCase().includes(text.toLowerCase()) ||
+          user.rut.includes(text.replace(/[.\-\s]/g, "")),
+      }),
+    [MEMBERS_A]: pagedList(
+      "memberships",
+      [carlaInGroup()],
+      ({ userId }) => userId,
+    ),
   });
 
-  it("offers only the organization members who are not in the group yet, filtered by name or RUT", async () => {
+  it("offers only the organization members who are not in the group yet, searched by name or RUT on the server", async () => {
     mockTransport(routes());
     renderApp({ route: NEW_MEMBERS });
     expect(
@@ -722,18 +869,22 @@ describe("adding members to a group", () => {
     ).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /Diego Peña/ })).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: /Carla Soto/ })).toBeNull();
-    const search = screen.getByLabelText("Buscar por nombre o RUT");
-    // Accents and case are ignored.
-    fireEvent.change(search, { target: { value: "pena" } });
+    const search = () => screen.getByLabelText("Buscar por nombre o RUT");
+    const submit = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    fireEvent.change(search(), { target: { value: "Diego" } });
+    submit();
+    await screen.findByRole("checkbox", { name: /Diego Peña/ });
     expect(screen.queryByRole("checkbox", { name: /Ada Lovelace/ })).toBeNull();
-    expect(screen.getByRole("checkbox", { name: /Diego Peña/ })).toBeTruthy();
     // A RUT matches with any spelling of dots and dash.
-    fireEvent.change(search, { target: { value: "12.345.678-5" } });
-    expect(screen.getByRole("checkbox", { name: /Ada Lovelace/ })).toBeTruthy();
+    fireEvent.change(search(), { target: { value: "12.345.678-5" } });
+    submit();
+    await screen.findByRole("checkbox", { name: /Ada Lovelace/ });
     expect(screen.queryByRole("checkbox", { name: /Diego Peña/ })).toBeNull();
-    fireEvent.change(search, { target: { value: "zzz" } });
+    fireEvent.change(search(), { target: { value: "zzz" } });
+    submit();
     expect(
-      screen.getByText("Ninguna persona coincide con la búsqueda."),
+      await screen.findByText("Ninguna persona coincide con la búsqueda."),
     ).toBeTruthy();
   });
 
@@ -750,7 +901,9 @@ describe("adding members to a group", () => {
     });
     expect(submit).toHaveProperty("disabled", true);
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "Seleccionar todos" }),
+      screen.getByRole("checkbox", {
+        name: "Seleccionar todos en esta página",
+      }),
     );
     expect(screen.getByText("2 personas seleccionadas.")).toBeTruthy();
     // Each chosen person gets a card with a one-line summary and an editor.
@@ -782,12 +935,20 @@ describe("adding members to a group", () => {
       screen.getByRole("button", { name: "Agregar 2 personas al grupo" }),
     );
     await screen.findByText("2 personas agregadas al grupo.");
-    expect(window.location.pathname).toBe(`${DETAIL}/group-a/members`);
+    expect(window.location.pathname).toBe(
+      `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
+    );
     expect(transport.calls(BULK_POST)).toHaveLength(1);
     expect(transport.calls(BULK_POST)[0].body).toEqual({
       members: [
-        { userId: "user-1", permissions: { ...none, createInvoices: true } },
-        { userId: "user-5", permissions: { ...none, createInvoices: true } },
+        {
+          userId: "00000000-0000-4000-8000-000000000001",
+          permissions: { ...none, createInvoices: true },
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000005",
+          permissions: { ...none, createInvoices: true },
+        },
       ],
     });
     // Nothing else was written: no per-person request.
@@ -830,13 +991,22 @@ describe("adding members to a group", () => {
     expect(transport.calls(BULK_POST)).toHaveLength(2);
   });
 
-  it("tells when everybody in the organization is already in the group", async () => {
+  it("tells when everybody on the page is already in the group", async () => {
     mockTransport({
       ...baseRoutes(),
-      [MEMBERS_A]: () =>
-        jsonResponse({ memberships: [carlaInGroup(), adaInGroup()] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        pagedList("users", orgUsers, ({ id }) => id),
+      [MEMBERS_A]: pagedList(
+        "memberships",
+        [carlaInGroup(), adaInGroup()],
+        ({ userId }) => userId,
+      ),
     });
     renderApp({ route: NEW_MEMBERS });
-    expect(await screen.findByText(/todas ya están en el grupo/)).toBeTruthy();
+    expect(
+      await screen.findByText(
+        "Todas las personas de esta página ya están en el grupo.",
+      ),
+    ).toBeTruthy();
   });
 });

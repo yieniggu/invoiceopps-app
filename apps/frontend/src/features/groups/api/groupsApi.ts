@@ -1,6 +1,14 @@
+import {
+  inChunks,
+  mapWithConcurrency,
+  MAX_CONCURRENT_REQUESTS,
+  MAX_PAGE_SIZE,
+  withQuery,
+} from "../../../lib/pagination";
 import { apiRequest } from "../../auth/api/apiRequest";
+import type { PageRequest } from "../../orgs/types";
 import type { InvoicePermissions } from "../../permissions/types";
-import type { CreateGroupInput, Group, GroupMember } from "../types";
+import type { CreateGroupInput, Group, GroupMemberPage } from "../types";
 
 const base = (organizationId: string) =>
   `/api/v1/organizations/${encodeURIComponent(organizationId)}/groups`;
@@ -21,11 +29,41 @@ export const createGroup = (organizationId: string, input: CreateGroupInput) =>
 export const listGroupMembers = (
   organizationId: string,
   groupId: string,
+  params: PageRequest & { userIds?: readonly string[] },
   signal?: AbortSignal,
 ) =>
-  apiRequest<{ memberships: GroupMember[] }>(members(organizationId, groupId), {
-    signal,
-  }).then((result) => result.memberships);
+  apiRequest<GroupMemberPage>(
+    withQuery(members(organizationId, groupId), params),
+    { signal },
+  );
+
+/**
+ * The memberships of exactly these people (those who are not in the group are
+ * absent), wherever they would sort in the group's list. Large selections go
+ * in chunks that each fit one page, at most four requests at a time.
+ */
+export async function listGroupMembersByIds(
+  organizationId: string,
+  groupId: string,
+  userIds: readonly string[],
+  signal?: AbortSignal,
+) {
+  const pages = await mapWithConcurrency(
+    inChunks(userIds, MAX_PAGE_SIZE),
+    MAX_CONCURRENT_REQUESTS,
+    (chunk) =>
+      listGroupMembers(
+        organizationId,
+        groupId,
+        { page: 1, pageSize: MAX_PAGE_SIZE, userIds: chunk },
+        signal,
+      ),
+  );
+  const byUser = new Map(
+    pages.flatMap((page) => page.memberships).map((m) => [m.userId, m]),
+  );
+  return [...byUser.values()];
+}
 
 export const addGroupMember = (
   organizationId: string,

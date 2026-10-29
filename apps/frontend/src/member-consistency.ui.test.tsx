@@ -10,13 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderApp } from "./test/renderApp";
 import {
-  NO_PERMISSIONS,
   deferred,
   errorResponse,
+  groupMembershipsPage,
   jsonResponse,
   membership,
   mockTransport,
+  NO_PERMISSIONS,
+  orgMembershipsPage,
   profileFixture,
+  usersPage,
 } from "./test/transport";
 
 afterEach(() => {
@@ -28,62 +31,83 @@ afterEach(() => {
 // recover from a conflict, avoid one request per group and keep announcements
 // and focus where assistive technology can find them.
 
-const north = { id: "org-1", name: "Academia Norte" };
+const north = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
 const adminProfile = profileFixture({
   memberships: [membership(north, "ADMIN")],
 });
 const READ = { ...NO_PERMISSIONS, readInvoices: true };
 
 const ada = {
-  userId: "user-1",
-  organizationId: "org-1",
+  userId: "00000000-0000-4000-8000-000000000001",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   role: "ADMIN",
   permissions: NO_PERMISSIONS,
   groups: [] as unknown[],
-  user: { id: "user-1", name: "Ada Lovelace", rut: "123456785" },
+  user: {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "Ada Lovelace",
+    rut: "123456785",
+  },
 };
 const carlaGroups = [
   {
-    groupId: "group-a",
+    groupId: "00000000-0000-4000-a000-000000000097",
     name: "Contabilidad",
     permissions: { ...NO_PERMISSIONS, createInvoices: true },
   },
-  { groupId: "group-b", name: "Ventas", permissions: READ },
+  {
+    groupId: "00000000-0000-4000-a000-000000000098",
+    name: "Ventas",
+    permissions: READ,
+  },
 ];
 const carla = {
-  userId: "user-3",
-  organizationId: "org-1",
+  userId: "00000000-0000-4000-8000-000000000003",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   role: "USER",
   permissions: READ,
   groups: carlaGroups as unknown[],
-  user: { id: "user-3", name: "Carla Soto", rut: "190347907" },
+  user: {
+    id: "00000000-0000-4000-8000-000000000003",
+    name: "Carla Soto",
+    rut: "190347907",
+  },
 };
 const diego = {
-  userId: "user-5",
-  organizationId: "org-1",
+  userId: "00000000-0000-4000-8000-000000000005",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   role: "USER",
   permissions: NO_PERMISSIONS,
   groups: [] as unknown[],
-  user: { id: "user-5", name: "Diego Peña", rut: "111111111" },
+  user: {
+    id: "00000000-0000-4000-8000-000000000005",
+    name: "Diego Peña",
+    rut: "111111111",
+  },
 };
 
 const groupA = {
-  id: "group-a",
-  organizationId: "org-1",
+  id: "00000000-0000-4000-a000-000000000097",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   name: "Contabilidad",
   description: null,
 };
 const groupB = {
-  id: "group-b",
-  organizationId: "org-1",
+  id: "00000000-0000-4000-a000-000000000098",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   name: "Ventas",
   description: null,
 };
 
-const MEMBERSHIPS = "GET /api/v1/organizations/org-1/memberships";
-const USERS = "GET /api/v1/organizations/org-1/users";
+const MEMBERSHIPS =
+  "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships";
+const USERS =
+  "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users";
 const GROUP_A_MEMBERS =
-  "GET /api/v1/organizations/org-1/groups/group-a/memberships";
+  "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships";
 
 const asUser = (member: {
   user: { id: string; name: string; rut: string };
@@ -94,12 +118,12 @@ const asUser = (member: {
 });
 const inGroup = (
   member: { userId: string; user: { id: string; name: string; rut: string } },
-  groupId = "group-a",
+  groupId = "00000000-0000-4000-a000-000000000097",
   permissions = NO_PERMISSIONS,
 ) => ({
   userId: member.userId,
   groupId,
-  organizationId: "org-1",
+  organizationId: "00000000-0000-4000-9000-000000000001",
   permissions,
   user: member.user,
 });
@@ -108,15 +132,19 @@ function baseRoutes(people: Array<typeof ada> = [ada, carla]) {
   return {
     "GET /api/v1/auth/profile": () => jsonResponse({ profile: adminProfile }),
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-    "GET /api/v1/organizations/org-1": () =>
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001": () =>
       jsonResponse({
-        organization: { ...north, slug: "org-1", description: null },
+        organization: {
+          ...north,
+          slug: "00000000-0000-4000-9000-000000000001",
+          description: null,
+        },
         summary: { memberCount: people.length, groupCount: 2 },
       }),
-    [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
-    [USERS]: () => jsonResponse({ users: people.map(asUser) }),
-    "GET /api/v1/organizations/org-1/groups": () =>
-      jsonResponse({ groups: [groupA, groupB] }),
+    [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
+    [USERS]: () => jsonResponse(usersPage(people.map(asUser))),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+      () => jsonResponse({ groups: [groupA, groupB] }),
   };
 }
 
@@ -134,7 +162,10 @@ const perGroupMembershipReads = (
 describe("CR-217 the member page needs no request per group", () => {
   it("shows each group's flags from the memberships payload without reading any group list", async () => {
     const transport = mockTransport(baseRoutes());
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
 
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const accounting = screen.getByRole("region", { name: "Contabilidad" });
@@ -169,8 +200,8 @@ describe("CR-217 the member page needs no request per group", () => {
     let people = [ada, carla];
     const transport = mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
-      "PUT /api/v1/organizations/org-1/groups/group-a/memberships/user-3/permissions":
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
+      "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003/permissions":
         () => {
           people = [
             ada,
@@ -192,7 +223,10 @@ describe("CR-217 the member page needs no request per group", () => {
           return jsonResponse({ membership: {} });
         },
     });
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     const accounting = await screen.findByRole("region", {
       name: "Contabilidad",
     });
@@ -222,18 +256,22 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
   it("removing an organization member waits for the refetch before going to the list", async () => {
     let people = [ada, carla];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-3";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport({
       ...baseRoutes(),
       [MEMBERSHIPS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: people }),
+        hold ? hold.promise : jsonResponse(orgMembershipsPage(people)),
       [DELETE]: () => {
         people = [ada];
         hold = deferred<Response>();
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto de la organización",
@@ -247,33 +285,45 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
     await waitFor(() => expect(transport.calls(MEMBERSHIPS)).toHaveLength(2));
     // The refetch is still in flight: the person has not been moved.
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/members/user-3",
+      "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
     );
 
-    hold?.resolve(jsonResponse({ memberships: people }));
+    hold?.resolve(jsonResponse(orgMembershipsPage(people)));
+    // A Response body is read once: the paginated list the screen lands on
+    // makes its own request (page size 20), which must get a fresh response.
+    hold = undefined;
     await screen.findByText("Se quitó a Carla Soto de la organización.");
-    expect(window.location.pathname).toBe("/organizations/org-1/members");
-    // The list they land on is already the fresh one.
+    expect(window.location.pathname).toBe(
+      "/organizations/00000000-0000-4000-9000-000000000001/members",
+    );
+    // The list they land on is the fresh one: the paginated table is a
+    // separate query (page size 20) from the lookup the member screen used,
+    // so it loads on arrival, and never shows the removed person.
+    expect(
+      await screen.findByRole("link", { name: "Ada Lovelace" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Carla Soto" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Ada Lovelace" })).toBeTruthy();
   });
 
   it("removing a group member waits for the group's refetch before going to its list", async () => {
     let inA = [inGroup(carla), inGroup(ada)];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
     const DELETE =
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3";
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport({
       ...baseRoutes(),
       [GROUP_A_MEMBERS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: inA }),
+        hold ? hold.promise : jsonResponse(groupMembershipsPage(inA)),
       [DELETE]: () => {
         inA = [inGroup(ada)];
         hold = deferred<Response>();
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/group-a/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto del grupo",
@@ -288,13 +338,13 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
       expect(transport.calls(GROUP_A_MEMBERS)).toHaveLength(2),
     );
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-a/members/user-3",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003",
     );
 
-    hold?.resolve(jsonResponse({ memberships: inA }));
+    hold?.resolve(jsonResponse(groupMembershipsPage(inA)));
     await screen.findByText("Se quitó a Carla Soto del grupo.");
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-a/members",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members",
     );
     expect(screen.queryByRole("link", { name: "Carla Soto" })).toBeNull();
   });
@@ -302,19 +352,30 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
   it("adding people to a group waits for the refetch of its members before going to the list", async () => {
     let inA = [inGroup(carla)];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
+    let held = false;
     const POST =
-      "POST /api/v1/organizations/org-1/groups/group-a/memberships/bulk";
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/bulk";
     const transport = mockTransport({
       ...baseRoutes([ada, carla, diego]),
-      [GROUP_A_MEMBERS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: inA }),
+      // Only the refetch right after the write is held; the list screen that
+      // follows (another query) reads a plain, fresh answer.
+      [GROUP_A_MEMBERS]: () => {
+        if (hold && !held) {
+          held = true;
+          return hold.promise;
+        }
+        return jsonResponse(groupMembershipsPage(inA));
+      },
       [POST]: () => {
         inA = [inGroup(carla), inGroup(diego)];
         hold = deferred<Response>();
         return jsonResponse({ memberships: [] }, 201);
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/group-a/members/new" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
+    });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: /Diego Peña/ }),
     );
@@ -323,34 +384,40 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
     );
 
     await waitFor(() => expect(transport.calls(POST)).toHaveLength(1));
+    // Three reads: the page, the check of the selection before sending, and the
+    // refetch after the write (the one held).
     await waitFor(() =>
-      expect(transport.calls(GROUP_A_MEMBERS)).toHaveLength(2),
+      expect(transport.calls(GROUP_A_MEMBERS)).toHaveLength(3),
     );
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-a/members/new",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
     );
 
-    hold?.resolve(jsonResponse({ memberships: inA }));
+    hold?.resolve(jsonResponse(groupMembershipsPage(inA)));
     await screen.findByText("1 persona agregada al grupo.");
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-a/members",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members",
     );
-    expect(screen.getByRole("link", { name: "Diego Peña" })).toBeTruthy();
+    // The list is its own (paged) query: it reads the fresh group on arrival.
+    expect(
+      await screen.findByRole("link", { name: "Diego Peña" }),
+    ).toBeTruthy();
   });
 
   it("adding an existing person to the organization lands on a list that already has them", async () => {
     let people = [ada];
-    const POST = "POST /api/v1/organizations/org-1/memberships";
+    const POST =
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships";
     const transport = mockTransport({
       ...baseRoutes([ada]),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
       [POST]: () => {
         people = [ada, diego];
         return jsonResponse(
           {
             membership: {
-              userId: "user-5",
-              organizationId: "org-1",
+              userId: "00000000-0000-4000-8000-000000000005",
+              organizationId: "00000000-0000-4000-9000-000000000001",
               role: "USER",
               permissions: NO_PERMISSIONS,
             },
@@ -359,14 +426,18 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
         );
       },
     });
-    renderApp({ route: "/organizations/org-1/members/new" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/members/new",
+    });
     fireEvent.change(await screen.findByLabelText(/RUT de la persona/), {
       target: { value: "111111111" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
 
     await screen.findByText("Persona agregada a la organización.");
-    expect(window.location.pathname).toBe("/organizations/org-1/members");
+    expect(window.location.pathname).toBe(
+      "/organizations/00000000-0000-4000-9000-000000000001/members",
+    );
     // The first read of the list happens after the write: nothing stale.
     expect(
       await screen.findByRole("link", { name: "Diego Peña" }),
@@ -380,10 +451,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     let inA = [inGroup(carla)];
     let first = true;
     const POST =
-      "POST /api/v1/organizations/org-1/groups/group-a/memberships/bulk";
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/bulk";
     const transport = mockTransport({
       ...baseRoutes([ada, carla, diego]),
-      [GROUP_A_MEMBERS]: () => jsonResponse({ memberships: inA }),
+      [GROUP_A_MEMBERS]: () => jsonResponse(groupMembershipsPage(inA)),
       [POST]: () => {
         if (first) {
           first = false;
@@ -394,7 +465,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
         return jsonResponse({ memberships: [] }, 201);
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/group-a/members/new" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
+    });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: /Diego Peña/ }),
     );
@@ -427,7 +501,12 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     );
     await screen.findByText("1 persona agregada al grupo.");
     expect(transport.calls(POST)[1]?.body).toEqual({
-      members: [{ userId: "user-1", permissions: NO_PERMISSIONS }],
+      members: [
+        {
+          userId: "00000000-0000-4000-8000-000000000001",
+          permissions: NO_PERMISSIONS,
+        },
+      ],
     });
   });
 
@@ -435,10 +514,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     let inA = [inGroup(carla)];
     let first = true;
     const POST =
-      "POST /api/v1/organizations/org-1/groups/group-a/memberships/bulk";
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/bulk";
     mockTransport({
       ...baseRoutes([ada, carla, diego]),
-      [GROUP_A_MEMBERS]: () => jsonResponse({ memberships: inA }),
+      [GROUP_A_MEMBERS]: () => jsonResponse(groupMembershipsPage(inA)),
       [POST]: () => {
         if (first) {
           first = false;
@@ -449,7 +528,8 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
       },
     });
     const { store } = renderApp({
-      route: "/organizations/org-1/groups/group-a/members/new",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
     });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: /Diego Peña/ }),
@@ -464,7 +544,14 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     inA = [inGroup(carla)];
     await act(async () => {
       await store.getSnapshot().client.invalidateQueries({
-        queryKey: ["identity", "user-1", "org", "org-1", "group", "group-a"],
+        queryKey: [
+          "identity",
+          "00000000-0000-4000-8000-000000000001",
+          "org",
+          "00000000-0000-4000-9000-000000000001",
+          "group",
+          "00000000-0000-4000-a000-000000000097",
+        ],
       });
     });
     const back = await screen.findByRole("checkbox", { name: /Diego Peña/ });
@@ -476,12 +563,13 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     let people = [ada, carla, diego];
     let first = true;
     const POST =
-      "POST /api/v1/organizations/org-1/groups/group-a/memberships/bulk";
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/bulk";
     const transport = mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
-      [USERS]: () => jsonResponse({ users: people.map(asUser) }),
-      [GROUP_A_MEMBERS]: () => jsonResponse({ memberships: [inGroup(carla)] }),
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
+      [USERS]: () => jsonResponse(usersPage(people.map(asUser))),
+      [GROUP_A_MEMBERS]: () =>
+        jsonResponse(groupMembershipsPage([inGroup(carla)])),
       [POST]: () => {
         if (!first) return jsonResponse({ memberships: [] }, 201);
         first = false;
@@ -489,7 +577,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
         return errorResponse(404, "NOT_FOUND");
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/group-a/members/new" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/new",
+    });
     fireEvent.click(
       await screen.findByRole("checkbox", { name: /Diego Peña/ }),
     );
@@ -511,10 +602,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     let inA = [inGroup(carla), inGroup(diego)];
     let first = true;
     const PUT =
-      "PUT /api/v1/organizations/org-1/groups/group-a/memberships/permissions";
+      "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/permissions";
     const transport = mockTransport({
       ...baseRoutes([ada, carla, diego]),
-      [GROUP_A_MEMBERS]: () => jsonResponse({ memberships: inA }),
+      [GROUP_A_MEMBERS]: () => jsonResponse(groupMembershipsPage(inA)),
       [PUT]: () => {
         if (!first) return jsonResponse({ memberships: [] });
         first = false;
@@ -524,7 +615,7 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     });
     renderApp({
       route:
-        "/organizations/org-1/groups/group-a/members/permissions?userIds=user-3,user-5",
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/permissions?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000005",
     });
     await screen.findByText("Diego Peña");
     fireEvent.click(screen.getByRole("button", { name: "Leer facturas" }));
@@ -539,7 +630,7 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
       screen.getByRole("button", { name: "Aplicar a 1 miembro" }),
     ).toBeTruthy();
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-a/members/permissions",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/permissions",
     );
 
     fireEvent.click(
@@ -547,24 +638,26 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     );
     await screen.findByText("Permisos actualizados para 1 miembro.");
     expect(transport.calls(PUT)[1]?.body).toEqual({
-      userIds: ["user-3"],
+      userIds: ["00000000-0000-4000-8000-000000000003"],
       permissions: { ...NO_PERMISSIONS, readInvoices: true },
     });
   });
 
   it("organization bulk permissions: names everybody who left and says none is left", async () => {
     let people = [ada, carla, diego];
-    const PUT = "PUT /api/v1/organizations/org-1/memberships/permissions";
+    const PUT =
+      "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/permissions";
     mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
       [PUT]: () => {
         people = [ada];
         return errorResponse(404, "NOT_FOUND");
       },
     });
     renderApp({
-      route: "/organizations/org-1/members/permissions?userIds=user-3,user-5",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/permissions?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000005",
     });
     await screen.findByText("Diego Peña");
     fireEvent.click(screen.getByRole("button", { name: "Leer facturas" }));
@@ -582,13 +675,15 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
   });
 
   it("does not refresh anything for an unrelated failure", async () => {
-    const PUT = "PUT /api/v1/organizations/org-1/memberships/permissions";
+    const PUT =
+      "PUT /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/permissions";
     const transport = mockTransport({
       ...baseRoutes([ada, carla]),
       [PUT]: () => errorResponse(403, "FORBIDDEN"),
     });
     renderApp({
-      route: "/organizations/org-1/members/permissions?userIds=user-3",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/permissions?userIds=00000000-0000-4000-8000-000000000003",
     });
     await screen.findByText("Carla Soto");
     fireEvent.click(screen.getByRole("button", { name: "Crear facturas" }));
@@ -602,7 +697,10 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
 
 describe("CR-235 announcements and focus around destructive actions", () => {
   async function openCarlaGroup() {
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     const card = await screen.findByRole("region", { name: "Contabilidad" });
     fireEvent.click(within(card).getByRole("button", { name: "Contabilidad" }));
     return card;
@@ -612,8 +710,8 @@ describe("CR-235 announcements and focus around destructive actions", () => {
     let people = [ada, carla];
     mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3":
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003":
         () => {
           people = [ada, { ...carla, groups: [carlaGroups[1]] }];
           return new Response(null, { status: 204 });
@@ -644,7 +742,7 @@ describe("CR-235 announcements and focus around destructive actions", () => {
   it("returns focus to the trigger after cancelling and after confirming", async () => {
     mockTransport({
       ...baseRoutes(),
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3":
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003":
         () => errorResponse(500, "INTERNAL_ERROR"),
     });
     const card = await openCarlaGroup();
@@ -666,7 +764,7 @@ describe("CR-235 announcements and focus around destructive actions", () => {
   it("moves focus to the error alert when the removal fails", async () => {
     mockTransport({
       ...baseRoutes(),
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3":
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003":
         () => errorResponse(500, "INTERNAL_ERROR"),
     });
     const card = await openCarlaGroup();
@@ -696,11 +794,15 @@ describe("CR-236 changing your own role or leaving", () => {
   });
 
   it("asks before changing your own role and sends nothing when you cancel", async () => {
-    const PATCH = "PATCH /api/v1/organizations/org-1/memberships/user-1";
+    const PATCH =
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001";
     const transport = mockTransport(
       selfRoutes({ [PATCH]: () => jsonResponse({ membership: {} }) }),
     );
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     const select = (await screen.findByLabelText(
       "Rol de Ada Lovelace",
     )) as HTMLSelectElement;
@@ -719,11 +821,15 @@ describe("CR-236 changing your own role or leaving", () => {
   });
 
   it("sends the change once confirmed", async () => {
-    const PATCH = "PATCH /api/v1/organizations/org-1/memberships/user-1";
+    const PATCH =
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001";
     const transport = mockTransport(
       selfRoutes({ [PATCH]: () => jsonResponse({ membership: {} }) }),
     );
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     fireEvent.change(await screen.findByLabelText("Rol de Ada Lovelace"), {
       target: { value: "USER" },
     });
@@ -735,11 +841,15 @@ describe("CR-236 changing your own role or leaving", () => {
   });
 
   it("does not ask to change somebody else's role", async () => {
-    const PATCH = "PATCH /api/v1/organizations/org-1/memberships/user-3";
+    const PATCH =
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport(
       selfRoutes({ [PATCH]: () => jsonResponse({ membership: {} }) }),
     );
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.change(await screen.findByLabelText("Rol de Carla Soto"), {
       target: { value: "ADMIN" },
     });
@@ -749,7 +859,8 @@ describe("CR-236 changing your own role or leaving", () => {
 
   it("after removing yourself goes to your organizations with a notice, not to the member list", async () => {
     let profile = adminProfile;
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-1";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001";
     const transport = mockTransport({
       ...selfRoutes(),
       "GET /api/v1/auth/profile": () => jsonResponse({ profile }),
@@ -758,7 +869,10 @@ describe("CR-236 changing your own role or leaving", () => {
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Ada Lovelace de la organización",
@@ -803,18 +917,22 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
   it("organization member: the screen holds while the refresh drops the person", async () => {
     let people = [ada, carla];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-3";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport({
       ...baseRoutes(),
       [MEMBERSHIPS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: people }),
+        hold ? hold.promise : jsonResponse(orgMembershipsPage(people)),
       [DELETE]: () => {
         people = [ada];
         hold = deferred<Response>();
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto de la organización",
@@ -825,7 +943,7 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
       screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
     );
     await waitFor(() => expect(transport.calls(MEMBERSHIPS)).toHaveLength(2));
-    hold?.resolve(jsonResponse({ memberships: people }));
+    hold?.resolve(jsonResponse(orgMembershipsPage(people)));
     await screen.findByText("Se quitó a Carla Soto de la organización.");
     expect(watcher.seen()).toBe(false);
     watcher.stop();
@@ -835,12 +953,13 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     let profile = adminProfile;
     let people = [ada, carla];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-1";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001";
     const transport = mockTransport({
       ...baseRoutes(),
       "GET /api/v1/auth/profile": () => jsonResponse({ profile }),
       [MEMBERSHIPS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: people }),
+        hold ? hold.promise : jsonResponse(orgMembershipsPage(people)),
       [DELETE]: () => {
         profile = profileFixture({ memberships: [] });
         people = [carla];
@@ -848,7 +967,10 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Ada Lovelace de la organización",
@@ -865,7 +987,7 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     expect(transport.calls("GET /api/v1/auth/profile")).toHaveLength(
       profileReads,
     );
-    hold?.resolve(jsonResponse({ memberships: people }));
+    hold?.resolve(jsonResponse(orgMembershipsPage(people)));
     await screen.findByText("Saliste de la organización «Academia Norte».");
     expect(window.location.pathname).toBe("/organizations");
     // The profile is refreshed after leaving.
@@ -882,18 +1004,21 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     let inA = [inGroup(carla), inGroup(ada)];
     let hold: ReturnType<typeof deferred<Response>> | undefined;
     const DELETE =
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3";
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport({
       ...baseRoutes(),
       [GROUP_A_MEMBERS]: () =>
-        hold ? hold.promise : jsonResponse({ memberships: inA }),
+        hold ? hold.promise : jsonResponse(groupMembershipsPage(inA)),
       [DELETE]: () => {
         inA = [inGroup(ada)];
         hold = deferred<Response>();
         return new Response(null, { status: 204 });
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/group-a/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto del grupo",
@@ -906,19 +1031,23 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     await waitFor(() =>
       expect(transport.calls(GROUP_A_MEMBERS)).toHaveLength(2),
     );
-    hold?.resolve(jsonResponse({ memberships: inA }));
+    hold?.resolve(jsonResponse(groupMembershipsPage(inA)));
     await screen.findByText("Se quitó a Carla Soto del grupo.");
     expect(watcher.seen()).toBe(false);
     watcher.stop();
   });
 
   it("a failed removal gives the screen back (no stale frozen person)", async () => {
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-3";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     mockTransport({
       ...baseRoutes(),
       [DELETE]: () => errorResponse(500, "INTERNAL_ERROR"),
     });
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto de la organización",
@@ -931,7 +1060,7 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
       "No fue posible quitar al miembro. Intenta nuevamente.",
     );
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/members/user-3",
+      "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
     );
   });
 });
@@ -939,13 +1068,17 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
 describe("CR-215 single-person writes refresh after a 404 or 409", () => {
   const key = (...parts: string[]) => [
     "identity",
-    "user-1",
+    "00000000-0000-4000-8000-000000000001",
     "org",
-    "org-1",
+    "00000000-0000-4000-9000-000000000001",
     ...parts,
   ];
   const USERS_KEY = key("users");
-  const GROUP_A_KEY = key("group", "group-a", "memberships");
+  const GROUP_A_KEY = key(
+    "group",
+    "00000000-0000-4000-a000-000000000097",
+    "memberships",
+  );
 
   /** Seeds the lists a conflict must refresh and reports which went stale. */
   function seed(client: {
@@ -961,7 +1094,8 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
   }
 
   it("adding to a group: a 409 refreshes the people and that group; a 500 refreshes nothing", async () => {
-    const POST = "POST /api/v1/organizations/org-1/groups/group-a/memberships";
+    const POST =
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships";
     for (const [status, refreshed] of [
       [409, true],
       [500, false],
@@ -971,7 +1105,8 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
         [POST]: () => errorResponse(status, "ERROR"),
       });
       const { store } = renderApp({
-        route: "/organizations/org-1/members/user-5",
+        route:
+          "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000005",
       });
       const addButton = await screen.findByRole("button", {
         name: "Agregar al grupo",
@@ -997,11 +1132,11 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
 
   it("removing from a group: a 404 refreshes the people and that group", async () => {
     const DELETE =
-      "DELETE /api/v1/organizations/org-1/groups/group-a/memberships/user-3";
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships/00000000-0000-4000-8000-000000000003";
     let people = [ada, carla];
     const transport = mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
       [DELETE]: () => {
         // Somebody else already removed Carla from the group.
         people = [ada, { ...carla, groups: [carlaGroups[1]] }];
@@ -1009,7 +1144,8 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
       },
     });
     const { store } = renderApp({
-      route: "/organizations/org-1/members/user-3",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
     });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const stale = seed(store.getSnapshot().client);
@@ -1036,13 +1172,15 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
   });
 
   it("changing a role: a 409 refreshes the people", async () => {
-    const PATCH = "PATCH /api/v1/organizations/org-1/memberships/user-3";
+    const PATCH =
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     const transport = mockTransport({
       ...baseRoutes(),
       [PATCH]: () => errorResponse(409, "LAST_ADMIN"),
     });
     const { store } = renderApp({
-      route: "/organizations/org-1/members/user-3",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
     });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const stale = seed(store.getSnapshot().client);
@@ -1055,18 +1193,20 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
   });
 
   it("removing a member: a 404 refreshes the people", async () => {
-    const DELETE = "DELETE /api/v1/organizations/org-1/memberships/user-3";
+    const DELETE =
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003";
     let people = [ada, carla];
     const transport = mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
       [DELETE]: () => {
         people = [ada];
         return errorResponse(404, "NOT_FOUND");
       },
     });
     const { store } = renderApp({
-      route: "/organizations/org-1/members/user-3",
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
     });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const stale = seed(store.getSnapshot().client);
@@ -1085,12 +1225,15 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
   });
 
   it("assigning a member: a 409 refreshes the people", async () => {
-    const POST = "POST /api/v1/organizations/org-1/memberships";
+    const POST =
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships";
     const transport = mockTransport({
       ...baseRoutes([ada]),
       [POST]: () => errorResponse(409, "ALREADY_MEMBER"),
     });
-    const { store } = renderApp({ route: "/organizations/org-1/members/new" });
+    const { store } = renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/members/new",
+    });
     await screen.findByLabelText(/RUT de la persona/);
     const stale = seed(store.getSnapshot().client);
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
@@ -1103,7 +1246,8 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
 });
 
 describe("CR-255 self role change keeps focus where the person is", () => {
-  const PATCH = "PATCH /api/v1/organizations/org-1/memberships/user-1";
+  const PATCH =
+    "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001";
   const routes = () => ({
     ...baseRoutes([ada, carla]),
     [PATCH]: () => jsonResponse({ membership: {} }),
@@ -1111,7 +1255,10 @@ describe("CR-255 self role change keeps focus where the person is", () => {
 
   it("focuses the confirm button when the question appears and the role select on cancel", async () => {
     mockTransport(routes());
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     const select = (await screen.findByLabelText(
       "Rol de Ada Lovelace",
     )) as HTMLSelectElement;
@@ -1128,7 +1275,10 @@ describe("CR-255 self role change keeps focus where the person is", () => {
 
   it("returns focus to the role select after confirming", async () => {
     const transport = mockTransport(routes());
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     const select = await screen.findByLabelText("Rol de Ada Lovelace");
     fireEvent.change(select, { target: { value: "ADMIN" } });
     // Same value as the saved one still asks; any change does.
@@ -1151,13 +1301,17 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
     let people = [ada, carla];
     mockTransport({
       ...baseRoutes(),
-      [MEMBERSHIPS]: () => jsonResponse({ memberships: people }),
-      "DELETE /api/v1/organizations/org-1/memberships/user-3": () => {
-        people = [ada];
-        return new Response(null, { status: 204 });
-      },
+      [MEMBERSHIPS]: () => jsonResponse(orgMembershipsPage(people)),
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003":
+        () => {
+          people = [ada];
+          return new Response(null, { status: 204 });
+        },
     });
-    renderApp({ route: "/organizations/org-1/members/user-3" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto de la organización",
@@ -1170,8 +1324,17 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
     const notice = await screen.findByText(
       "Se quitó a Carla Soto de la organización.",
     );
-    expect(notice.getAttribute("role")).toBe("status");
-    expect(window.location.pathname).toBe("/organizations/org-1/members");
+    // The card is the visible copy; the shell's persistent polite region
+    // (outside the card) holds the announced text.
+    expect(notice.closest(".toast")).toBeTruthy();
+    await waitFor(() =>
+      expect(document.querySelector("[data-notice-region]")?.textContent).toBe(
+        "Se quitó a Carla Soto de la organización.",
+      ),
+    );
+    expect(window.location.pathname).toBe(
+      "/organizations/00000000-0000-4000-9000-000000000001/members",
+    );
     const entries = window.history.length;
     await waitFor(() => expect(storedNotice()).toBeUndefined());
     // Still visible for the current render, and the entry was replaced, not added.
@@ -1182,20 +1345,28 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
   });
 
   it("creating a group: the add-members screen shows the notice and clears it", async () => {
-    const POST = "POST /api/v1/organizations/org-1/groups";
-    const created = { ...groupA, id: "group-9", name: "Nuevo" };
+    const POST =
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups";
+    const created = {
+      ...groupA,
+      id: "00000000-0000-4000-a000-000000000009",
+      name: "Nuevo",
+    };
     let groups = [groupA, groupB];
     mockTransport({
       ...baseRoutes([ada, carla]),
-      "GET /api/v1/organizations/org-1/groups": () => jsonResponse({ groups }),
-      "GET /api/v1/organizations/org-1/groups/group-9/memberships": () =>
-        jsonResponse({ memberships: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000009/memberships":
+        () => jsonResponse(groupMembershipsPage([])),
       [POST]: () => {
         groups = [...groups, created];
         return jsonResponse({ group: created }, 201);
       },
     });
-    renderApp({ route: "/organizations/org-1/groups/new" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups/new",
+    });
     fireEvent.change(await screen.findByLabelText("Nombre del grupo"), {
       target: { value: "Nuevo" },
     });
@@ -1213,12 +1384,16 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
     mockTransport({
       ...baseRoutes([ada, carla]),
       "GET /api/v1/auth/profile": () => jsonResponse({ profile }),
-      "DELETE /api/v1/organizations/org-1/memberships/user-1": () => {
-        profile = profileFixture({ memberships: [] });
-        return new Response(null, { status: 204 });
-      },
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001":
+        () => {
+          profile = profileFixture({ memberships: [] });
+          return new Response(null, { status: 204 });
+        },
     });
-    renderApp({ route: "/organizations/org-1/members/user-1" });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000001",
+    });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Ada Lovelace de la organización",

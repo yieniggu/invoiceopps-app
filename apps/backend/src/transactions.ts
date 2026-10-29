@@ -1,5 +1,6 @@
 import { Prisma } from "./generated/prisma/client.js";
 import { ApiError } from "./http/errors.js";
+import { logEvent } from "./http/logging.js";
 
 /** Options of every interactive transaction that runs under runSerializable. */
 export const SERIALIZABLE = {
@@ -77,24 +78,42 @@ function retryableConflict() {
   );
 }
 
+function logConflict(
+  operation: string,
+  attempt: number,
+  outcome: "retry" | "gave_up",
+) {
+  logEvent("warn", "transaction.conflict", { operation, attempt, outcome });
+}
+
 /**
  * Retries a serializable operation a bounded number of times on conflicts,
  * pausing 10-50 ms (jittered) between attempts. When retries run out,
  * `conflictError` builds the error to throw; the default is a retryable 503
  * (RETRYABLE_CONFLICT with Retry-After). A transaction timeout (P2028) is not
- * repeated in-process: it maps straight to the same retryable 503.
+ * repeated in-process: it maps straight to the same retryable 503. Every
+ * retry and every give-up logs a warning with `operationName` (a fixed label,
+ * never request data) and the attempt number.
  */
 export async function runSerializable<T>(
   operation: () => Promise<T>,
   conflictError: () => Error = retryableConflict,
+  operationName = "unnamed",
 ): Promise<T> {
   for (let attempt = 0; attempt < MAX_SERIALIZABLE_RETRIES; attempt += 1) {
     try {
       return await operation();
     } catch (error) {
-      if (isTransactionTimeout(error)) throw retryableConflict();
+      if (isTransactionTimeout(error)) {
+        logConflict(operationName, attempt + 1, "gave_up");
+        throw retryableConflict();
+      }
       if (!isTransactionConflict(error)) throw error;
-      if (attempt === MAX_SERIALIZABLE_RETRIES - 1) throw conflictError();
+      if (attempt === MAX_SERIALIZABLE_RETRIES - 1) {
+        logConflict(operationName, attempt + 1, "gave_up");
+        throw conflictError();
+      }
+      logConflict(operationName, attempt + 1, "retry");
       await backoff();
     }
   }

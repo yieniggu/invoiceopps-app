@@ -1,6 +1,7 @@
 import { expect, test } from "../support/test.ts";
 import { expectNoStateWordsInToggles } from "../support/layout.ts";
 import { createScenario } from "../support/scenario.ts";
+import { notice } from "../support/notice.ts";
 
 const h1 = (page: import("@playwright/test").Page, name: string | RegExp) =>
   page.getByRole("heading", { level: 1, name });
@@ -24,22 +25,44 @@ test.describe("groups", () => {
       await page.getByLabel(/Descripción/).fill("Grupo creado por la prueba");
       await page.getByRole("button", { name: "Crear grupo" }).click();
       await expect(
-        page.getByText("Grupo creado. Agrega a sus miembros."),
+        notice(page, "Grupo creado. Agrega a sus miembros."),
       ).toBeVisible();
 
       // The creation lands on the next step: add members.
       await expect(h1(page, "Agregar miembros al grupo")).toBeVisible();
-      await page
-        .getByLabel("Buscar por nombre o RUT")
-        .fill(a.name.split(" ")[0]);
+      // The search runs on the server when it is submitted (Enter / «Buscar»).
+      // Each search waits for its own URL, so the next fill never races the
+      // navigation of the previous one.
+      const search = async (text: string) => {
+        await page.getByLabel("Buscar por nombre o RUT").fill(text);
+        await page.getByRole("button", { name: "Buscar" }).click();
+        await expect(page).toHaveURL(
+          text
+            ? new RegExp(`[?&]search=${encodeURIComponent(text)}(&|$)`)
+            : (url) => !url.searchParams.has("search"),
+        );
+      };
+      // Before searching everybody is listed.
       await expect(page.getByText(a.name)).toBeVisible();
-      await page.getByLabel("Buscar por nombre o RUT").fill("zzzz-no-match");
+      await expect(page.getByText(b.name)).toBeVisible();
+      await expect(page.getByText(c.name)).toBeVisible();
+      await search(a.key);
+      await expect(page.getByText(a.name)).toBeVisible();
+      // Only true once the server filtered: the other members are gone.
+      await expect(page.getByText(b.name)).toHaveCount(0);
+      await expect(page.getByText(c.name)).toHaveCount(0);
+      await search("zzzz-no-match");
       await expect(
         page.getByText("Ninguna persona coincide con la búsqueda."),
       ).toBeVisible();
-      await page.getByLabel("Buscar por nombre o RUT").fill("");
+      await search("");
+      await expect(page.getByText(b.name)).toBeVisible();
+      await expect(page.getByText(c.name)).toBeVisible();
 
-      await page.getByRole("checkbox", { name: "Seleccionar todos" }).check();
+      // "Select all" applies to the page on screen: the 4 people fit one page.
+      await page
+        .getByRole("checkbox", { name: "Seleccionar todos en esta página" })
+        .check();
       await expect(page.getByText("4 personas seleccionadas.")).toBeVisible();
       await page
         .getByRole("checkbox", { name: new RegExp(s.admin.name) })
@@ -164,7 +187,7 @@ test.describe("groups", () => {
         .getByRole("button", { name: `Confirmar quitar a ${a.name}` })
         .click();
       await expect(
-        page.getByText(`Se quitó a ${a.name} del grupo.`),
+        notice(page, `Se quitó a ${a.name} del grupo.`),
       ).toBeVisible();
       await expect(page.getByRole("link", { name: a.name })).toHaveCount(0);
     } finally {

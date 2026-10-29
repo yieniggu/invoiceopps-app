@@ -4,6 +4,8 @@ import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
 import type { Profile } from "../../auth/types";
 import { paths } from "../../navigation/paths";
+import { Toast } from "../../../components/Toast";
+import { useRouteNotice } from "../../navigation/useRouteNotice";
 import { OrganizationGate } from "../components/OrganizationGate";
 import { useOrganizationQuery } from "../hooks/useOrganizations";
 
@@ -31,6 +33,7 @@ function OrganizationSummaryView({
 }) {
   const query = useOrganizationQuery(organization.id);
   const detail = query.data;
+  const notice = useRouteNotice();
 
   return (
     <div className="screen-stack">
@@ -45,11 +48,13 @@ function OrganizationSummaryView({
         }
         action={
           <div className="header-actions">
-            {canManage ? (
-              <LinkButton to={paths.organizationMembers(organization.id)}>
-                Miembros
-              </LinkButton>
-            ) : null}
+            {/* Every member may see who else belongs (the reduced list). */}
+            <LinkButton
+              to={paths.organizationMembers(organization.id)}
+              variant={canManage ? "primary" : "secondary"}
+            >
+              Miembros
+            </LinkButton>
             <LinkButton
               to={paths.organizationGroups(organization.id)}
               variant={canManage ? "secondary" : "primary"}
@@ -57,16 +62,25 @@ function OrganizationSummaryView({
               Grupos
             </LinkButton>
             {canManage ? (
-              <LinkButton
-                to={paths.newOrganizationMember(organization.id)}
-                variant="secondary"
-              >
-                Agregar miembro
-              </LinkButton>
+              <>
+                <LinkButton
+                  to={paths.newOrganizationMember(organization.id)}
+                  variant="secondary"
+                >
+                  Agregar miembro
+                </LinkButton>
+                <LinkButton
+                  to={paths.editOrganization(organization.id)}
+                  variant="secondary"
+                >
+                  Editar organización
+                </LinkButton>
+              </>
             ) : null}
           </div>
         }
       />
+      <Toast message={notice.message} noticeId={notice.id} />
       <QueryFeedback
         query={query}
         loading="Cargando organización..."

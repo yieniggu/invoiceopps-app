@@ -20,6 +20,10 @@ export interface LogFields {
   groupId?: string;
   actorUserId?: string;
   targetUserId?: string;
+  /** Transaction conflicts: fixed operation label, attempt and outcome. */
+  operation?: string;
+  attempt?: number;
+  outcome?: string;
   /** Bulk audit events: how many memberships the batch touched. */
   memberCount?: number;
 }

@@ -15,10 +15,13 @@ afterEach(() => {
 });
 
 const profile = {
-  id: "user-1",
+  id: "00000000-0000-4000-8000-000000000001",
   memberships: [
     {
-      organization: { id: "organization-1", name: "AI Academy" },
+      organization: {
+        id: "00000000-0000-4000-9000-000000000001",
+        name: "AI Academy",
+      },
       role: "USER",
     },
   ],
@@ -32,8 +35,8 @@ function invoice(
   return {
     id: `uuid-${businessId}`,
     businessId,
-    organizationId: "organization-1",
-    groupId: "group-1",
+    organizationId: "00000000-0000-4000-9000-000000000001",
+    groupId: "00000000-0000-4000-a000-000000000001",
     supplierName,
     amountPesos,
     currency: "CLP",
@@ -41,7 +44,7 @@ function invoice(
     dueOn: "2026-11-25",
     businessStatus: "PENDING",
     processingStatus: "NOT_REQUESTED",
-    createdByUserId: "user-1",
+    createdByUserId: "00000000-0000-4000-8000-000000000001",
     createdAt: "2026-10-25T12:00:00.000Z",
   };
 }
@@ -82,6 +85,50 @@ describe("APP-06 invoice workspace", () => {
     expect(screen.getByText("2026-10-25")).toBeTruthy();
     expect(screen.getByText("2026-11-25")).toBeTruthy();
     expect(screen.queryByText("Contexto de riesgo")).toBeNull();
+  });
+
+  it("asks for an owner, with no broken subtitle, when the selection is gone", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invoices: [], nextCursor: null }), {
+        status: 200,
+      }),
+    );
+    const { rerender } = render(
+      <InvoiceWorkspace profile={profile} groups={[]} />,
+    );
+    expect(
+      await screen.findByText("No hay facturas para este propietario."),
+    ).toBeTruthy();
+    // The selected organization is revoked while another remains available.
+    rerender(
+      <InvoiceWorkspace
+        profile={{
+          ...profile,
+          memberships: [
+            {
+              organization: {
+                id: "00000000-0000-4000-9000-000000000002",
+                name: "Other Org",
+              },
+              role: "USER",
+            },
+          ],
+        }}
+        groups={[]}
+      />,
+    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 3,
+        name: "Elige un propietario",
+      }),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("undefined");
+    expect(screen.queryByText(/Grupo:/)).toBeNull();
+    expect(
+      screen.queryByText("No hay facturas para este propietario."),
+    ).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("shows a recoverable list error", async () => {
@@ -155,10 +202,12 @@ describe("APP-06 invoice workspace", () => {
       "http://test",
     );
     expect(nextPageUrl.searchParams.get("organizationId")).toBe(
-      "organization-1",
+      "00000000-0000-4000-9000-000000000001",
     );
     expect(nextPageUrl.searchParams.get("ownerType")).toBe("user");
-    expect(nextPageUrl.searchParams.get("ownerId")).toBe("user-1");
+    expect(nextPageUrl.searchParams.get("ownerId")).toBe(
+      "00000000-0000-4000-8000-000000000001",
+    );
     expect(nextPageUrl.searchParams.get("q")).toBe("Acme");
     expect(nextPageUrl.searchParams.get("cursor")).toBe("cursor-1");
     expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();

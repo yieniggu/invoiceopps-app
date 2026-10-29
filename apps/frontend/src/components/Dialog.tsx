@@ -18,8 +18,8 @@ const focusableIn = (panel: HTMLElement) => [
 
 /**
  * Modal dialog: focus moves in on open, Tab stays inside, Escape closes and
- * focus returns to `returnFocusTo` (or to what had focus before it opened).
- * If that element left the page meanwhile, is disabled, or there was none,
+ * focus returns to `returnFocusTo` (or, without one, to what had focus before
+ * it opened). If that element left the page meanwhile, is disabled, or there was none,
  * focus lands on the page title.
  * The dialog is rendered straight into `document.body` and every other child
  * of `body` (the app) is made `inert` while it is open, so neither Tab nor a
@@ -64,7 +64,10 @@ export function Dialog({
     panel.current?.focus();
     return () => {
       for (const element of inerted) element.removeAttribute("inert");
-      const target = returnFocusTo?.current ?? previous;
+      // An explicit target that is no longer mounted (its ref is null) means
+      // the opener is gone: the page title, not whatever had focus by chance
+      // when a late dialog opened.
+      const target = returnFocusTo ? returnFocusTo.current : previous;
       // `body` is what holds focus when the opener vanished before the dialog
       // opened (the screen changed in the same render), and a disabled button
       // (e.g. "Creando...", confirmed before the success screen rendered)

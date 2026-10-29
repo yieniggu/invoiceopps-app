@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { ApiError, parseWith, sendError } from "../../src/http/errors.js";
+import {
+  ApiError,
+  ERROR_CODES,
+  parseWith,
+  sendError,
+} from "../../src/http/errors.js";
 
 function failure(run: () => unknown) {
   try {
@@ -72,5 +77,19 @@ describe("validation error fields", () => {
     );
 
     expect(Object.keys(error.fields!)).toEqual(["a"]);
+  });
+});
+
+describe("B3c S1 error codes", () => {
+  it("declares the user deactivation conflict codes", () => {
+    expect(ERROR_CODES).toEqual(
+      expect.arrayContaining(["SELF_ACTION_FORBIDDEN", "LAST_ADMIN_REQUIRED"]),
+    );
+  });
+
+  // The platform administrator is the only allowed actor, so targeting them
+  // is always a self action; a dedicated code would be unreachable.
+  it("does not declare an unreachable platform administrator code", () => {
+    expect(ERROR_CODES).not.toContain("PLATFORM_ADMINISTRATOR_PROTECTED");
   });
 });

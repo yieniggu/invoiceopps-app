@@ -87,7 +87,7 @@ export async function runRecoveryReset({
       `reset: prisma migrate deploy failed (exit ${result.status ?? "none"}): ${redact(`${result.stderr ?? ""}${result.stdout ?? ""}`, secrets).slice(-1500)}`,
     );
   }
-  log("reset: consolidated migration applied");
+  log("reset: migrations applied");
   return { databaseName: target.databaseName, url: target.url };
 }
 

@@ -2,9 +2,11 @@ import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import type { Profile } from "../../auth/types";
 import { paths } from "../../navigation/paths";
+import { Toast } from "../../../components/Toast";
 import { useRouteNotice } from "../../navigation/useRouteNotice";
 import type { ContextState } from "../../workspace/useWorkspaceGroups";
 import { OrganizationCard } from "../components/OrganizationCard";
+import { OrganizationDirectory } from "../components/OrganizationDirectory";
 
 /** Summary of the organizations the person belongs to. */
 export function OrganizationsScreen({
@@ -20,10 +22,16 @@ export function OrganizationsScreen({
   const hasMemberships = profile.memberships.length > 0;
 
   return (
-    <div className="screen-stack">
+    <div
+      className={`screen-stack${profile.isPlatformAdministrator ? " screen-fill" : ""}`}
+    >
       <PageHeader
         title="Organizaciones"
-        description="Las organizaciones a las que perteneces y tu rol en cada una. Abre una para ver su información y sus grupos."
+        description={
+          profile.isPlatformAdministrator
+            ? "Todas las organizaciones de la plataforma. Busca una y ábrela para administrarla."
+            : "Las organizaciones a las que perteneces y tu rol en cada una. Abre una para ver su información y sus grupos."
+        }
         action={
           profile.isPlatformAdministrator ? (
             <LinkButton to={paths.newOrganization}>
@@ -32,8 +40,13 @@ export function OrganizationsScreen({
           ) : undefined
         }
       />
-      {notice ? <p role="status">{notice}</p> : null}
-      {hasMemberships && contextState === "error" ? (
+      <Toast message={notice.message} noticeId={notice.id} />
+      {profile.isPlatformAdministrator ? (
+        <OrganizationDirectory profile={profile} />
+      ) : null}
+      {!profile.isPlatformAdministrator &&
+      hasMemberships &&
+      contextState === "error" ? (
         <>
           <p role="alert">
             No fue posible cargar el contexto de las organizaciones.
@@ -43,7 +56,7 @@ export function OrganizationsScreen({
           </button>
         </>
       ) : null}
-      {!hasMemberships ? (
+      {profile.isPlatformAdministrator ? null : !hasMemberships ? (
         <p>
           Aún no perteneces a ninguna organización. Pide a un administrador que
           te agregue.

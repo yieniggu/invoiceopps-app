@@ -26,6 +26,7 @@ const {
   makeOrg,
   makeGroup,
   addToGroup,
+  join,
   cookieFor,
   call,
   designatePlatformAdministrator,
@@ -272,6 +273,7 @@ describe("RP0-07 group memberships", () => {
 
     const listed = await call("get", base(s), cookie);
     expect(listed.status).toBe(200);
+    expect(listed.body).toMatchObject({ page: 1, pageSize: 20, total: 1 });
     expect(listed.body.memberships).toEqual([
       {
         userId: s.member.id,
@@ -287,6 +289,88 @@ describe("RP0-07 group memberships", () => {
     const again = await call("delete", `${base(s)}/${s.member.id}`, cookie);
     expect(again.status).toBe(404);
     expect(again.body.error.code).toBe("NOT_FOUND");
+  });
+
+  it("paginates the group memberships by name with bounds", async () => {
+    const s = await scenario();
+    const cookie = await cookieFor(s.admin);
+    const members = [
+      await makeUser("Ana Group"),
+      await makeUser("Bob Group 1"),
+      await makeUser("Bob Group 2"),
+    ];
+    for (const user of members) {
+      await join(user.id, s.org.id, "USER");
+      await addToGroup(s.group.id, user.id, s.org.id, NO_FLAGS);
+    }
+    const expected = members.map((member) => member.id);
+
+    const pages = [
+      await call("get", `${base(s)}?page=1&pageSize=2`, cookie),
+      await call("get", `${base(s)}?page=2&pageSize=2`, cookie),
+    ];
+    const ids = (r: { body: { memberships: Array<{ userId: string }> } }) =>
+      r.body.memberships.map((m) => m.userId);
+
+    expect(pages.map((p) => p.body.total)).toEqual([3, 3]);
+    expect(pages[1]!.body).toMatchObject({ page: 2, pageSize: 2 });
+    expect([...ids(pages[0]!), ...ids(pages[1]!)]).toEqual(expected);
+    expect((await call("get", `${base(s)}?pageSize=100`, cookie)).status).toBe(
+      200,
+    );
+    for (const bad of ["pageSize=101", "page=0", "page=10001", "foo=1"]) {
+      expect((await call("get", `${base(s)}?${bad}`, cookie)).status).toBe(400);
+    }
+  });
+
+  it("filters the group memberships by userIds, past the first page, with the same item shape and order", async () => {
+    const s = await scenario();
+    const cookie = await cookieFor(s.admin);
+    const members = [
+      await makeUser("Ana Group"),
+      await makeUser("Bob Group"),
+      await makeUser("Zed Group"),
+    ];
+    for (const user of members) {
+      await join(user.id, s.org.id, "USER");
+      await addToGroup(s.group.id, user.id, s.org.id, NO_FLAGS);
+    }
+    const zed = members[2]!;
+    const plain = await call("get", `${base(s)}?pageSize=1`, cookie);
+    expect(plain.body.memberships[0].userId).not.toBe(zed.id);
+
+    const filtered = await call(
+      "get",
+      `${base(s)}?pageSize=1&userIds=${zed.id}`,
+      cookie,
+    );
+    expect(filtered.status).toBe(200);
+    expect(filtered.body).toMatchObject({ page: 1, pageSize: 1, total: 1 });
+    const full = await call("get", base(s), cookie);
+    expect(filtered.body.memberships[0]).toEqual(
+      full.body.memberships.find(
+        (m: { userId: string }) => m.userId === zed.id,
+      ),
+    );
+
+    // Several ids keep the ordering; people who are not in the group (or not
+    // in the organization) are simply absent.
+    const missing = "00000000-0000-4000-8000-000000000000";
+    const several = await call(
+      "get",
+      `${base(s)}?userIds=${zed.id},${members[0]!.id},${missing},${s.outsider.id}`,
+      cookie,
+    );
+    expect(several.body.total).toBe(2);
+    expect(
+      several.body.memberships.map((m: { userId: string }) => m.userId),
+    ).toEqual([members[0]!.id, zed.id]);
+
+    // Same authority: a plain member is still refused.
+    const memberCookie = await cookieFor(s.member);
+    expect(
+      (await call("get", `${base(s)}?userIds=${zed.id}`, memberCookie)).status,
+    ).toBe(403);
   });
 
   it("stores the permissions sent when adding a member and lists them", async () => {

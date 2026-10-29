@@ -1,24 +1,36 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo } from "react";
+
+import { normalizeIds } from "../../../lib/pagination";
 
 import { useIdentityId } from "../../auth/hooks/useSession";
 import {
+  groupMembershipsByIdsKey,
   groupMembershipsKey,
   orgGroupsKey,
   orgMembershipsKey,
   profileKey,
   workspaceGroupsKey,
 } from "../../auth/session/queryKeys";
+import { listMembershipsByIds } from "../../orgs/api/orgsApi";
 import { useInvalidateOrganizationSummary } from "../../orgs/hooks/useOrganizations";
 import {
   addGroupMember,
   addGroupMembers,
   createGroup,
   listGroupMembers,
+  listGroupMembersByIds,
   listGroups,
   removeGroupMember,
 } from "../api/groupsApi";
 import { useConflictRefresh } from "../../permissions/hooks/useConflictRefresh";
 import type { InvoicePermissions } from "../../permissions/types";
+import type { PageRequest } from "../../orgs/types";
 import type { CreateGroupInput } from "../types";
 
 export function useGroupsQuery(organizationId: string, enabled = true) {
@@ -30,17 +42,75 @@ export function useGroupsQuery(organizationId: string, enabled = true) {
   });
 }
 
-export function useGroupMembersQuery(
+/**
+ * One page of the group's people (administrators only). The paginated table
+ * and the member count read this; a person looked up by id uses
+ * `useGroupMembersByIdsQuery`.
+ */
+export function useGroupMembersPageQuery(
   organizationId: string,
   groupId: string,
+  request: PageRequest,
   enabled = true,
 ) {
   const identityId = useIdentityId();
   return useQuery({
-    queryKey: groupMembershipsKey(identityId, organizationId, groupId),
-    queryFn: ({ signal }) => listGroupMembers(organizationId, groupId, signal),
+    queryKey: groupMembershipsKey(identityId, organizationId, groupId, request),
+    queryFn: ({ signal }) =>
+      listGroupMembers(organizationId, groupId, request, signal),
+    placeholderData: keepPreviousData,
     enabled,
   });
+}
+
+/**
+ * The memberships of exactly the given people, wherever they sit in the
+ * group's list: one member's screen, the bulk editor, and the "who is already
+ * in the group" check of the add form.
+ */
+export function useGroupMembersByIdsQuery(
+  organizationId: string,
+  groupId: string,
+  userIds: readonly string[],
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  const identityId = useIdentityId();
+  // Sorted and de-duplicated once per array: a stable key, shared by equal sets.
+  const ids = useMemo(() => normalizeIds(userIds), [userIds]);
+  return useQuery({
+    queryKey: groupMembershipsByIdsKey(
+      identityId,
+      organizationId,
+      groupId,
+      ids,
+    ),
+    queryFn: ({ signal }) =>
+      listGroupMembersByIds(organizationId, groupId, ids, signal),
+    enabled,
+  });
+}
+
+/**
+ * After a batch was refused because the people it targets changed, tells which
+ * of them can no longer be added: gone from the organization, or already in the
+ * group. Both are read by id (chunked, at most four requests at a time), never
+ * by walking a list, and only when a conflict happened.
+ */
+export function useUnavailableMembers(organizationId: string, groupId: string) {
+  return async (
+    userIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Set<string>> => {
+    const [organization, group] = await Promise.all([
+      listMembershipsByIds(organizationId, userIds, signal),
+      listGroupMembersByIds(organizationId, groupId, userIds, signal),
+    ]);
+    const inOrganization = new Set(organization.map(({ userId }) => userId));
+    const inGroup = new Set(group.map(({ userId }) => userId));
+    return new Set(
+      userIds.filter((id) => !inOrganization.has(id) || inGroup.has(id)),
+    );
+  };
 }
 
 /**

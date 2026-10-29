@@ -351,13 +351,13 @@ describe("integration runner orchestration without external processes", () => {
     expect(logs).toEqual(
       expect.arrayContaining([
         "stage: organization 26 passed",
-        "stage: consolidated-migration",
+        "stage: migrations",
         "cleanup: exact owned container removed and absence verified",
       ]),
     );
   });
 
-  it("dispatches the organization suite only after the consolidated migration using the normal gate", async () => {
+  it("dispatches the organization suite only after the migrations using the normal gate", async () => {
     const { dependencies, calls } = fixture();
     await runIntegrationGate(dependencies);
     const runs = calls.filter(({ args }) =>

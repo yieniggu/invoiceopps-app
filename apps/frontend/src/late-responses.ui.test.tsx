@@ -22,10 +22,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const org = { id: "org-1", name: "Academia Norte" };
+const org = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
 const ada = profileFixture({ memberships: [membership(org, "ADMIN")] });
 const bruno = profileFixture({
-  id: "user-2",
+  id: "00000000-0000-4000-8000-000000000002",
   name: "Bruno Díaz",
   rut: "111111111",
   memberships: [],
@@ -87,22 +90,24 @@ describe("CR-107 group create re-submit", () => {
   it("sends one POST /groups when the form is submitted again while pending", async () => {
     const gate = deferred<Response>();
     const created = {
-      id: "group-n",
-      organizationId: "org-1",
+      id: "00000000-0000-4000-a000-000000000110",
+      organizationId: "00000000-0000-4000-9000-000000000001",
       name: "Cobranza",
       description: null,
     };
-    const base = "/api/v1/organizations/org-1";
+    const base = "/api/v1/organizations/00000000-0000-4000-9000-000000000001";
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () => jsonResponse({ profile: ada }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
       [`GET ${base}/users`]: () => jsonResponse({ users: [] }),
       [`GET ${base}/groups`]: () => jsonResponse({ groups: [created] }),
-      [`GET ${base}/groups/group-n/memberships`]: () =>
-        jsonResponse({ memberships: [] }),
+      [`GET ${base}/groups/00000000-0000-4000-a000-000000000110/memberships`]:
+        () => jsonResponse({ memberships: [] }),
       [`POST ${base}/groups`]: () => gate.promise,
     });
-    renderApp({ route: "/organizations/org-1/groups/new" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/groups/new",
+    });
     fireEvent.change(await screen.findByLabelText("Nombre del grupo"), {
       target: { value: "Cobranza" },
     });

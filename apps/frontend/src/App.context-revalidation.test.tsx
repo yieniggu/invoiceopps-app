@@ -11,16 +11,20 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-const organization = { id: "org-A", name: "Academia A", slug: "academy-a" };
+const organization = {
+  id: "00000000-0000-4000-9000-f9e9c6048aeb",
+  name: "Academia A",
+  slug: "academy-a",
+};
 const group = {
-  id: "group-A",
+  id: "00000000-0000-4000-a000-ffdfcbaf90da",
   name: "Grupo A",
   description: null,
   organization,
   members: [],
 };
 const profile = {
-  id: "user-A",
+  id: "00000000-0000-4000-8000-00000000000a",
   name: "Ada",
   rut: "12345678-5",
   email: null,
@@ -53,12 +57,15 @@ function http() {
     if (path === "/api/v1/groups") return groups();
     // Organization-scoped reads behind Mis grupos, and the self-removal that
     // makes the workspace catalogue revalidate.
-    if (path === "/api/v1/organizations/org-A/groups")
+    if (
+      path ===
+      "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups"
+    )
       return json({
         groups: [
           {
-            id: "group-A",
-            organizationId: "org-A",
+            id: "00000000-0000-4000-a000-ffdfcbaf90da",
+            organizationId: "00000000-0000-4000-9000-f9e9c6048aeb",
             name: "Grupo A",
             description: null,
             permissions: {
@@ -70,29 +77,52 @@ function http() {
           },
         ],
       });
-    if (path === "/api/v1/organizations/org-A/groups/group-A/memberships") {
+    if (
+      path.split("?")[0] ===
+      "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups/00000000-0000-4000-a000-ffdfcbaf90da/memberships"
+    ) {
       if (init?.method === "DELETE") return new Response(null, { status: 204 });
       return json({
         memberships: [
           {
-            userId: "user-A",
-            groupId: "group-A",
-            organizationId: "org-A",
+            userId: "00000000-0000-4000-8000-00000000000a",
+            groupId: "00000000-0000-4000-a000-ffdfcbaf90da",
+            organizationId: "00000000-0000-4000-9000-f9e9c6048aeb",
             permissions: NO_PERMISSIONS,
-            user: { id: "user-A", name: "Ada", rut: "123456785" },
+            user: {
+              id: "00000000-0000-4000-8000-00000000000a",
+              name: "Ada",
+              rut: "123456785",
+            },
           },
         ],
+        page: 1,
+        pageSize: 100,
+        total: 1,
       });
     }
     if (
       path ===
-        "/api/v1/organizations/org-A/groups/group-A/memberships/user-A" &&
+        "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups/00000000-0000-4000-a000-ffdfcbaf90da/memberships/00000000-0000-4000-8000-00000000000a" &&
       init?.method === "DELETE"
     )
       return new Response(null, { status: 204 });
-    if (path === "/api/v1/organizations/org-A/users")
+    if (
+      path.split("?")[0] ===
+      "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/users"
+    )
       return json({
-        users: [{ id: "user-A", name: "Ada", rut: "123456785", role: "ADMIN" }],
+        users: [
+          {
+            id: "00000000-0000-4000-8000-00000000000a",
+            name: "Ada",
+            rut: "123456785",
+            role: "ADMIN",
+          },
+        ],
+        page: 1,
+        pageSize: 100,
+        total: 1,
       });
     if (path === "/api/v1/auth/logout" && init?.method === "POST")
       return new Response(null, { status: 204 });
@@ -105,13 +135,13 @@ function http() {
           {
             id: `INV-${owner}`,
             businessId: `INV-${owner}`,
-            organizationId: "organization-1",
-            groupId: "group-1",
+            organizationId: "00000000-0000-4000-9000-000000000001",
+            groupId: "00000000-0000-4000-a000-000000000001",
             currency: "CLP",
             issuedOn: "2026-10-25",
             dueOn: "2026-11-25",
             processingStatus: "NOT_REQUESTED",
-            createdByUserId: "user-1",
+            createdByUserId: "00000000-0000-4000-8000-000000000001",
             createdAt: "2026-10-21T00:00:00Z",
             supplierName: `Proveedor ${owner}`,
             amountPesos: 100,
@@ -138,11 +168,14 @@ async function selectGroupAndLeave(
   render(<App />);
   await screen.findByRole("navigation");
   navigate("Facturas");
-  await screen.findByText("Proveedor user-A");
+  await screen.findByText("Proveedor 00000000-0000-4000-8000-00000000000a");
   fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
-    target: { value: "org-A:group:group-A" },
+    target: {
+      value:
+        "00000000-0000-4000-9000-f9e9c6048aeb:group:00000000-0000-4000-a000-ffdfcbaf90da",
+    },
   });
-  await screen.findByText("Proveedor group-A");
+  await screen.findByText("Proveedor 00000000-0000-4000-a000-ffdfcbaf90da");
   api.groups.mockReturnValueOnce(pending.promise);
   navigate("Grupos");
   fireEvent.click(
@@ -169,7 +202,9 @@ function expectProtectedViewsBlocked(
     navigate(destination);
     expect(screen.getByText(message)).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Propietario" })).toBeNull();
-    expect(screen.queryByText("Proveedor group-A")).toBeNull();
+    expect(
+      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffdfcbaf90da"),
+    ).toBeNull();
     expect(
       screen.queryByRole("textbox", { name: "Buscar por ID o proveedor" }),
     ).toBeNull();
@@ -200,14 +235,20 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
       const selector = await screen.findByRole<HTMLSelectElement>("combobox", {
         name: "Propietario",
       });
-      expect(selector.value).toBe(revoked ? "" : "org-A:group:group-A");
+      expect(selector.value).toBe(
+        revoked
+          ? ""
+          : "00000000-0000-4000-9000-f9e9c6048aeb:group:00000000-0000-4000-a000-ffdfcbaf90da",
+      );
       if (revoked) {
         expect(screen.queryByRole("option", { name: /Grupo A/ })).toBeNull();
         expect(api.protectedRequests.slice(boundary)).toEqual([]);
       } else {
-        await screen.findByText("Proveedor group-A");
+        await screen.findByText(
+          "Proveedor 00000000-0000-4000-a000-ffdfcbaf90da",
+        );
         expect(api.protectedRequests.slice(boundary)).toEqual([
-          "/api/v1/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
+          "/api/v1/invoices?organizationId=00000000-0000-4000-9000-f9e9c6048aeb&ownerType=group&ownerId=00000000-0000-4000-a000-ffdfcbaf90da&q=",
         ]);
       }
       if (revoked) {
@@ -225,7 +266,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
               (path) =>
                 new URL(path, "http://test.invalid").searchParams.get(
                   "ownerId",
-                ) === "group-A",
+                ) === "00000000-0000-4000-a000-ffdfcbaf90da",
             ),
         ).toBe(true);
       }
@@ -262,10 +303,12 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
           name: "Propietario",
         })
       ).value,
-    ).toBe("org-A:group:group-A");
-    await screen.findByText("Proveedor group-A");
+    ).toBe(
+      "00000000-0000-4000-9000-f9e9c6048aeb:group:00000000-0000-4000-a000-ffdfcbaf90da",
+    );
+    await screen.findByText("Proveedor 00000000-0000-4000-a000-ffdfcbaf90da");
     expect(api.protectedRequests.slice(boundary)).toEqual([
-      "/api/v1/invoices?organizationId=org-A&ownerType=group&ownerId=group-A&q=",
+      "/api/v1/invoices?organizationId=00000000-0000-4000-9000-f9e9c6048aeb&ownerType=group&ownerId=00000000-0000-4000-a000-ffdfcbaf90da&q=",
     ]);
     expect(api.unexpected).toEqual([]);
   });
@@ -275,7 +318,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     render(<App />);
     await screen.findByRole("navigation");
     navigate("Facturas");
-    await screen.findByText("Proveedor user-A");
+    await screen.findByText("Proveedor 00000000-0000-4000-8000-00000000000a");
     expect(document.title).toBe("Facturas · InvoiceOps");
     fireEvent.click(screen.getByRole("button", { name: "Salir" }));
     await screen.findByRole("button", { name: "Iniciar sesión" });

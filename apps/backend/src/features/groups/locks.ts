@@ -1,9 +1,13 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 
-// Global lock order: OrganizationMembership -> GroupMemberships by id
-// ascending. Every transaction takes the rows it needs in that order only.
-// No transaction locks a User row: user provisioning creates the user inside
-// its own SERIALIZABLE transaction, so nothing else can hold or wait for it.
+// Global lock order: User row(s) -> OrganizationMembership -> GroupMemberships
+// by id ascending. Every transaction takes the rows it needs in that order
+// only, and a transaction that locks a membership never locks a User row
+// afterwards. User rows are locked only by login and password change (one
+// user) and by user deactivation (the target and the other administrators of
+// its organizations, together, in ascending id order in one statement).
+// Deactivation reads memberships without locking them and relies on
+// SERIALIZABLE (retried by runSerializable) against concurrent role changes.
 //
 // - An invoice write (create, replay, delete, token use) takes FOR SHARE on the
 //   organization membership and, in group scope, on the group membership of

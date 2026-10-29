@@ -1,3 +1,4 @@
+import type { Page } from "../../orgs/types";
 import type { InvoicePermissions } from "../../permissions/types";
 
 export interface Group {
@@ -13,6 +14,11 @@ export interface GroupMember {
   organizationId: string;
   permissions: InvoicePermissions;
   user: { id: string; name: string; rut: string };
+}
+
+/** One page of GET /organizations/{o}/groups/{g}/memberships. */
+export interface GroupMemberPage extends Page {
+  memberships: GroupMember[];
 }
 
 export interface CreateGroupInput {

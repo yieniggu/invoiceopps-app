@@ -1,9 +1,19 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo } from "react";
+
+import { normalizeIds } from "../../../lib/pagination";
 
 import { useIdentityId } from "../../auth/hooks/useSession";
 import {
   orgGroupMembershipsPrefix,
+  orgMembershipsByIdsKey,
   orgMembershipsKey,
+  orgMembersKey,
   orgUsersKey,
   profileKey,
   workspaceGroupsKey,
@@ -12,17 +22,63 @@ import {
   assignMember,
   changeMemberRole,
   listMemberships,
+  listMembershipsByIds,
+  listOrganizationMembers,
   removeMember,
 } from "../api/orgsApi";
-import type { AssignMemberInput, OrganizationRole } from "../types";
+import type {
+  AssignMemberInput,
+  OrganizationRole,
+  PageRequest,
+} from "../types";
 import { useConflictRefresh } from "../../permissions/hooks/useConflictRefresh";
 import { useInvalidateOrganizationSummary } from "./useOrganizations";
 
-export function useOrgMembersQuery(organizationId: string) {
+/**
+ * The memberships of exactly the given people, wherever they sit in the
+ * organization's list. Used where a person is looked up by id (one member's
+ * screen, the bulk editor); the paginated table is `useOrgMembershipsPageQuery`.
+ * The ids are sorted and de-duplicated once per array, so the key is stable
+ * and equal sets share one cache entry; `enabled: false` asks nothing.
+ */
+export function useOrgMembersByIdsQuery(
+  organizationId: string,
+  userIds: readonly string[],
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  const identityId = useIdentityId();
+  const ids = useMemo(() => normalizeIds(userIds), [userIds]);
+  return useQuery({
+    queryKey: orgMembershipsByIdsKey(identityId, organizationId, ids),
+    queryFn: ({ signal }) => listMembershipsByIds(organizationId, ids, signal),
+    enabled,
+  });
+}
+
+/** One page of the management table (ADMIN or platform administrator). */
+export function useOrgMembershipsPageQuery(
+  organizationId: string,
+  request: PageRequest,
+) {
   const identityId = useIdentityId();
   return useQuery({
-    queryKey: orgMembershipsKey(identityId, organizationId),
-    queryFn: ({ signal }) => listMemberships(organizationId, signal),
+    queryKey: orgMembershipsKey(identityId, organizationId, request),
+    queryFn: ({ signal }) => listMemberships(organizationId, request, signal),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** One page of the reduced list every member of the organization may read. */
+export function useOrgBasicMembersPageQuery(
+  organizationId: string,
+  request: PageRequest,
+) {
+  const identityId = useIdentityId();
+  return useQuery({
+    queryKey: orgMembersKey(identityId, organizationId, request),
+    queryFn: ({ signal }) =>
+      listOrganizationMembers(organizationId, request, signal),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -55,6 +111,9 @@ function useInvalidateOrgPeople(organizationId: string) {
       }),
       // Only adding or removing a person moves the member count of the summary.
       added || removed ? invalidateSummary(organizationId) : undefined,
+      client.invalidateQueries({
+        queryKey: orgMembersKey(identityId, organizationId),
+      }),
       client.invalidateQueries({
         queryKey: orgUsersKey(identityId, organizationId),
       }),

@@ -7,6 +7,7 @@ type Json = Record<string, unknown>;
 
 // Operations that run inside runSerializable and can exhaust its retries.
 const SERIALIZABLE_OPERATIONS = [
+  ["patch", "/api/v1/organizations/{organizationId}"],
   ["post", "/api/v1/organizations/{organizationId}/memberships"],
   ["patch", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
   ["delete", "/api/v1/organizations/{organizationId}/memberships/{userId}"],
@@ -37,6 +38,10 @@ const SERIALIZABLE_OPERATIONS = [
   ],
   ["post", "/api/v1/organizations/{organizationId}/users"],
   ["post", "/api/v1/admin/users"],
+  ["post", "/api/v1/admin/users/{userId}/deactivation"],
+  ["delete", "/api/v1/admin/users/{userId}/deactivation"],
+  ["patch", "/api/v1/admin/users/{userId}"],
+  ["post", "/api/v1/admin/users/{userId}/password-reset"],
 ] as const;
 
 describe("CR-102 RETRYABLE_CONFLICT contract", () => {

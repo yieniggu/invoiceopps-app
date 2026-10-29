@@ -1,10 +1,25 @@
 import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
+import {
+  paginationQueryShape,
+  paginationResponseShape,
+} from "../../pagination.js";
 import { parseRut } from "../../rut.js";
 import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
+import { hasNoNul, NO_NUL } from "../../text.js";
 
-const name = z.string().trim().min(1).max(120);
+const name = z.string().trim().min(1).max(120).refine(hasNoNul, NO_NUL);
+// A blank description is stored as null, like an explicit null.
+const description = z
+  .string()
+  .trim()
+  .max(1_000)
+  .refine(hasNoNul, NO_NUL)
+  .transform((value) => value || null)
+  .nullable();
+/** Display name of a person or organization: trimmed, 1..120 characters. */
+export const NameSchema = name;
 const role = z.enum(OrganizationRole);
 
 /** Accepts any RUT spelling and yields the canonical storage form. */
@@ -34,18 +49,58 @@ export const OrganizationCreateRequestSchema = z
     name,
     // The slug is validated as sent: it is never trimmed or normalized here.
     slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-    // A blank description is stored as null, like an explicit null.
-    description: z
-      .string()
-      .trim()
-      .max(1_000)
-      .transform((value) => value || null)
-      .nullable()
-      .optional(),
+    description: description.optional(),
     firstAdminRut: RutInputSchema,
   })
   .strict()
   .meta({ id: "OrganizationCreateRequest" });
+
+export const OrganizationUpdateRequestSchema = z
+  .object({ name: name.optional(), description: description.optional() })
+  .strict()
+  .refine(
+    (request) =>
+      request.name !== undefined || request.description !== undefined,
+    { message: "At least one of name or description is required" },
+  )
+  .meta({
+    id: "OrganizationUpdateRequest",
+    description:
+      "The slug is immutable and any other field is rejected; a blank or null description clears it.",
+  });
+
+export const OrganizationListQuerySchema = z
+  .object({
+    search: name.optional().meta({
+      description: "Case-insensitive part of the organization name",
+    }),
+    ...paginationQueryShape,
+  })
+  .strict()
+  .meta({ id: "OrganizationListQuery" });
+
+/** Up to 200 distinct member ids, comma separated (`?userIds=a,b`). */
+export const MemberIdsSchema = z
+  .string()
+  .transform((value) => value.split(","))
+  .pipe(
+    z
+      .array(z.uuid())
+      .min(1)
+      .max(200)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "userIds must be unique",
+      }),
+  )
+  .meta({
+    description:
+      "Comma-separated member ids (1..200 distinct UUIDs); the page then holds only those members, and ids that are not members are simply absent",
+  });
+
+export const MembershipListQuerySchema = z
+  .object({ userIds: MemberIdsSchema.optional(), ...paginationQueryShape })
+  .strict()
+  .meta({ id: "MembershipListQuery" });
 
 export const MembershipCreateRequestSchema = z
   .object({
@@ -94,13 +149,21 @@ export const MembershipGroupSchema = z
   })
   .meta({ id: "MembershipGroup" });
 
+export const MembershipUserSchema = UserSummarySchema.extend({
+  disabled: z.boolean(),
+  recentlyActive: z.boolean(),
+}).meta({ id: "MembershipUser" });
+
 export const MembershipWithUserSchema = MembershipSchema.extend({
-  user: UserSummarySchema,
+  user: MembershipUserSchema,
   groups: z.array(MembershipGroupSchema),
 }).meta({ id: "MembershipWithUser" });
 
 export const OrganizationListResponseSchema = z
-  .object({ organizations: z.array(OrganizationSchema) })
+  .object({
+    organizations: z.array(OrganizationSchema),
+    ...paginationResponseShape,
+  })
   .meta({ id: "OrganizationListResponse" });
 
 export const OrganizationCreateResponseSchema = z
@@ -108,8 +171,27 @@ export const OrganizationCreateResponseSchema = z
   .meta({ id: "OrganizationCreateResponse" });
 
 export const MembershipListResponseSchema = z
-  .object({ memberships: z.array(MembershipWithUserSchema) })
+  .object({
+    memberships: z.array(MembershipWithUserSchema),
+    ...paginationResponseShape,
+  })
   .meta({ id: "MembershipListResponse" });
+
+export const OrganizationMemberSchema = z
+  .object({
+    userId: z.string(),
+    name: z.string(),
+    email: z.string().nullable(),
+    recentlyActive: z.boolean(),
+  })
+  .meta({ id: "OrganizationMember" });
+
+export const OrganizationMemberListResponseSchema = z
+  .object({
+    members: z.array(OrganizationMemberSchema),
+    ...paginationResponseShape,
+  })
+  .meta({ id: "OrganizationMemberListResponse" });
 
 export const MembershipResponseSchema = z
   .object({ membership: MembershipSchema })
@@ -145,3 +227,7 @@ export const OrganizationDetailResponseSchema = z
 export const MembershipsResponseSchema = z
   .object({ memberships: z.array(MembershipSchema) })
   .meta({ id: "MembershipsResponse" });
+
+export const OrganizationUpdateResponseSchema = z
+  .object({ organization: OrganizationBasicSchema })
+  .meta({ id: "OrganizationUpdateResponse" });

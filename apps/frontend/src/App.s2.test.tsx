@@ -1,3 +1,4 @@
+import { namedId } from "./test/ids";
 import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
@@ -13,12 +14,12 @@ import { readFileSync } from "node:fs";
 import { App } from "./App";
 
 const organizations = ["A", "B"].map((id) => ({
-  id: `org-${id}`,
+  id: namedId("org", id),
   name: `Academia ${id}`,
   slug: id,
 }));
 const profile = {
-  id: "person",
+  id: "00000000-0000-4000-8000-0000000000b1",
   name: "Ada",
   rut: "12345678-5",
   email: "ada@example.test",
@@ -31,11 +32,17 @@ const profile = {
   })),
 };
 const groups = organizations.map((organization, index) => ({
-  id: `group-${index}`,
+  id: namedId("group", index),
   name: `Equipo ${index}`,
   description: "Investigación aplicada",
   organization,
-  members: [{ id: "person", name: "Ada", rut: "12345678-5" }],
+  members: [
+    {
+      id: "00000000-0000-4000-8000-0000000000b1",
+      name: "Ada",
+      rut: "12345678-5",
+    },
+  ],
 }));
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -76,13 +83,20 @@ function http(current = profile, membershipGroups = groups) {
       json({
         memberships: [
           {
-            userId: "person",
-            groupId: "group-0",
-            organizationId: "org-A",
+            userId: "00000000-0000-4000-8000-0000000000b1",
+            groupId: "00000000-0000-4000-a000-000000000000",
+            organizationId: "00000000-0000-4000-9000-f9e9c6048aeb",
             permissions: NO_PERMISSIONS,
-            user: { id: "person", name: "Ada", rut: "123456785" },
+            user: {
+              id: "00000000-0000-4000-8000-0000000000b1",
+              name: "Ada",
+              rut: "123456785",
+            },
           },
         ],
+        page: 1,
+        pageSize: 100,
+        total: 1,
       }),
     );
   const fetchMock = vi
@@ -92,8 +106,11 @@ function http(current = profile, membershipGroups = groups) {
       if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
         return init?.method === "PATCH" ? patch() : json({ profile: current });
       if (path === "/api/v1/groups") return readGroups();
-      if (path === "/api/v1/organizations")
+      if (path.split("?")[0] === "/api/v1/organizations")
         return json({
+          page: 1,
+          pageSize: 20,
+          total: 1,
           organizations: [
             {
               id: "outside",
@@ -106,29 +123,49 @@ function http(current = profile, membershipGroups = groups) {
           ],
         });
       const method = init?.method ?? "GET";
-      const scoped = /^\/api\/v1\/organizations\/([^/]+)\/(groups|users)$/.exec(
-        path,
-      );
+      const scoped =
+        /^\/api\/v1\/organizations\/([^/]+)\/(groups|users)(?:\?.*)?$/.exec(
+          path,
+        );
       if (scoped && method === "GET")
         return scoped[2] === "groups"
           ? readOrgGroups(scoped[1])
           : json({
               users: [
                 {
-                  id: "new-member",
+                  id: "00000000-0000-4000-8000-000000000900",
                   name: "Nuevo",
                   rut: "190347907",
                   role: "USER",
                 },
               ],
+              page: 1,
+              pageSize: 100,
+              total: 1,
             });
       if (
-        /^\/api\/v1\/organizations\/[^/]+\/groups\/[^/]+\/memberships$/.test(
+        /^\/api\/v1\/organizations\/[^/]+\/groups\/[^/]+\/memberships(?:\?.*)?$/.test(
           path,
         ) &&
         method === "GET"
       )
         return readMembers();
+      // The check of the selection before adding people to a group.
+      if (
+        /^\/api\/v1\/organizations\/[^/]+\/memberships\?/.test(path) &&
+        method === "GET"
+      )
+        return json({
+          memberships: [
+            {
+              userId: "00000000-0000-4000-8000-000000000900",
+              user: { id: "00000000-0000-4000-8000-000000000900" },
+            },
+          ],
+          page: 1,
+          pageSize: 100,
+          total: 1,
+        });
       if (path.startsWith("/api/v1/organizations/")) return mutation();
       if (path.startsWith("/api/v1/invoices?"))
         return json({ invoices: [], nextCursor: null });
@@ -256,7 +293,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
   it("selects only the current user's individual context from the invoice workspace selector and propagates it", async () => {
     const api = http();
     await start("Facturas");
-    await chooseOwner("org-B:user:person");
+    await chooseOwner(
+      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
+    );
     navigate("Panel principal");
     expect(
       screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
@@ -268,7 +307,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
           path
             .toString()
             .startsWith(
-              "/api/v1/invoices?organizationId=org-B&ownerType=user&ownerId=person",
+              "/api/v1/invoices?organizationId=00000000-0000-4000-9000-fa19c6501c7e&ownerType=user&ownerId=00000000-0000-4000-8000-0000000000b1",
             ),
         ),
       ).toBe(true),
@@ -277,7 +316,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     const invoiceReads = api.fetchMock.mock.calls
       .map(([path]) => path.toString())
       .filter((path) => /^\/api\/v1\/invoices\?/.test(path));
-    expect(invoiceReads.at(-1)).toContain("organizationId=org-B");
+    expect(invoiceReads.at(-1)).toContain(
+      "organizationId=00000000-0000-4000-9000-fa19c6501c7e",
+    );
   });
 
   it("selects a loaded membership group in the invoice owner selector and retains that context on the dashboard and invoices", async () => {
@@ -285,7 +326,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     await start("Facturas");
     // The owner is chosen only in the Facturas selector: there is no
     // per-group "Trabajar con" button any more.
-    await chooseOwner("org-B:group:group-1");
+    await chooseOwner(
+      "00000000-0000-4000-9000-fa19c6501c7e:group:00000000-0000-4000-a000-000000000001",
+    );
     expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
     navigate("Panel principal");
     expect(
@@ -298,7 +341,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
         path
           .toString()
           .startsWith(
-            "/api/v1/invoices?organizationId=org-B&ownerType=group&ownerId=group-1",
+            "/api/v1/invoices?organizationId=00000000-0000-4000-9000-fa19c6501c7e&ownerType=group&ownerId=00000000-0000-4000-a000-000000000001",
           ),
       ),
     ).toBe(true);
@@ -313,18 +356,25 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       memberships: [],
     });
     await start("Organizaciones");
+    // AC-15: the platform administrator lists every organization from the
+    // paginated directory, member or not, and keeps the create action.
     expect(
-      screen.getByText(/Aún no perteneces a ninguna organización/),
+      await screen.findByRole("link", {
+        name: "Ver detalle de Organización externa",
+      }),
     ).toBeTruthy();
-    // Platform authority only adds the create action; it lists nothing.
+    expect(
+      screen.queryByText(/Aún no perteneces a ninguna organización/),
+    ).toBeNull();
     expect(
       screen.getByRole("link", { name: "Crear organización" }),
     ).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(
-        ([path]) => path.toString() === "/api/v1/organizations",
+        ([path]) =>
+          path.toString() === "/api/v1/organizations?page=1&pageSize=20",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       screen.queryByRole("button", { name: /^Usar (Academia|Organización)/ }),
     ).toBeNull();
@@ -408,7 +458,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     fireEvent.click(save);
     expect(await screen.findByText("Permisos guardados")).toBeTruthy();
     expect(api.fetchMock).toHaveBeenCalledWith(
-      "/api/v1/organizations/org-A/groups/group-0/memberships/person/permissions",
+      "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups/00000000-0000-4000-a000-000000000000/memberships/00000000-0000-4000-8000-0000000000b1/permissions",
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({
@@ -428,7 +478,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       action: "create",
       button: "Crear grupo",
       method: "POST",
-      path: "/api/v1/organizations/org-A/groups",
+      path: "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups",
       body: { name: "Nuevo equipo" },
       done: "Grupo creado. Agrega a sus miembros.",
     },
@@ -436,11 +486,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       action: "add",
       button: "Agregar 1 persona al grupo",
       method: "POST",
-      path: "/api/v1/organizations/org-A/groups/group-0/memberships/bulk",
+      path: "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups/00000000-0000-4000-a000-000000000000/memberships/bulk",
       body: {
         members: [
           {
-            userId: "new-member",
+            userId: "00000000-0000-4000-8000-000000000900",
             permissions: {
               readInvoices: false,
               createInvoices: false,
@@ -456,7 +506,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       action: "remove",
       button: "Confirmar quitar a Ada",
       method: "DELETE",
-      path: "/api/v1/organizations/org-A/groups/group-0/memberships/person",
+      path: "/api/v1/organizations/00000000-0000-4000-9000-f9e9c6048aeb/groups/00000000-0000-4000-a000-000000000000/memberships/00000000-0000-4000-8000-0000000000b1",
       body: undefined,
       done: "Se quitó a Ada del grupo.",
     },
@@ -519,7 +569,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       // The created group is answered with an existing id, so its screen opens.
       await act(async () =>
         mutation.resolve(
-          json(action === "create" ? { group: { id: "group-0" } } : {}),
+          json(
+            action === "create"
+              ? { group: { id: "00000000-0000-4000-a000-000000000000" } }
+              : {},
+          ),
         ),
       );
       await screen.findByText(done);
@@ -655,7 +709,9 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     navigate("Facturas");
-    await chooseOwner("org-B:user:person");
+    await chooseOwner(
+      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
+    );
     navigate("Panel principal");
     expect(
       screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
@@ -669,15 +725,19 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     expect(
       screen.getByRole("heading", { name: "Organizaciones", level: 1 }),
     ).toBeTruthy();
-    // Only memberships are listed; the platform-wide list is never read.
-    expect(screen.queryByText("Organización externa")).toBeNull();
+    // The directory lists the platform-wide organizations (AC-15), which is
+    // independent of the memberships kept below for the workspace.
+    expect(await screen.findByText("Organización externa")).toBeTruthy();
     expect(
       api.fetchMock.mock.calls.some(
-        ([path]) => path.toString() === "/api/v1/organizations",
+        ([path]) =>
+          path.toString() === "/api/v1/organizations?page=1&pageSize=20",
       ),
-    ).toBe(false);
+    ).toBe(true);
     navigate("Facturas");
-    await chooseOwner("org-B:user:person");
+    await chooseOwner(
+      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
+    );
     navigate("Grupos");
     expect(
       await screen.findByRole("link", { name: "Ver grupo Equipo 1" }),

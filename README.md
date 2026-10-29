@@ -39,27 +39,34 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
 6. **Políticas** (`/policies`) está deshabilitada por ahora: el ítem del menú se
    muestra con la insignia «Próximamente» y la ruta responde «No disponible por
    ahora.». El código de la pantalla de políticas se conserva sin enrutar.
-7. No existe una pantalla «Administración»: la gestión vive en las pantallas de
-   organizaciones y grupos. En `/organizations/new` («Crear organización», solo
-   el administrador de plataforma) se indica de forma explícita el RUT del primer
+7. La gestión vive en las pantallas de organizaciones y grupos; el administrador
+   de plataforma suma además **Admin** (`/admin`), el directorio de personas de
+   la plataforma. En `/organizations/new` («Crear organización», solo el
+   administrador de plataforma) se indica de forma explícita el RUT del primer
    ADMIN de la organización (la plataforma no recibe acceso a facturas ni a
    grupos). Cada ADMIN de organización gestiona su organización en pantallas
-   separadas:
+   separadas; las listas largas (organizaciones, miembros, directorio) se
+   paginan de a 20 con «Anterior»/«Siguiente» y la página viaja en la URL:
 
-   | Ruta                                                 | Pantalla                                                                                                                               |
-   | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-   | `/organizations/:organizationId`                     | Resumen: nombre, identificador, descripción, cantidad de miembros y de grupos; enlaces «Miembros» y «Grupos» y atajo «Agregar miembro» |
-   | `/organizations/:organizationId/members`             | Tabla de miembros (nombre, RUT, rol, grupos, permisos «n de 4»); selección por fila y «Seleccionar todos»; «Editar permisos en bloque» |
-   | `/organizations/:organizationId/members/new`         | Pestañas «Agregar persona existente» (RUT, rol, permisos) y «Crear persona nueva» (asistente de cuatro pasos de una organización)      |
-   | `/organizations/:organizationId/members/:userId`     | Miembro: cambio de rol, permisos de organización, grupos de la organización (permisos, agregar y quitar) y quitar de la organización   |
-   | `/organizations/:organizationId/members/permissions` | Permisos en bloque de `?userIds=a,b` (sobrevive a recargar); «Aplicar a N miembros»                                                    |
-   | `/organizations/:organizationId/groups`              | Tarjetas de grupos con «Ver grupo»                                                                                                     |
-   | `/organizations/:organizationId/groups/new`          | Solo nombre y descripción; al crear lleva a agregar miembros                                                                           |
-   | `/organizations/:organizationId/groups/:groupId`     | Resumen del grupo: nombre, descripción, cantidad de miembros y enlace «Miembros»                                                       |
-   | `.../groups/:groupId/members`                        | Tabla de miembros del grupo con selección y «Editar permisos en bloque»                                                                |
-   | `.../groups/:groupId/members/new`                    | Elegir varios miembros de la organización (búsqueda por nombre/RUT, «Seleccionar todos»), permisos por persona o «Aplicar los mismos…» |
-   | `.../groups/:groupId/members/:userId`                | Permisos de la persona en el grupo y quitar del grupo                                                                                  |
-   | `.../groups/:groupId/members/permissions`            | Permisos en bloque del grupo (`?userIds=`)                                                                                             |
+   | Ruta                                                 | Pantalla                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+   | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+   | `/organizations`                                     | Organizaciones de la persona; para el administrador de plataforma, el directorio de **todas** (búsqueda por nombre y página en la URL; «Ver detalle» abre cualquiera, sea o no miembro)                                                                                                                                                                                                                                                                            |
+   | `/organizations/:organizationId`                     | Resumen: nombre, identificador, descripción, cantidad de miembros y de grupos; enlaces «Miembros» y «Grupos»; para ADMIN o plataforma, «Agregar miembro» y «Editar organización»                                                                                                                                                                                                                                                                                   |
+   | `/organizations/:organizationId/edit`                | «Editar organización»: nombre y descripción (ADMIN o plataforma); el identificador (slug) es inmutable                                                                                                                                                                                                                                                                                                                                                             |
+   | `/organizations/:organizationId/members`             | ADMIN o plataforma: tabla de miembros paginada (nombre, RUT, rol, estado habilitado/desactivado, actividad reciente, grupos, permisos «n de 4»); selección por fila, «Seleccionar todos en esta página» y «Editar permisos en bloque» (la selección se vacía al cambiar de página; una página fuera de rango lleva a la última). Miembro común: lista reducida (nombre, correo, actividad reciente), sin acciones de administración, con enlace a `/users/:userId` |
+   | `/organizations/:organizationId/members/new`         | Pestañas «Agregar persona existente» (RUT, rol, permisos) y «Crear persona nueva» (asistente de cuatro pasos de una organización)                                                                                                                                                                                                                                                                                                                                  |
+   | `/organizations/:organizationId/members/:userId`     | Miembro: cambio de rol, permisos de organización, grupos de la organización (permisos, agregar y quitar) y quitar de la organización; se resuelve por id (`userIds`), también a partir del miembro 101                                                                                                                                                                                                                                                             |
+   | `/organizations/:organizationId/members/permissions` | Permisos en bloque de `?userIds=a,b` (sobrevive a recargar); «Aplicar a N miembros»; consulta solo los ids elegidos                                                                                                                                                                                                                                                                                                                                                |
+   | `/organizations/:organizationId/groups`              | Tarjetas de grupos con «Ver grupo»                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+   | `/organizations/:organizationId/groups/new`          | Solo nombre y descripción; al crear lleva a agregar miembros                                                                                                                                                                                                                                                                                                                                                                                                       |
+   | `/organizations/:organizationId/groups/:groupId`     | Resumen del grupo: nombre, descripción, cantidad total de miembros y enlace «Miembros»                                                                                                                                                                                                                                                                                                                                                                             |
+   | `.../groups/:groupId/members`                        | Tabla paginada (`?page=`, 20 por página) de miembros del grupo con selección por página y «Editar permisos en bloque»                                                                                                                                                                                                                                                                                                                                              |
+   | `.../groups/:groupId/members/new`                    | Elegir varios miembros de la organización: lista de 20 por página con búsqueda por nombre/RUT en el servidor (`?search=&page=` en la URL); quiénes ya están en el grupo se consulta por `userIds` solo para la página visible (≤ 20 ids); «Seleccionar todos en esta página»; la selección se conserva al cambiar de página o de búsqueda (es un flujo de agregar) y el contador dice «N personas seleccionadas»; permisos por persona o «Aplicar los mismos…»     |
+   | `.../groups/:groupId/members/:userId`                | Permisos de la persona en el grupo y quitar del grupo; se resuelve por id (`userIds`), también más allá de la primera página                                                                                                                                                                                                                                                                                                                                       |
+   | `.../groups/:groupId/members/permissions`            | Permisos en bloque del grupo (`?userIds=`); consulta solo los ids elegidos                                                                                                                                                                                                                                                                                                                                                                                         |
+   | `/users/:userId`                                     | Perfil básico de alguien con quien compartes organización (nombre, correo, actividad reciente, organizaciones compartidas; sin RUT); si no, «Página no encontrada». El administrador de plataforma ve a cualquiera, con todas sus organizaciones                                                                                                                                                                                                                   |
+   | `/admin`                                             | Solo plataforma: directorio de personas (búsqueda por nombre o fragmento de RUT con o sin puntos, filtro de estado, página en la URL); ya no redirige a `/admin/users/new`                                                                                                                                                                                                                                                                                         |
+   | `/admin/users/:userId`                               | Solo plataforma: datos, estado y actividad, «Editar» (nombre y RUT), «Restablecer contraseña» (clave temporal que se muestra una sola vez), «Desactivar»/«Reactivar» y membresías                                                                                                                                                                                                                                                                                  |
 
    Los cuatro permisos de facturas (leer, crear, eliminar propias, eliminar de
    otros; todos desactivados por defecto) se muestran como botones de alternancia
@@ -85,11 +92,11 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
 
    El administrador de
    plataforma crea usuarios con varias organizaciones y grupos en **Admin →
-   Crear usuario** (`/admin/users/new`; `?organizationId=` preselecciona), con
+   Crear usuario** (`/admin/users/new`; `?organizationId=` preselecciona, también si la organización no está en la primera página), con
    el mismo asistente de cuatro pasos (Datos → Organizaciones → Grupos →
    Resumen; organizaciones y grupos son tarjetas plegables con un resumen de una
    línea; un usuario puede tener hasta 200 grupos en total entre todas sus
-   organizaciones: al llegar al tope el asistente deja de ofrecer grupos). En el
+   organizaciones: al llegar al tope el asistente deja de ofrecer grupos; con más de 100 organizaciones cada tarjeta añade un buscador por nombre, `GET /organizations?search=`, para elegir cualquiera). En el
    paso Datos se elige la **contraseña temporal**: «Generar
    automáticamente» (por defecto; el servidor la genera, se muestra una sola vez,
    con `Cache-Control: no-store`, y no se registra) o «Definir contraseña
@@ -100,9 +107,10 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    la contraseña» (Escape y el fondo no lo descartan); «Copiar» la envía al
    portapapeles o, si no hay permiso, la deja seleccionada.
    Cuando el administrador de plataforma crea una organización y nombra a otra
-   persona como primer ADMIN, la organización no aparece en su lista (no es
-   miembro) y el aviso posterior a la creación lo explica; el directorio de
-   organizaciones para plataforma llega con RP0-23.
+   persona como primer ADMIN, la organización aparece en su directorio aunque no
+   sea miembro y puede abrirla para administrarla (nunca accede a sus facturas).
+   Una persona desactivada no puede iniciar sesión (el login muestra el mismo
+   mensaje que una contraseña errónea) hasta que la plataforma la reactive.
    Las rutas antiguas en español (`/panel`, `/facturas`, `/organizaciones`,
    `/grupos`, etc.) ya no existen y no redirigen: cualquier URL desconocida
    muestra «Página no encontrada». Descubrir una organización administrable no
@@ -197,6 +205,15 @@ printf '%s\n' "${DATABASE_URL#*@}"   # esperado: 127.0.0.1:<LOCAL_APP_DB_PORT>/i
 pnpm recovery:local:reset -- --confirm-reset=invoiceops
 ```
 
+> El esquema de desactivación de usuarios (`User.disabledAt`, `User.lastActiveAt`,
+> tipos de auditoría `USER_DEACTIVATED`/`USER_REACTIVATED`/`USER_UPDATED`/`PASSWORD_RESET`/`ORGANIZATION_UPDATED`)
+> y los índices trigram (`pg_trgm`) de las búsquedas llegan en la migración
+> idempotente `20261028000000_user_status_activity`: una base existente la recibe
+> con `pnpm --filter @invoiceops/backend exec prisma migrate deploy` (sin reset).
+> Solo si tu base se creó con la edición anterior de la migración inicial
+> (checksum distinto) `migrate dev` se queja de esa migración: recrea la base una
+> vez con `pnpm recovery:local:reset`.
+
 Consulta [`LOCAL_RUN.md`](LOCAL_RUN.md) para el procedimiento local completo y los
 comandos `pnpm test:recovery:unit` / `pnpm test:recovery:postgres`. Las pruebas de la
 interfaz de recuperación (onboarding, organizaciones, grupos, usuarios y membresías)
@@ -277,8 +294,8 @@ pnpm test:integration
 The runner creates a new isolated container with a unique role and password, a
 loopback-only ephemeral port, and bounded memory and temporary storage. It does
 not use `.env`, persistent volumes, or the Compose `db-test` service. It applies
-the consolidated migration (`20261026000000_initial_recovery_p0`, which must be
-the first migration), verifies the `_prisma_migrations` ledger name, checksum and
+the migrations (`20261026000000_initial_recovery_p0` must be the first one, then
+`20261028000000_user_status_activity`), verifies the `_prisma_migrations` ledger name, checksum and
 status against the files on disk, and runs the 26 organization-persistence
 PostgreSQL cases.
 
@@ -375,6 +392,14 @@ Un `PATCH /api/v1/profile` inválido responde `400 VALIDATION_ERROR` con el mapa
 lo incluye; los demás endpoints heredados responden solo `code` y `message` hasta
 que su ticket los documente.
 
+Reglas de `email` y `username` (CR-310): se recortan los espacios; `email` debe
+ser una dirección válida de hasta 254 caracteres y se guarda en minúsculas;
+`username` admite hasta 64 caracteres; ninguno puede contener el carácter NUL;
+un valor en blanco o `null` los borra (se guarda `null`). Ambos son únicos entre
+usuarios (los `null` no colisionan): si otra persona ya los usa, responde
+`409 USER_CONFLICT` y no cambia nada.
+El `username` es único distinguiendo mayúsculas y minúsculas; el `email` se compara recortado y en minúsculas.
+
 ### Organization groups
 
 `Group` and `GroupMembership` are organization-scoped. A user can belong to
@@ -396,6 +421,102 @@ and add or remove members. The four invoice permission flags live on
 organization OR group flags; at organization scope, organization flags only. The server validates the current session and resource
 organization for every request, returning safe authorization responses for
 absent sessions, non-members, and users with the USER role.
+
+#### Desactivación de usuarios
+
+Solo el administrador de plataforma desactiva o reactiva usuarios:
+`POST /api/v1/admin/users/{userId}/deactivation` y
+`DELETE /api/v1/admin/users/{userId}/deactivation` (ambas responden `200` con
+`{ user: { id, name, rut, disabledAt } }`; son idempotentes y solo escriben
+auditoría `USER_DEACTIVATED`/`USER_REACTIVATED` cuando hay cambio). Errores:
+`401`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 SELF_ACTION_FORBIDDEN` (el actor
+se apunta a sí mismo) y `409 LAST_ADMIN_REQUIRED` (último ADMIN habilitado de una
+organización). Un usuario desactivado conserva sus membresías, pierde todas las
+sesiones y tokens de API activos, no puede iniciar sesión (mismo `401 Invalid
+credentials` que una contraseña errónea) y sus cookies previas devuelven `401`;
+al reactivarlo debe iniciar sesión de nuevo. El servidor registra `lastActiveAt`
+en cada login exitoso y, como máximo cada 5 minutos, en solicitudes autenticadas.
+
+#### Directorio y mantenimiento de usuarios
+
+Solo el administrador de plataforma (`401` sin sesión, `403 FORBIDDEN` para el
+resto; los cuerpos y parámetros inválidos responden `400` antes del `403`):
+
+- `GET /api/v1/admin/users?search&status&page&pageSize` lista usuarios
+  (incluidos el administrador y los desactivados) como
+  `{ users: [{ id, name, rut, disabledAt, recentlyActive }], page, pageSize, total }`,
+  ordenados por nombre. `search` busca por nombre (sin distinguir mayúsculas) o por
+  fragmento de RUT escrito con o sin puntos y guion; `status` es
+  `all|active|disabled` (por defecto `all`); `pageSize` va de 1 a 100 (por defecto
+  20). No acepta parámetros desconocidos. `recentlyActive` indica actividad en los
+  últimos 15 minutos; `lastActiveAt` nunca se expone.
+- `GET /api/v1/admin/users/{userId}` devuelve el usuario y sus membresías de
+  organización y grupo con sus permisos de facturas (`404 NOT_FOUND` si no existe).
+- `PATCH /api/v1/admin/users/{userId}` cambia `name` y/o `rut` (al menos uno). Un
+  RUT nuevo revoca sesiones y tokens de API del usuario; `409 USER_CONFLICT` si el
+  RUT ya existe y `409 SELF_ACTION_FORBIDDEN` si el actor cambia su propio RUT (su
+  nombre sí puede cambiarlo). Sin cambios responde `200` sin auditoría; con cambio
+  escribe `USER_UPDATED`.
+- `POST /api/v1/admin/users/{userId}/password-reset` (cuerpo `{}` o
+  `{ temporaryPassword }` de 8 a 256 caracteres) responde `200` con
+  `{ temporaryPassword?, expiresAt }` y `Cache-Control: no-store`; la contraseña solo
+  se devuelve si la generó el servidor y vence a las 24 horas. Borra todas las
+  sesiones, revoca los tokens de API, exige cambiarla al iniciar sesión y escribe
+  `PASSWORD_RESET` (nunca la contraseña). `409 SELF_ACTION_FORBIDDEN` sobre uno
+  mismo; un usuario desactivado sigue desactivado.
+
+PATCH y password-reset corren en transacciones SERIALIZABLE (`503 RETRYABLE_CONFLICT`
+cuando se agotan los reintentos).
+
+#### Organizaciones, miembros y usuarios (paginación)
+
+Todas las listas paginadas comparten el mismo contrato: `page` (desde 1, hasta
+10.000) y `pageSize` (1 a 100, por defecto 20), sin parámetros desconocidos ni
+repetidos (`400` antes de la autoridad), y responden `{ <items>, page, pageSize, total }`.
+
+- `GET /api/v1/organizations?search&page&pageSize` es paginado para todos: `search`
+  filtra por nombre (sin distinguir mayúsculas; `%` y `_` son literales), orden por
+  nombre e id. El administrador de plataforma ve todas; el resto, las propias.
+  Respuesta `{ organizations, page, pageSize, total }` (cambio incompatible: antes
+  era `{ organizations }`).
+- `GET /api/v1/organizations/{organizationId}/memberships?page&pageSize&userIds` (solo
+  ADMIN o plataforma) responde `{ memberships, page, pageSize, total }`; el `user` de
+  cada elemento suma `disabled` y `recentlyActive` (falso si está desactivado).
+  `userIds` (opcional) son de 1 a 200 UUID distintos separados por coma: la página
+  contiene solo esos miembros (mismo orden y forma; los ids que no son miembros
+  simplemente no aparecen y `total` cuenta solo los coincidentes). Es lo que usan
+  la pantalla de un miembro y la edición de permisos en bloque, para no depender de
+  la primera página. Vacío, repetido, con duplicados, con valores que no son UUID o
+  con más de 200 responde `400`.
+- `GET /api/v1/organizations/{organizationId}/users?search&page&pageSize` (ADMIN o
+  plataforma) responde `{ users: [{ id, name, rut, role }], page, pageSize, total }`,
+  ordenado por nombre, RUT e id. `search` (opcional, 1..100 caracteres tras recortar
+  espacios; vacío o más largo responde `400`) filtra por fragmento del nombre
+  (sin distinguir mayúsculas) o del RUT escrito con o sin puntos y guion, igual que
+  la búsqueda del directorio de plataforma; `%` y `_` son literales. Un carácter NUL (`%00`) en cualquier `search`, nombre o descripción responde `400 VALIDATION_ERROR` (PostgreSQL no puede guardarlo). `GET .../groups/{groupId}/memberships?page&pageSize` (ADMIN o
+  plataforma) responde `{ memberships, page, pageSize, total }` con el mismo orden.
+- `/members` es siempre la vista reducida (para cualquier rol); `/memberships` es la
+  vista de ADMIN o plataforma, con `disabled`.
+- `GET /api/v1/organizations/{organizationId}/members?page&pageSize` (nuevo; cualquier
+  miembro con cualquier rol, o plataforma; otro caso `404` indistinguible de una
+  organización inexistente) responde la vista reducida
+  `{ members: [{ userId, name, email, recentlyActive }], page, pageSize, total }`,
+  ordenada por nombre. Nunca expone RUT, rol, permisos, `disabledAt` ni `lastActiveAt`.
+- `PATCH /api/v1/organizations/{organizationId}` cambia `name` y/o `description` (al
+  menos uno; una descripción vacía o `null` la borra). El `slug` es inmutable: enviarlo
+  o cualquier otro campo responde `400`. Solo ADMIN de la organización o plataforma
+  (`403` para un miembro común, `404` para quien no pertenece). Responde
+  `{ organization: { id, name, slug, description } }`; sin cambios es `200` sin
+  auditoría, con cambio escribe `ORGANIZATION_UPDATED` (solo ids). Corre en
+  transacción SERIALIZABLE (`503 RETRYABLE_CONFLICT`).
+- `GET /api/v1/users/{userId}` (nuevo) está disponible para cualquier usuario
+  autenticado con onboarding completo cuando el objetivo comparte una organización
+  con quien consulta, es él mismo o quien consulta es el administrador de plataforma;
+  en otro caso `404 NOT_FOUND` indistinguible de un usuario inexistente. Responde
+  `{ user: { id, name, email, recentlyActive }, sharedOrganizations: [{ id, name }] }`
+  (para plataforma, las organizaciones del objetivo). Nunca expone RUT, credenciales,
+  estado de onboarding, `disabledAt`, roles ni permisos; un usuario desactivado sigue
+  visible con `recentlyActive` falso.
 
 JSON request bodies are limited to 16 kB (`413 PAYLOAD_TOO_LARGE` above it).
 Only the five batch operations accept up to 64 kB, enough for 200 members with

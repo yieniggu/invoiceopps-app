@@ -8,14 +8,21 @@ import type { Profile } from "../profile/ProfileScreen";
 import { DashboardScreen } from "./DashboardScreen";
 
 const profile: Profile = {
-  id: "user-1",
+  id: "00000000-0000-4000-8000-000000000001",
   name: "Ada",
   rut: "12345678-5",
   email: null,
   username: null,
   isPlatformAdministrator: false,
   memberships: [
-    membership({ id: "org-1", name: "Academia", slug: "academia" }, "USER"),
+    membership(
+      {
+        id: "00000000-0000-4000-9000-000000000001",
+        name: "Academia",
+        slug: "academia",
+      },
+      "USER",
+    ),
   ],
 };
 

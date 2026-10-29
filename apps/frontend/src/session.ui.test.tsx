@@ -13,6 +13,7 @@ import {
   deferred,
   errorResponse,
   jsonResponse,
+  organizationsPage,
   membership,
   mockTransport,
   profileFixture,
@@ -24,13 +25,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const org = { id: "org-1", name: "Academia Norte" };
+const org = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
 const ada = profileFixture({ memberships: [membership(org, "USER")] });
 const bruno = profileFixture({
-  id: "user-2",
+  id: "00000000-0000-4000-8000-000000000002",
   name: "Bruno Díaz",
   rut: "111111111",
-  memberships: [membership({ id: "org-2", name: "Instituto Sur" }, "USER")],
+  memberships: [
+    membership(
+      { id: "00000000-0000-4000-9000-000000000002", name: "Instituto Sur" },
+      "USER",
+    ),
+  ],
 });
 
 const temporary = "temporary-password-1";
@@ -124,7 +133,7 @@ describe("QueryClient identity partition (AC-09, AC-10)", () => {
     await screen.findByText(/Ada Lovelace/);
     const first = store.getSnapshot();
     expect(first.phase).toBe("identity");
-    expect(first.identityId).toBe("user-1");
+    expect(first.identityId).toBe("00000000-0000-4000-8000-000000000001");
 
     answer = bruno;
     act(() => {
@@ -135,7 +144,11 @@ describe("QueryClient identity partition (AC-09, AC-10)", () => {
     // Bruno's name can first show from the refetch answer held by Ada's own
     // client; the partition swap (and the clearing of Ada's client) happens in
     // the effect that follows. Wait for the swap itself, not for the text.
-    await waitFor(() => expect(store.getSnapshot().identityId).toBe("user-2"));
+    await waitFor(() =>
+      expect(store.getSnapshot().identityId).toBe(
+        "00000000-0000-4000-8000-000000000002",
+      ),
+    );
     expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     const second = store.getSnapshot();
     expect(second.client).not.toBe(first.client);
@@ -240,15 +253,18 @@ describe("onboarding gate (AC-10)", () => {
       "GET /api/v1/auth/profile": () =>
         jsonResponse({ profile: { ...admin, mustChangePassword: pending } }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
-      "GET /api/v1/organizations/org-1/memberships": () => {
-        pending = true;
-        return errorResponse(403, "ONBOARDING_REQUIRED");
-      },
-      "GET /api/v1/organizations/org-1/users": () =>
-        errorResponse(403, "ONBOARDING_REQUIRED"),
+      "GET /api/v1/organizations": () => jsonResponse(organizationsPage([])),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () => {
+          pending = true;
+          return errorResponse(403, "ONBOARDING_REQUIRED");
+        },
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => errorResponse(403, "ONBOARDING_REQUIRED"),
     });
-    renderApp({ route: "/organizations/org-1/members" });
+    renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/members",
+    });
     await screen.findByRole("heading", {
       name: "Cambia tu contraseña temporal",
     });
@@ -267,15 +283,18 @@ describe("401 handling", () => {
           ? errorResponse(401, "UNAUTHENTICATED")
           : jsonResponse({ profile: admin }),
       "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-      "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
-      "GET /api/v1/organizations/org-1/memberships": () => {
-        expired = true;
-        return errorResponse(401, "UNAUTHENTICATED");
-      },
-      "GET /api/v1/organizations/org-1/users": () =>
-        errorResponse(401, "UNAUTHENTICATED"),
+      "GET /api/v1/organizations": () => jsonResponse(organizationsPage([])),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () => {
+          expired = true;
+          return errorResponse(401, "UNAUTHENTICATED");
+        },
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => errorResponse(401, "UNAUTHENTICATED"),
     });
-    const { store } = renderApp({ route: "/organizations/org-1/members" });
+    const { store } = renderApp({
+      route: "/organizations/00000000-0000-4000-9000-000000000001/members",
+    });
     await screen.findByRole("heading", { name: "Iniciar sesión" });
     expect(screen.queryByText(/Ada Lovelace/)).toBeNull();
     expect(store.getSnapshot().phase).toBe("anonymous");

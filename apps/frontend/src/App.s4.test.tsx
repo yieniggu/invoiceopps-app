@@ -817,7 +817,11 @@ describe("APP12 S4 policy HTTP workflow", () => {
   it("clears selected policy across organizations and queries only the new authoritative context", async () => {
     const api = http();
     api.profile.memberships.push({
-      organization: { id: "org-B", name: "Academia B", slug: "b" },
+      organization: {
+        id: "00000000-0000-4000-9000-000000000066",
+        name: "Academia B",
+        slug: "b",
+      },
       role: "USER",
       ...ACCESS_NONE,
     });
@@ -827,7 +831,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       screen.getByRole("button", { name: `Editar ${policy.version}` }),
     );
     fireEvent.change(screen.getByLabelText("Propietario"), {
-      target: { value: "org-B:user:user" },
+      target: { value: "00000000-0000-4000-9000-000000000066:user:user" },
     });
     await loaded();
     expect(screen.getByRole("form", { name: "Crear política" })).toBeTruthy();
@@ -839,7 +843,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       input.toString().startsWith("/api/v1/business-policies"),
     );
     expect(calls.at(-1)?.[0]).toBe(
-      "/api/v1/business-policies?organizationId=org-B&ownerType=user&ownerId=user",
+      "/api/v1/business-policies?organizationId=00000000-0000-4000-9000-000000000066&ownerType=user&ownerId=user",
     );
   });
 });

@@ -1,3 +1,4 @@
+import { namedId } from "./test/ids";
 import { membership, NO_PERMISSIONS } from "./test/transport";
 import {
   act,
@@ -26,6 +27,7 @@ const initial: Profile = {
   isPlatformAdministrator: true,
   memberships: [membership(org, "ADMIN")],
 };
+const GROUP_ID = namedId("group", "g");
 const base = `/api/v1/organizations/${org.id}`;
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status });
@@ -61,18 +63,22 @@ function http(platform = true) {
     .mockImplementation(async () => json({ profile }));
   let member = false;
   const group = {
-    id: "g",
+    id: GROUP_ID,
     organizationId: org.id,
     name: "Equipo ajeno",
     description: null,
   };
   // Another person who is always in the group: their flags can be edited.
   const carla = {
-    userId: "carla",
-    groupId: "g",
+    userId: "00000000-0000-4000-8000-0000000000c1",
+    groupId: GROUP_ID,
     organizationId: org.id,
     permissions: NO_PERMISSIONS,
-    user: { id: "carla", name: "Carla", rut: "190347907" },
+    user: {
+      id: "00000000-0000-4000-8000-0000000000c1",
+      name: "Carla",
+      rut: "190347907",
+    },
   };
   const catalog = vi
     .fn<() => Promise<Response>>()
@@ -103,13 +109,23 @@ function http(platform = true) {
       if (path === "/api/v1/auth/profile" || path === "/api/v1/profile")
         return method === "PATCH" ? patch() : reads();
       if (path === "/api/v1/groups") return readGroups();
-      if (path === "/api/v1/organizations") return json({ organizations: [] });
+      // The platform directory lists every organization (paginated).
+      if (path === "/api/v1/organizations")
+        return json({
+          organizations: [{ ...org, description: null }],
+          page: 1,
+          pageSize: 20,
+          total: 1,
+        });
       if (path === base && method === "GET")
         return json({
           organization: { ...org, description: null },
           summary: { memberCount: 1, groupCount: 1 },
         });
-      if (path === `${base}/groups/g/memberships/bulk` && method === "POST")
+      if (
+        path === `${base}/groups/${GROUP_ID}/memberships/bulk` &&
+        method === "POST"
+      )
         return json({ memberships: [] }, 201);
       if (path === `${base}/memberships` && method === "GET")
         return json({
@@ -132,13 +148,13 @@ function http(platform = true) {
         return json({ users: [{ ...self, role: "ADMIN" }] });
       if (path === `${base}/groups`)
         return method === "POST" ? json({ group }, 201) : catalog();
-      if (path === `${base}/groups/g/memberships`)
+      if (path === `${base}/groups/${GROUP_ID}/memberships`)
         return method === "POST"
           ? json(
               {
                 membership: {
                   userId: actor,
-                  groupId: "g",
+                  groupId: GROUP_ID,
                   organizationId: org.id,
                 },
               },
@@ -150,7 +166,7 @@ function http(platform = true) {
                   ? [
                       {
                         userId: actor,
-                        groupId: "g",
+                        groupId: GROUP_ID,
                         organizationId: org.id,
                         permissions: NO_PERMISSIONS,
                         user: self,
@@ -160,12 +176,13 @@ function http(platform = true) {
                 carla,
               ],
             });
-      if (path === `${base}/groups/g/memberships/${actor}`) {
+      if (path === `${base}/groups/${GROUP_ID}/memberships/${actor}`) {
         member = false;
         return new Response(null, { status: 204 });
       }
       if (
-        path === `${base}/groups/g/memberships/carla/permissions` &&
+        path ===
+          `${base}/groups/${GROUP_ID}/memberships/00000000-0000-4000-8000-0000000000c1/permissions` &&
         method === "PUT"
       )
         return json({ membership: carla });
@@ -312,7 +329,7 @@ describe("FULLAPP12 authorized findings", () => {
       writes.map(([path, init]) => [String(path), init?.method, init?.body]),
     ).toEqual([
       [
-        `${base}/groups/g/memberships/carla/permissions`,
+        `${base}/groups/${GROUP_ID}/memberships/00000000-0000-4000-8000-0000000000c1/permissions`,
         "PUT",
         JSON.stringify({
           permissions: {
@@ -324,7 +341,7 @@ describe("FULLAPP12 authorized findings", () => {
         }),
       ],
       [
-        `${base}/groups/g/memberships/bulk`,
+        `${base}/groups/${GROUP_ID}/memberships/bulk`,
         "POST",
         JSON.stringify({
           members: [{ userId: actor, permissions: NO_PERMISSIONS }],

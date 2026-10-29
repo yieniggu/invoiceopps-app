@@ -19,7 +19,8 @@ export const BASE_URL = `http://127.0.0.1:${FRONTEND_PORT}`;
  */
 export const RUT_FIRST_BODY = 20_000_000;
 export const RUT_WORKER_BLOCK = 1_000;
-export const RUT_MAX_WORKER_INDEX = 40;
+// --repeat-each starts a fresh worker per repetition, so keep room for it.
+export const RUT_MAX_WORKER_INDEX = 400;
 const RUT_RUN_BLOCK = RUT_WORKER_BLOCK * RUT_MAX_WORKER_INDEX;
 export const RUT_RUN_SLOTS = Math.floor(
   (99_999_999 - RUT_FIRST_BODY) / RUT_RUN_BLOCK,

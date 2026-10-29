@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 
 import { ApiError, parseWith } from "../../http/errors.js";
+import { PaginationQuerySchema } from "../../pagination.js";
 import { logEvent } from "../../http/logging.js";
 import type { AuthService } from "../auth/services.js";
 import { requireSessionProfile } from "../auth/session.js";
@@ -12,6 +13,9 @@ import {
   MembershipCreateRequestSchema,
   MembershipRoleRequestSchema,
   OrganizationCreateRequestSchema,
+  MembershipListQuerySchema,
+  OrganizationListQuerySchema,
+  OrganizationUpdateRequestSchema,
 } from "./schemas.js";
 import type { OrganizationService } from "./services.js";
 
@@ -39,8 +43,14 @@ export function createOrganizationController(
 ) {
   const list: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
-    const result = await wired(organizations).listOrganizations(actor.id);
-    response.status(200).json({ organizations: result });
+    const query = parseWith(
+      OrganizationListQuerySchema,
+      request.query,
+      "Invalid query",
+    );
+    response
+      .status(200)
+      .json(await wired(organizations).listOrganizations(actor.id, query));
   };
 
   const create: RequestHandler = async (request, response) => {
@@ -68,11 +78,61 @@ export function createOrganizationController(
 
   const listMemberships: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
-    const memberships = await wired(organizations).listMemberships(
-      actor.id,
-      String(request.params.organizationId),
+    const query = parseWith(
+      MembershipListQuerySchema,
+      request.query,
+      "Invalid query",
     );
-    response.status(200).json({ memberships });
+    response
+      .status(200)
+      .json(
+        await wired(organizations).listMemberships(
+          actor.id,
+          String(request.params.organizationId),
+          query,
+        ),
+      );
+  };
+
+  const listMembers: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const query = parseWith(
+      PaginationQuerySchema,
+      request.query,
+      "Invalid query",
+    );
+    response
+      .status(200)
+      .json(
+        await wired(organizations).listMembers(
+          actor.id,
+          String(request.params.organizationId),
+          query,
+        ),
+      );
+  };
+
+  const update: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    // Same order as every other write: the body is validated first, then the
+    // authority is checked inside the transaction.
+    const input = parseWith(
+      OrganizationUpdateRequestSchema,
+      request.body,
+      "Invalid organization",
+    );
+    const organizationId = String(request.params.organizationId);
+    const { organization, changed } = await wired(
+      organizations,
+    ).updateOrganization(actor.id, organizationId, input);
+    if (changed)
+      logEvent("info", "audit.org_updated", {
+        feature: "organizations",
+        action: "updated",
+        organizationId,
+        actorUserId: actor.id,
+      });
+    response.status(200).json({ organization });
   };
 
   const createMembership: RequestHandler = async (request, response) => {
@@ -192,6 +252,8 @@ export function createOrganizationController(
     list,
     create,
     get,
+    update,
+    listMembers,
     listMemberships,
     createMembership,
     changeMembershipRole,

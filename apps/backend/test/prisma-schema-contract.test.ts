@@ -46,6 +46,26 @@ describe("consolidated Prisma schema contract", () => {
     expect(entries).toContain("migration_lock.toml");
   });
 
+  it("keeps the baseline migration untouched and adds B3c as an idempotent follow-up", async () => {
+    const baseline = await readMigration();
+    const followUp = await readFile(
+      `${migrationsPath}20261028000000_user_status_activity/migration.sql`,
+      "utf8",
+    );
+    // B3c objects live only in the follow-up: a database created from the
+    // committed baseline must upgrade with `prisma migrate deploy`.
+    for (const name of ["disabledAt", "lastActiveAt", "USER_DEACTIVATED"]) {
+      expect(baseline).not.toContain(name);
+      expect(followUp).toContain(name);
+    }
+    expect(followUp).toMatch(/ADD COLUMN IF NOT EXISTS "disabledAt"/);
+    expect(followUp).toMatch(/ADD COLUMN IF NOT EXISTS "lastActiveAt"/);
+    expect(followUp.match(/ADD VALUE IF NOT EXISTS/g)).toHaveLength(5);
+    expect(followUp).toMatch(/CREATE EXTENSION IF NOT EXISTS pg_trgm/);
+    expect(followUp.match(/CREATE INDEX IF NOT EXISTS/g)).toHaveLength(3);
+    expect(followUp).not.toMatch(/CREATE (UNIQUE )?INDEX "/);
+  });
+
   it("declares USER instead of STUDENT and drops legacy models", async () => {
     const schema = await readFile(schemaPath, "utf8");
     expect(normalize(enumBlock(schema, "OrganizationRole")).trim()).toBe(
@@ -119,6 +139,8 @@ describe("consolidated Prisma schema contract", () => {
       "passwordHash\\s+String\\?",
       "mustChangePassword\\s+Boolean\\s+@default\\(false\\)",
       "temporaryPasswordExpiresAt\\s+DateTime\\?",
+      "disabledAt\\s+DateTime\\?",
+      "lastActiveAt\\s+DateTime\\?",
     ]) {
       expect(user).toMatch(new RegExp(field));
     }

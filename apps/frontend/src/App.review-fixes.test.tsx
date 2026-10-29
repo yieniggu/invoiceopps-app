@@ -24,7 +24,7 @@ const profile = {
 };
 const groups = [
   {
-    id: "group-B",
+    id: "00000000-0000-4000-a000-000000000066",
     name: "Grupo B",
     description: null,
     organization,
@@ -34,13 +34,13 @@ const groups = [
 const invoice = (id: string) => ({
   id: id,
   businessId: id,
-  organizationId: "organization-1",
-  groupId: "group-1",
+  organizationId: "00000000-0000-4000-9000-000000000001",
+  groupId: "00000000-0000-4000-a000-000000000001",
   currency: "CLP",
   issuedOn: "2026-10-25",
   dueOn: "2026-11-25",
   processingStatus: "NOT_REQUESTED",
-  createdByUserId: "user-1",
+  createdByUserId: "00000000-0000-4000-8000-000000000001",
   supplierName: `Proveedor ${id}`,
   amountPesos: 10000,
   businessStatus: "PENDING",
@@ -135,14 +135,18 @@ describe("APP12 S1 CR003-008 regressions", () => {
       name: "Propietario",
     });
     selector.focus();
-    fireEvent.change(selector, { target: { value: "org:group:group-B" } });
+    fireEvent.change(selector, {
+      target: { value: "org:group:00000000-0000-4000-a000-000000000066" },
+    });
     expect(document.activeElement).toBe(
       screen.getByRole("combobox", { name: "Propietario" }),
     );
     await waitFor(() =>
       expect(
         api.read.mock.calls.some(
-          ([url]) => url.searchParams.get("ownerId") === "group-B",
+          ([url]) =>
+            url.searchParams.get("ownerId") ===
+            "00000000-0000-4000-a000-000000000066",
         ),
       ).toBe(true),
     );
@@ -152,7 +156,9 @@ describe("APP12 S1 CR003-008 regressions", () => {
     render(<InvoiceWorkspace profile={profile} groups={groups} />);
     const selector = screen.getByRole("combobox", { name: "Propietario" });
     selector.focus();
-    fireEvent.change(selector, { target: { value: "org:group:group-B" } });
+    fireEvent.change(selector, {
+      target: { value: "org:group:00000000-0000-4000-a000-000000000066" },
+    });
     await waitFor(() => expect(document.activeElement).toBe(selector));
   });
   it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(

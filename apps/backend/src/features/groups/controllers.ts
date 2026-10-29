@@ -8,6 +8,7 @@ import {
   GroupCreateRequestSchema,
   GroupMembershipBulkCreateRequestSchema,
   GroupMembershipCreateRequestSchema,
+  GroupMembershipListQuerySchema,
 } from "./schemas.js";
 import {
   BulkPermissionsUpdateRequestSchema,
@@ -94,12 +95,18 @@ export function createGroupController(
 
   const listMemberships: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
-    const memberships = await wired(groups).listMemberships(
+    const query = parseWith(
+      GroupMembershipListQuerySchema,
+      request.query,
+      "Invalid query",
+    );
+    const result = await wired(groups).listMemberships(
       actor.id,
       String(request.params.organizationId),
       String(request.params.groupId),
+      query,
     );
-    response.status(200).json({ memberships });
+    response.status(200).json(result);
   };
 
   const addMember: RequestHandler = async (request, response) => {

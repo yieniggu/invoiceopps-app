@@ -5,16 +5,21 @@ import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
 } from "../auth/password-policy.js";
+import {
+  paginationQueryShape,
+  paginationResponseShape,
+} from "../../pagination.js";
 import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
 import {
   MembershipSchema,
   RutInputSchema,
   UserSummarySchema,
 } from "../orgs/schemas.js";
+import { hasNoNul, NO_NUL } from "../../text.js";
 
 export const MAX_GROUPS_PER_USER_CREATION = 200;
 
-const name = z.string().trim().min(1).max(120);
+const name = z.string().trim().min(1).max(120).refine(hasNoNul, NO_NUL);
 
 /** A group the new user joins, with its own invoice permissions. */
 export const GroupGrantSchema = z
@@ -76,8 +81,29 @@ export const OrganizationUserSchema = UserSummarySchema.extend({
   role: z.enum(OrganizationRole),
 }).meta({ id: "OrganizationUser" });
 
+export const OrganizationUserListQuerySchema = z
+  .object({
+    search: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine(hasNoNul, NO_NUL)
+      .optional()
+      .meta({
+        description:
+          "Case-insensitive part of the name, or part of the RUT typed with or without dots and hyphen (1..100 characters after trimming)",
+      }),
+    ...paginationQueryShape,
+  })
+  .strict()
+  .meta({ id: "OrganizationUserListQuery" });
+
 export const OrganizationUserListResponseSchema = z
-  .object({ users: z.array(OrganizationUserSchema) })
+  .object({
+    users: z.array(OrganizationUserSchema),
+    ...paginationResponseShape,
+  })
   .meta({ id: "OrganizationUserListResponse" });
 
 export const GroupGrantResultSchema = z
@@ -101,3 +127,29 @@ export const UserProvisionResponseSchema = z
     temporaryPassword: TemporaryPasswordSchema.optional(),
   })
   .meta({ id: "UserProvisionResponse" });
+
+export const UserBasicSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string().nullable(),
+    recentlyActive: z.boolean(),
+  })
+  .meta({
+    id: "UserBasic",
+    description:
+      "Name and email only: no RUT, credentials, onboarding state, roles or permissions. recentlyActive is false for a disabled user.",
+  });
+
+export const SharedOrganizationSchema = z
+  .object({ id: z.string(), name: z.string() })
+  .meta({ id: "SharedOrganization" });
+
+export const UserBasicResponseSchema = z
+  .object({
+    user: UserBasicSchema,
+    sharedOrganizations: z.array(SharedOrganizationSchema),
+  })
+  .meta({ id: "UserBasicResponse" });
+
+export const UserParamsSchema = z.object({ userId: z.string() });

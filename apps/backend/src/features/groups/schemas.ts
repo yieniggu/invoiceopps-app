@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-import { UserSummarySchema } from "../orgs/schemas.js";
+import {
+  paginationQueryShape,
+  paginationResponseShape,
+} from "../../pagination.js";
+import { MemberIdsSchema, UserSummarySchema } from "../orgs/schemas.js";
 import { InvoicePermissionsSchema } from "./permissions-schema.js";
+import { hasNoNul, NO_NUL } from "../../text.js";
 
 export const GroupParamsSchema = z.object({
   organizationId: z.string(),
@@ -14,12 +19,13 @@ export const GroupMembershipParamsSchema = GroupParamsSchema.extend({
 
 export const GroupCreateRequestSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(120).refine(hasNoNul, NO_NUL),
     // A blank description is stored as null, like an explicit null.
     description: z
       .string()
       .trim()
       .max(1_000)
+      .refine(hasNoNul, NO_NUL)
       .transform((value) => value || null)
       .nullable()
       .optional(),
@@ -90,8 +96,16 @@ export const GroupResponseSchema = z
   .object({ group: GroupSchema })
   .meta({ id: "GroupResponse" });
 
+export const GroupMembershipListQuerySchema = z
+  .object({ userIds: MemberIdsSchema.optional(), ...paginationQueryShape })
+  .strict()
+  .meta({ id: "GroupMembershipListQuery" });
+
 export const GroupMembershipListResponseSchema = z
-  .object({ memberships: z.array(GroupMembershipWithUserSchema) })
+  .object({
+    memberships: z.array(GroupMembershipWithUserSchema),
+    ...paginationResponseShape,
+  })
   .meta({ id: "GroupMembershipListResponse" });
 
 export const GroupMembershipResponseSchema = z

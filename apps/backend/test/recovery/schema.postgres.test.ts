@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -654,6 +655,169 @@ describe("B3b-FIX schema: audit payload and admin lookup index", () => {
         "GROUP_MEMBERSHIP_CREATED",
         "GROUP_MEMBERSHIP_REMOVED",
       ]),
+    );
+  });
+});
+
+describe("B3c S1 schema: user deactivation", () => {
+  it("adds a nullable timestamp User.disabledAt", async () => {
+    expect(await columnInfo("User", "disabledAt")).toMatchObject({
+      is_nullable: "YES",
+      data_type: "timestamp without time zone",
+    });
+  });
+
+  it("adds a nullable timestamp User.lastActiveAt", async () => {
+    expect(await columnInfo("User", "lastActiveAt")).toMatchObject({
+      is_nullable: "YES",
+      data_type: "timestamp without time zone",
+    });
+  });
+
+  it("accepts the USER_DEACTIVATED, USER_REACTIVATED, USER_UPDATED and PASSWORD_RESET audit event types", async () => {
+    const result = await client.query(
+      `SELECT unnest(enum_range(NULL::"PlatformAdministrativeAuditEventType"))::text AS value`,
+    );
+    expect(result.rows.map((row) => row.value)).toEqual(
+      expect.arrayContaining([
+        "USER_DEACTIVATED",
+        "USER_REACTIVATED",
+        "USER_UPDATED",
+        "PASSWORD_RESET",
+      ]),
+    );
+  });
+});
+
+describe("B3c follow-up migration", () => {
+  it("is applied after the baseline", async () => {
+    const result = await client.query(
+      'SELECT migration_name FROM "_prisma_migrations" ORDER BY migration_name',
+    );
+    expect(result.rows.map((row) => row.migration_name)).toEqual([
+      "20261026000000_initial_recovery_p0",
+      "20261028000000_user_status_activity",
+    ]);
+  });
+
+  it("creates the trigram indexes for the directory and organization searches", async () => {
+    const result = await client.query(
+      `SELECT indexname, indexdef FROM pg_indexes
+       WHERE schemaname = current_schema() AND indexname LIKE '%_trgm_idx'
+       ORDER BY indexname`,
+    );
+    expect(result.rows.map((row) => row.indexname)).toEqual([
+      "Organization_name_trgm_idx",
+      "User_name_trgm_idx",
+      "User_rut_trgm_idx",
+    ]);
+    for (const row of result.rows) {
+      expect(row.indexdef).toMatch(/USING gin .*gin_trgm_ops/);
+    }
+  });
+
+  it("can be applied again without error (idempotent)", async () => {
+    const sql = await readFile(
+      new URL(
+        "../../prisma/migrations/20261028000000_user_status_activity/migration.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    await client.query(sql);
+  });
+
+  describe("contact data normalization before the unique indexes (CR-315)", () => {
+    const migrationSql = readFile(
+      new URL(
+        "../../prisma/migrations/20261028000000_user_status_activity/migration.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    // Runs the whole migration file inside a transaction that is always rolled
+    // back, with the unique indexes dropped so that dirty legacy rows can be
+    // seeded the way a database from before the indexes would hold them.
+    async function applyOnDirtyRows(
+      rows: Array<{ email: string | null; username: string | null }>,
+    ) {
+      const ids: string[] = [];
+      await client.query("BEGIN");
+      try {
+        await client.query('DROP INDEX "User_email_key"');
+        await client.query('DROP INDEX "User_username_key"');
+        for (const row of rows) {
+          const id = randomUUID();
+          ids.push(id);
+          await client.query(
+            'INSERT INTO "User" ("id","name","rut","email","username") VALUES ($1,$2,$3,$4,$5)',
+            [id, "legacy", `rut-${id}`, row.email, row.username],
+          );
+        }
+        await client.query(await migrationSql);
+        const stored = await client.query(
+          'SELECT "email","username" FROM "User" WHERE "id" = ANY($1) ORDER BY "rut"',
+          [ids],
+        );
+        return stored.rows;
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    }
+
+    it("trims and lower-cases emails and turns blank values into NULL", async () => {
+      const id = randomUUID();
+      const rows = await applyOnDirtyRows([
+        { email: ` Ada.${id}@X.com `, username: "  ada  " },
+        { email: "   ", username: "   " },
+      ]);
+      expect(rows).toHaveLength(2);
+      const byEmail = rows.find((row) => row.email !== null);
+      expect(byEmail).toEqual({ email: `ada.${id}@x.com`, username: "ada" });
+      expect(rows.find((row) => row.email === null)).toEqual({
+        email: null,
+        username: null,
+      });
+    });
+
+    it("fails with a clear message when emails collide once normalized", async () => {
+      const id = randomUUID();
+      await expect(
+        applyOnDirtyRows([
+          { email: `Dup.${id}@x.com`, username: null },
+          { email: ` dup.${id}@X.COM `, username: null },
+        ]),
+      ).rejects.toThrow(/several users share the same email/);
+    });
+
+    it("fails with a clear message when usernames collide once trimmed", async () => {
+      const id = randomUUID();
+      await expect(
+        applyOnDirtyRows([
+          { email: null, username: `dup-${id}` },
+          { email: null, username: ` dup-${id} ` },
+        ]),
+      ).rejects.toThrow(/several users share the same username/);
+    });
+
+    it("leaves the unique indexes in place after a rolled-back run", async () => {
+      const result = await client.query(
+        `SELECT indexname FROM pg_indexes
+         WHERE schemaname = current_schema() AND indexname IN ('User_email_key','User_username_key')`,
+      );
+      expect(result.rowCount).toBe(2);
+    });
+  });
+});
+
+describe("B3c S3 schema: organization update audit", () => {
+  it("accepts the ORGANIZATION_UPDATED audit event type", async () => {
+    const result = await client.query(
+      `SELECT unnest(enum_range(NULL::"PlatformAdministrativeAuditEventType"))::text AS value`,
+    );
+    expect(result.rows.map((row) => row.value)).toContain(
+      "ORGANIZATION_UPDATED",
     );
   });
 });

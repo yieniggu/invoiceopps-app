@@ -1,6 +1,5 @@
 import { describePermissions } from "../../permissions/types";
-import type { UserDraft } from "./draft";
-import type { OrganizationOption } from "./OrganizationDraftCard";
+import type { OrganizationOption, UserDraft } from "./draft";
 import { memberRoleLabel } from "../../orgs/types/roles";
 
 /** Read-only recap of everything the server will receive. */

@@ -15,21 +15,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const org = { id: "org-1", name: "Academia Norte" };
+const org = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
 const admin = profileFixture({ memberships: [membership(org, "ADMIN")] });
 const users = [
-  { id: "user-1", name: "Ada Lovelace", rut: "123456785", role: "ADMIN" },
-  { id: "user-3", name: "Carla Soto", rut: "190347907", role: "USER" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "Ada Lovelace",
+    rut: "123456785",
+    role: "ADMIN",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000003",
+    name: "Carla Soto",
+    rut: "190347907",
+    role: "USER",
+  },
 ];
-const BASE = "/api/v1/organizations/org-1";
-const NEW_GROUP = "/organizations/org-1/groups/new";
+const BASE = "/api/v1/organizations/00000000-0000-4000-9000-000000000001";
+const NEW_GROUP =
+  "/organizations/00000000-0000-4000-9000-000000000001/groups/new";
 
 /** A stateful backend for one create flow: the new group appears once POSTed. */
 function backend(overrides: Record<string, () => Response> = {}) {
   const groups: unknown[] = [];
   const created = {
-    id: "group-n",
-    organizationId: "org-1",
+    id: "00000000-0000-4000-a000-000000000110",
+    organizationId: "00000000-0000-4000-9000-000000000001",
     name: "Cobranza",
     description: null,
   };
@@ -38,8 +52,8 @@ function backend(overrides: Record<string, () => Response> = {}) {
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     [`GET ${BASE}/users`]: () => jsonResponse({ users }),
     [`GET ${BASE}/groups`]: () => jsonResponse({ groups }),
-    [`GET ${BASE}/groups/group-n/memberships`]: () =>
-      jsonResponse({ memberships: [] }),
+    [`GET ${BASE}/groups/00000000-0000-4000-a000-000000000110/memberships`]:
+      () => jsonResponse({ memberships: [] }),
     [`POST ${BASE}/groups`]: () => {
       groups.push(created);
       return jsonResponse({ group: created }, 201);
@@ -80,7 +94,7 @@ describe("GroupForm (create)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Crear grupo" }));
     await screen.findByText("Grupo creado. Agrega a sus miembros.");
     expect(window.location.pathname).toBe(
-      "/organizations/org-1/groups/group-n/members/new",
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000110/members/new",
     );
     expect(transport.calls(`POST ${BASE}/groups`)).toHaveLength(1);
     expect(transport.calls(`POST ${BASE}/groups`)[0].body).toEqual({

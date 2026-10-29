@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -14,12 +15,15 @@ import {
   orgMembershipsKey,
   orgsKey,
   orgUsersKey,
+  userBasicKey,
 } from "../../auth/session/queryKeys";
+import { getUserBasic } from "../../orgs/api/orgsApi";
 import {
   createPlatformUser,
-  listOrganizationUsers,
+  listOrganizationUsersPage,
   provisionUser,
 } from "../api/usersApi";
+import type { PageRequest } from "../../orgs/types";
 import type {
   CreateUserInput,
   IssuedCredential,
@@ -27,11 +31,32 @@ import type {
   UserGroupInput,
 } from "../types";
 
-export function useOrgUsersQuery(organizationId: string) {
+/**
+ * One page of the organization's people (administrators only), optionally
+ * narrowed by a name or RUT fragment. Pages never walk the whole list: the
+ * add-members picker asks for the page on screen.
+ */
+export function useOrgUsersPageQuery(
+  organizationId: string,
+  request: PageRequest & { search?: string },
+) {
   const identityId = useIdentityId();
   return useQuery({
-    queryKey: orgUsersKey(identityId, organizationId),
-    queryFn: ({ signal }) => listOrganizationUsers(organizationId, signal),
+    queryKey: orgUsersKey(identityId, organizationId, request),
+    queryFn: ({ signal }) =>
+      listOrganizationUsersPage(organizationId, request, signal),
+    // Paging and searching keep the rows on screen until the next ones arrive.
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Basic view of one person who shares an organization with me. */
+export function useUserBasicQuery(userId: string, enabled = true) {
+  const identityId = useIdentityId();
+  return useQuery({
+    queryKey: userBasicKey(identityId, userId),
+    queryFn: ({ signal }) => getUserBasic(userId, signal),
+    enabled,
   });
 }
 

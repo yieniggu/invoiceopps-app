@@ -30,6 +30,8 @@ export function createAuthOperations(
   authRateLimiter: AuthRateLimiter,
 ): Operation[] {
   const controller = createAuthController(auth, authRateLimiter);
+  // A future Bearer middleware must reject a token whose `revokedAt` is set
+  // or whose user has `disabledAt` set (and creation must refuse disabled users).
   const unauthenticated = {
     description:
       "UNAUTHENTICATED: missing, invalid or expired session (Bearer is not accepted yet)",
@@ -99,11 +101,16 @@ export function createAuthOperations(
       responses: {
         200: { description: "Updated profile", schema: ProfileResponseSchema },
         400: {
-          description: `VALIDATION_ERROR: unknown field or an empty body; ${INVALID_JSON}; ${AMBIGUOUS}`,
+          description: `VALIDATION_ERROR: unknown field, an empty body, an email that is not valid or longer than 254 characters, a username longer than 64 characters, or a NUL character; ${INVALID_JSON}; ${AMBIGUOUS}`,
           schema: ERROR,
         },
         401: unauthenticated,
         403: forbiddenOrigin,
+        409: {
+          description:
+            "USER_CONFLICT: another user already has that email or username; nothing is changed. The username is unique case-sensitively (after trimming); the email is compared trimmed and lower-cased",
+          schema: ERROR,
+        },
       },
       handler: controller.updateProfile,
     },

@@ -23,7 +23,7 @@ vi.mock("./features/session/AppRoutes", async (importOriginal) => {
 
 const temporary = "temporary-password-1";
 const profile = {
-  id: "user-1",
+  id: "00000000-0000-4000-8000-000000000001",
   name: "Ada Lovelace",
   rut: "12345678-5",
   email: null,
@@ -31,7 +31,11 @@ const profile = {
   isPlatformAdministrator: false,
   memberships: [
     {
-      organization: { id: "organization-1", name: "AI Academy", slug: "ai" },
+      organization: {
+        id: "00000000-0000-4000-9000-000000000001",
+        name: "AI Academy",
+        slug: "ai",
+      },
       role: "USER",
       ...ACCESS_NONE,
     },

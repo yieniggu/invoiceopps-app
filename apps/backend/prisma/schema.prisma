@@ -51,17 +51,26 @@ enum PlatformAdministrativeAuditEventType {
   GROUP_MEMBERSHIP_CREATED
   GROUP_MEMBERSHIP_REMOVED
   MEMBERSHIP_PERMISSIONS_CHANGED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  USER_UPDATED
+  PASSWORD_RESET
+  ORGANIZATION_UPDATED
 }
 
 model User {
   id                                 String                             @id @default(uuid())
   name                               String
   rut                                String                             @unique
-  email                              String?
-  username                           String?
+  email                              String?                            @unique
+  username                           String?                            @unique
   passwordHash                       String?
   mustChangePassword                 Boolean                            @default(false)
   temporaryPasswordExpiresAt         DateTime?
+  // Set while the user is deactivated; null means enabled.
+  disabledAt                         DateTime?
+  // Last login or throttled authenticated activity (see auth services).
+  lastActiveAt                       DateTime?
   memberships                        OrganizationMembership[]
   groupMemberships                   GroupMembership[]
   sessions                           Session[]
@@ -72,6 +81,9 @@ model User {
   platformAdministrator              PlatformAdministrator?
   platformAdministrativeAuditEvents  PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditActor")
   platformAdministrativeAuditTargets PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditTarget")
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "User_name_trgm_idx")
+  @@index([rut(ops: raw("gin_trgm_ops"))], type: Gin, map: "User_rut_trgm_idx")
 }
 
 model Organization {
@@ -86,6 +98,8 @@ model Organization {
   groups           Group[]
   invoices         Invoice[]
   businessPolicies BusinessPolicy[]
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Organization_name_trgm_idx")
 }
 
 model OrganizationMembership {

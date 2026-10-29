@@ -1,4 +1,5 @@
 import type { OrganizationRole } from "../../auth/types";
+import type { Page } from "../../orgs/types";
 import type { InvoicePermissions } from "../../permissions/types";
 
 export interface OrganizationUser {
@@ -6,6 +7,11 @@ export interface OrganizationUser {
   name: string;
   rut: string;
   role: OrganizationRole;
+}
+
+/** One page of the people of an organization (GET /organizations/{o}/users). */
+export interface OrganizationUserPage extends Page {
+  users: OrganizationUser[];
 }
 
 /** A group a new user joins, with the flags they get in it. */

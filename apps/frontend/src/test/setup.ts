@@ -40,3 +40,12 @@ afterEach(resetTheme);
  * Races that were real were fixed in the tests themselves (see CR-206/CR-240).
  */
 if (typeof window !== "undefined") configure({ asyncUtilTimeout: 5000 });
+
+/*
+ * The shell's persistent live region repeats the text of the visible notice
+ * card (that is how it gets announced). ByText queries look at what a person
+ * sees, so they skip the screen-reader-only copy; the announcement itself is
+ * proven in NoticeRegion.test.tsx, which queries the region directly.
+ */
+if (typeof window !== "undefined")
+  configure({ defaultIgnore: "script, style, [data-notice-region] *" });

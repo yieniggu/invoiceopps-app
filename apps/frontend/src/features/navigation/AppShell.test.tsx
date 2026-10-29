@@ -138,9 +138,12 @@ describe("AppShell sidebar", () => {
   });
 
   it.each([
-    ["/organizations/org-1", "Organizaciones"],
-    ["/organizations/org-1/groups", "Grupos"],
-    ["/organizations/org-1/groups/group-1", "Grupos"],
+    ["/organizations/00000000-0000-4000-9000-000000000001", "Organizaciones"],
+    ["/organizations/00000000-0000-4000-9000-000000000001/groups", "Grupos"],
+    [
+      "/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000001",
+      "Grupos",
+    ],
   ])("marks one destination for the nested URL %s", (route, expected) => {
     const view = renderShell({ route });
     const current = screen

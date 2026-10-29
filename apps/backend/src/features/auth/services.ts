@@ -7,6 +7,7 @@ import {
   type Prisma,
   type PrismaClient,
 } from "../../generated/prisma/client.js";
+import { logEvent } from "../../http/logging.js";
 import { formatRut, parseRut } from "../../rut.js";
 import {
   PERMISSION_SELECT,
@@ -19,6 +20,28 @@ import { isAcceptablePassword } from "./password-policy.js";
 const scryptAsync = promisify(scrypt);
 const PASSWORD_KEY_LENGTH = 64;
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+/** An authenticated request refreshes User.lastActiveAt at most this often. */
+export const ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * A user counts as recently active when lastActiveAt falls inside this window;
+ * it is wider than the write interval so throttling never hides activity.
+ */
+export const RECENT_ACTIVITY_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * lastActiveAt is never exposed: only whether it is inside the window. A
+ * disabled user is never reported as active, whatever lastActiveAt says.
+ */
+export function isRecentlyActive(
+  lastActiveAt: Date | null,
+  disabledAt: Date | null = null,
+) {
+  return (
+    disabledAt === null &&
+    lastActiveAt !== null &&
+    lastActiveAt.getTime() >= Date.now() - RECENT_ACTIVITY_WINDOW_MS
+  );
+}
 const INVALID_CREDENTIALS = "Invalid credentials";
 const UNAUTHENTICATED_MESSAGE = "Unauthenticated";
 const DUMMY_PASSWORD_HASH = `scrypt$${Buffer.alloc(16).toString("base64")}$${Buffer.alloc(PASSWORD_KEY_LENGTH).toString("base64")}`;
@@ -81,7 +104,7 @@ export class AuthError extends Error {
     readonly status: 400 | 401 | 403 | 404 | 409,
     message: string,
     /** Overrides the default status-derived public error code. */
-    readonly code?: "PASSWORD_REUSE",
+    readonly code?: "PASSWORD_REUSE" | "USER_CONFLICT",
   ) {
     super(message);
   }
@@ -157,6 +180,27 @@ export function temporaryPasswordExpired(
   );
 }
 
+/**
+ * Locks User rows FOR UPDATE in ascending id order in one statement, so every
+ * caller that needs several users takes them in the same global order. See
+ * the lock order in features/groups/locks.ts: User rows come first.
+ */
+export async function lockUsers(
+  transaction: Prisma.TransactionClient,
+  userIds: string[],
+) {
+  await transaction.$queryRaw`SELECT id FROM "User" WHERE id = ANY(${userIds}::text[]) ORDER BY id FOR UPDATE`;
+}
+
+// Serializes every credential change, session creation and deactivation per
+// user. Row locks need no schema change; the lock holder re-reads the state.
+export async function lockUser(
+  transaction: Prisma.TransactionClient,
+  userId: string,
+) {
+  await lockUsers(transaction, [userId]);
+}
+
 export function createAuthService(
   prisma: PrismaClient,
   {
@@ -164,13 +208,41 @@ export function createAuthService(
     now = () => new Date(),
   }: AuthServiceOptions = {},
 ): AuthService {
-  // Serializes every credential change and session creation per user. Row
-  // locks need no schema change; the lock holder re-reads the credential.
-  async function lockUser(
-    transaction: Prisma.TransactionClient,
-    userId: string,
-  ) {
-    await transaction.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+  // Best effort and throttled: a single conditional UPDATE, written only when
+  // the stored value is missing or older than the write interval. A failure
+  // never fails the request, and callers do not wait for it (it may queue
+  // behind a user-row lock). A user disabled meanwhile is never written.
+  // At most one write per user is pending in this process: while a write is
+  // blocked on a lock, further reads of the same user do not queue more of them
+  // (each would hold a pooled connection until the lock frees).
+  const pendingActivity = new Map<string, Promise<void>>();
+  function recordActivity(userId: string, lastActiveAt: Date | null, at: Date) {
+    const threshold = new Date(at.getTime() - ACTIVITY_WRITE_INTERVAL_MS);
+    if (lastActiveAt && lastActiveAt >= threshold) return;
+    if (pendingActivity.has(userId)) return;
+    const write = writeActivity(userId, threshold, at).finally(() => {
+      pendingActivity.delete(userId);
+    });
+    pendingActivity.set(userId, write);
+  }
+
+  async function writeActivity(userId: string, threshold: Date, at: Date) {
+    try {
+      await prisma.user.updateMany({
+        where: {
+          id: userId,
+          disabledAt: null,
+          OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: threshold } }],
+        },
+        data: { lastActiveAt: at },
+      });
+    } catch {
+      logEvent("warn", "auth.activity_write_failed", {
+        feature: "auth",
+        action: "record_activity",
+        targetUserId: userId,
+      });
+    }
   }
 
   async function getProfile(sessionToken: string): Promise<AuthProfile> {
@@ -186,6 +258,8 @@ export function createAuthService(
             email: true,
             username: true,
             mustChangePassword: true,
+            disabledAt: true,
+            lastActiveAt: true,
             platformAdministrator: { select: { id: true } },
             memberships: {
               orderBy: [
@@ -217,9 +291,12 @@ export function createAuthService(
       },
     });
 
-    if (!session || session.expiresAt <= now()) {
+    const at = now();
+    if (!session || session.expiresAt <= at || session.user.disabledAt) {
       throw new AuthError(401, UNAUTHENTICATED_MESSAGE);
     }
+
+    recordActivity(session.user.id, session.user.lastActiveAt, at);
 
     const { memberships, ...user } = session.user;
     const onboardingComplete = !user.mustChangePassword;
@@ -293,6 +370,7 @@ export function createAuthService(
           passwordHash: true,
           mustChangePassword: true,
           temporaryPasswordExpiresAt: true,
+          disabledAt: true,
         },
       });
 
@@ -305,6 +383,7 @@ export function createAuthService(
       if (
         !user?.passwordHash ||
         !passwordMatches ||
+        user.disabledAt ||
         temporaryPasswordExpired(user, now())
       ) {
         throw new AuthError(401, INVALID_CREDENTIALS);
@@ -318,14 +397,20 @@ export function createAuthService(
         const current = await transaction.user.findUnique({
           where: { id: user.id },
           select: {
+            rut: true,
             passwordHash: true,
             mustChangePassword: true,
             temporaryPasswordExpiresAt: true,
+            disabledAt: true,
           },
         });
         const at = now();
+        // A RUT change revokes credentials under this same lock: a login that
+        // authenticated with the old RUT must not leave a session behind.
         if (
           !current ||
+          current.disabledAt ||
+          current.rut !== user.rut ||
           current.passwordHash !== user.passwordHash ||
           temporaryPasswordExpired(current, at)
         ) {
@@ -348,6 +433,12 @@ export function createAuthService(
                 : expiresAt,
           },
         });
+        // Also commits a write on the locked User row: SERIALIZABLE admin
+        // transactions that locked it after their snapshot abort and retry.
+        await transaction.user.update({
+          where: { id: user.id },
+          data: { lastActiveAt: at },
+        });
       });
 
       return {
@@ -359,11 +450,24 @@ export function createAuthService(
     getProfile,
     async updateProfile(sessionToken, input) {
       const profile = await getProfile(sessionToken);
-      const user = await prisma.user.update({
-        where: { id: profile.id },
-        data: input,
-        select: { email: true, username: true },
-      });
+      let user;
+      try {
+        user = await prisma.user.update({
+          where: { id: profile.id },
+          data: input,
+          select: { email: true, username: true },
+        });
+      } catch (error) {
+        // Another user already has that email or username.
+        if ((error as { code?: unknown }).code === "P2002") {
+          throw new AuthError(
+            409,
+            "Email or username already in use",
+            "USER_CONFLICT",
+          );
+        }
+        throw error;
+      }
 
       return { ...profile, ...user };
     },
@@ -385,6 +489,7 @@ export function createAuthService(
               passwordHash: true,
               mustChangePassword: true,
               temporaryPasswordExpiresAt: true,
+              disabledAt: true,
             },
           },
         },
@@ -392,6 +497,7 @@ export function createAuthService(
       if (
         !session ||
         session.expiresAt <= now() ||
+        session.user.disabledAt ||
         !session.user.passwordHash ||
         temporaryPasswordExpired(session.user, now())
       ) {
@@ -422,6 +528,7 @@ export function createAuthService(
             passwordHash: true,
             mustChangePassword: true,
             temporaryPasswordExpiresAt: true,
+            disabledAt: true,
           },
         });
         const activeSession = await transaction.session.findUnique({
@@ -431,6 +538,7 @@ export function createAuthService(
         const at = now();
         if (
           !user ||
+          user.disabledAt ||
           user.passwordHash !== currentHash ||
           temporaryPasswordExpired(user, at) ||
           !activeSession ||

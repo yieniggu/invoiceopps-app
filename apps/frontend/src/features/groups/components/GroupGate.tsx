@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useParams } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
+import { isUuid } from "../../../lib/uuid";
 import { PageHeader } from "../../../components/PageHeader";
 import type { Profile } from "../../auth/types";
 import { NotFoundScreen } from "../../navigation/NotFoundScreen";
@@ -41,6 +42,11 @@ export function GroupGate({
   children: (context: GroupContext) => ReactNode;
 }) {
   const { groupId = "" } = useParams();
+  // A malformed id is no group: no request at all (the server answers 404).
+  if (!isUuid(groupId))
+    return (
+      <NotFoundScreen description="No encontramos ese grupo entre los que puedes ver." />
+    );
   return (
     <OrganizationGate
       profile={profile}

@@ -24,7 +24,66 @@ export interface OrganizationMember {
     permissions: InvoicePermissions;
   }>;
   /** The RUT is canonical (no dash); format it with fromApiRut to display. */
-  user: { id: string; name: string; rut: string };
+  user: {
+    id: string;
+    name: string;
+    rut: string;
+    disabled: boolean;
+    recentlyActive: boolean;
+  };
+}
+
+/** Paging of every paginated list: the request and the echoed envelope. */
+export interface PageRequest {
+  page: number;
+  pageSize: number;
+}
+
+export interface Page extends PageRequest {
+  total: number;
+}
+
+export interface OrganizationPage extends Page {
+  organizations: Organization[];
+}
+
+export interface MembershipPage extends Page {
+  memberships: OrganizationMember[];
+}
+
+/** Reduced member of the organization (what any member may see). */
+export interface OrganizationMemberBasic {
+  userId: string;
+  name: string;
+  email: string | null;
+  recentlyActive: boolean;
+}
+
+export interface MemberBasicPage extends Page {
+  members: OrganizationMemberBasic[];
+}
+
+export interface OrganizationBasic {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+}
+
+/** The slug is immutable; a null or blank description clears it. */
+export interface UpdateOrganizationInput {
+  name?: string;
+  description?: string | null;
+}
+
+export interface UserBasic {
+  user: {
+    id: string;
+    name: string;
+    email: string | null;
+    recentlyActive: boolean;
+  };
+  sharedOrganizations: Array<{ id: string; name: string }>;
 }
 
 export interface CreateOrganizationInput {

@@ -22,7 +22,11 @@ test.describe("authorization", () => {
     await expect(
       page.getByRole("link", { name: "Agregar miembro" }),
     ).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Miembros" })).toHaveCount(0);
+    // Every member may see who else belongs (the reduced list): the link is
+    // there for a plain member too (B3c; before it was admin-only).
+    await expect(
+      page.getByRole("main").getByRole("link", { name: "Miembros" }),
+    ).toBeVisible();
     // The page's own link (the sidebar has one of the same name).
     await expect(
       page.getByRole("main").getByRole("link", { name: "Grupos" }),
@@ -32,11 +36,15 @@ test.describe("authorization", () => {
       sidebarNav(page).getByRole("link", { name: "Admin", exact: true }),
     ).toHaveCount(0);
 
+    // The list opens for a plain member, without the management table.
     await page.goto(`/organizations/${ids.acme.id}/members`);
-    await expect(page.getByRole("alert")).toContainText(
-      "Solo los administradores de la organización pueden ver a sus miembros.",
-    );
-    await app.shot("members-forbidden");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Miembros" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Agregar miembro" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
 
     await page.goto(`/organizations/${ids.acme.id}/members/new`);
     await expect(page.getByRole("alert")).toContainText(

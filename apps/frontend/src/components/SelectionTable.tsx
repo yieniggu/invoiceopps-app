@@ -23,6 +23,7 @@ export function SelectionTable<Row extends { id: string; name: string }>({
   someSelected,
   onToggle,
   onToggleAll,
+  selectAllLabel = "Seleccionar todos",
 }: {
   /** Accessible name of the table and its scroll region. */
   label: string;
@@ -33,6 +34,8 @@ export function SelectionTable<Row extends { id: string; name: string }>({
   someSelected: boolean;
   onToggle: (id: string) => void;
   onToggleAll: () => void;
+  /** Name of the header checkbox; a paginated list says which rows it means. */
+  selectAllLabel?: string;
 }) {
   const all = useRef<HTMLInputElement>(null);
   const region = useRef<HTMLDivElement>(null);
@@ -76,7 +79,7 @@ export function SelectionTable<Row extends { id: string; name: string }>({
                   checked={allSelected}
                   onChange={onToggleAll}
                 />
-                <span className="select-all-text">Seleccionar todos</span>
+                <span className="select-all-text">{selectAllLabel}</span>
               </label>
             </th>
             {columns.map(({ header }) => (

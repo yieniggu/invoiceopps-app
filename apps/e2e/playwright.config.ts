@@ -27,6 +27,8 @@ const desktop = { width: 1440, height: 900 };
 export default defineConfig({
   testDir: "./tests",
   globalSetup: "./support/global-setup.ts",
+  // Drops the ARIA snapshots of failures in the specs that show a password.
+  globalTeardown: "./support/global-teardown.ts",
   outputDir: "./test-results",
   // Every test builds its own data (see support/scenario.ts), so files can run
   // side by side; the seeded fixtures are only read.

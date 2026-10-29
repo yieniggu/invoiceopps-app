@@ -6,8 +6,12 @@ import { FieldMessage } from "../../../components/FieldMessage";
 import { MAX_TOTAL_GROUP_GRANTS } from "../../../lib/limits";
 import { useGroupsQuery } from "../../groups/hooks/useGroups";
 import { MemberPermissionsEditor } from "../../permissions/components/MemberPermissionsEditor";
-import { emptyGroup, type GroupDraft, type OrganizationDraft } from "./draft";
-import type { OrganizationOption } from "./OrganizationDraftCard";
+import {
+  emptyGroup,
+  type GroupDraft,
+  type OrganizationDraft,
+  type OrganizationOption,
+} from "./draft";
 import { groupCountLabel, groupSummary } from "./summaries";
 
 /**

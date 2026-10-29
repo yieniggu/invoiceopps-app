@@ -2,17 +2,24 @@ import { LinkButton } from "../../../components/LinkButton";
 import { paths } from "../../navigation/paths";
 import { memberRoleLabel } from "../types/roles";
 
-/** One organization of mine: who I am in it, and where to manage it. */
+/**
+ * One organization: who I am in it (when I belong to it), and where to open
+ * it. The platform directory also lists organizations I am not a member of.
+ */
 export function OrganizationCard({
   organization,
 }: {
-  organization: { id: string; name: string; slug: string; role: string };
+  organization: { id: string; name: string; slug: string; role?: string };
 }) {
   return (
     <li className="context-card">
       <div className="card-title-row">
         <h2 className="card-title">{organization.name}</h2>
-        <span className="role-badge">{memberRoleLabel(organization.role)}</span>
+        {organization.role ? (
+          <span className="role-badge">
+            {memberRoleLabel(organization.role)}
+          </span>
+        ) : null}
       </div>
       <p className="muted">
         Identificador: <span className="slug">{organization.slug}</span>

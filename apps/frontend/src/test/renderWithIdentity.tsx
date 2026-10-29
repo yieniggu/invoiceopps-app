@@ -9,7 +9,10 @@ import { profileFixture } from "./transport";
  * Renders a component that needs an authenticated identity partition (query
  * keys hang under the identity) without the rest of the app.
  */
-export function renderWithIdentity(ui: ReactElement, identityId = "user-1") {
+export function renderWithIdentity(
+  ui: ReactElement,
+  identityId = "00000000-0000-4000-8000-000000000001",
+) {
   const store = new SessionStore();
   store.accept(
     store.getSnapshot().client,

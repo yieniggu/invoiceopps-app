@@ -274,8 +274,8 @@ export async function runIntegrationGate({
       if (names[0] !== baselineMigration)
         throw new Error(`Expected ${baselineMigration} as the first migration`);
       const expectedLedger = expectedMigrationChecksums(migrations, names);
-      log("stage: consolidated-migration");
-      await migrate(temp, url, child, "consolidated migration", spawn);
+      log("stage: migrations");
+      await migrate(temp, url, child, "migrations", spawn);
       const applied = await client.query(
         'SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY migration_name',
       );

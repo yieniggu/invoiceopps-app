@@ -1,4 +1,10 @@
-import { useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { Dialog } from "../../../components/Dialog";
 import type { IssuedCredential } from "../types";
@@ -20,7 +26,9 @@ function selectContents(node: HTMLElement) {
  * The only place the one-time password lives: provider memory until the
  * person confirms. The dialog is the only copy they will ever see, so it does
  * not close by accident: Escape moves focus to the confirmation button and
- * only "Ya copié la contraseña" closes it. "Copiar" uses the clipboard API and
+ * only "Ya copié la contraseña" closes it. Focus starts on that button and
+ * stays inside the dialog across history navigation; on close it goes back to
+ * the trigger if it is still mounted, else to the page title (see `Dialog`). "Copiar" uses the clipboard API and
  * falls back to selecting the text when the clipboard is unavailable.
  */
 export function TemporaryPasswordDialog({
@@ -47,6 +55,24 @@ export function TemporaryPasswordDialog({
       setCopy("selected");
     }
   };
+
+  // The acknowledge button is the dialog's live control: focus starts there
+  // (after the Dialog itself took it), and a browser Back/Forward that swaps
+  // the page behind the dialog must not leave it on something that vanished.
+  useLayoutEffect(() => {
+    confirm.current?.focus();
+  }, []);
+  useEffect(() => {
+    const keepFocusInside = () => {
+      window.setTimeout(() => {
+        const panel = confirm.current?.closest('[role="dialog"]');
+        if (panel && !panel.contains(document.activeElement))
+          confirm.current?.focus();
+      }, 0);
+    };
+    window.addEventListener("popstate", keepFocusInside);
+    return () => window.removeEventListener("popstate", keepFocusInside);
+  }, []);
 
   const message =
     copy === "copied"

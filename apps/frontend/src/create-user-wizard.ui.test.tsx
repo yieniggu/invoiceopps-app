@@ -1,3 +1,4 @@
+import { namedId } from "./test/ids";
 import {
   act,
   cleanup,
@@ -14,14 +15,18 @@ import { GroupsStep } from "./features/users/wizard/GroupsStep";
 import { renderApp } from "./test/renderApp";
 import { renderWithIdentity } from "./test/renderWithIdentity";
 import {
-  NO_PERMISSIONS,
   deferred,
   errorResponse,
   jsonResponse,
   membership,
   mockTransport,
+  NO_PERMISSIONS,
+  organizationsPage,
+  pagedList,
   profileFixture,
   serializeClient,
+  type RouteHandler,
+  usersPage,
 } from "./test/transport";
 
 afterEach(() => {
@@ -33,26 +38,47 @@ afterEach(() => {
 
 const NEW_USER = "/admin/users/new";
 const SECRET = "Tmp-Wizard-Secret-7731";
-const north = { id: "org-1", name: "Academia Norte" };
-const south = { id: "org-2", name: "Instituto Sur" };
+const north = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
+const south = {
+  id: "00000000-0000-4000-9000-000000000002",
+  name: "Instituto Sur",
+};
 const groupsOf: Record<string, Array<{ id: string; name: string }>> = {
-  "org-1": [
-    { id: "group-a", name: "Contabilidad" },
-    { id: "group-b", name: "Ventas" },
+  "00000000-0000-4000-9000-000000000001": [
+    { id: "00000000-0000-4000-a000-000000000097", name: "Contabilidad" },
+    { id: "00000000-0000-4000-a000-000000000098", name: "Ventas" },
   ],
-  "org-2": [{ id: "group-c", name: "Operaciones" }],
+  "00000000-0000-4000-9000-000000000002": [
+    { id: "00000000-0000-4000-a000-000000000099", name: "Operaciones" },
+  ],
 };
 const platform = profileFixture({
-  id: "admin-1",
+  id: "00000000-0000-4000-b000-000000000001",
   name: "Admin Plataforma",
   isPlatformAdministrator: true,
   memberships: [],
 });
 
+const organizationRecord = (org: { id: string; name: string }) => ({
+  ...org,
+  slug: org.id,
+  description: null,
+  enabled: true,
+  createdAt: "2026-10-01T00:00:00.000Z",
+});
+
 function created(name = "Diego Rojas") {
   return jsonResponse(
     {
-      user: { id: "user-9", name, rut: "111111111", mustChangePassword: true },
+      user: {
+        id: "00000000-0000-4000-8000-000000000009",
+        name,
+        rut: "111111111",
+        mustChangePassword: true,
+      },
       memberships: [],
       temporaryPassword: SECRET,
     },
@@ -60,22 +86,12 @@ function created(name = "Diego Rojas") {
   );
 }
 
-function platformRoutes(
-  overrides: Record<string, () => Response | Promise<Response>> = {},
-) {
+function platformRoutes(overrides: Record<string, RouteHandler> = {}) {
   return {
     "GET /api/v1/auth/profile": () => jsonResponse({ profile: platform }),
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     "GET /api/v1/organizations": () =>
-      jsonResponse({
-        organizations: [north, south].map((org) => ({
-          ...org,
-          slug: org.id,
-          description: null,
-          enabled: true,
-          createdAt: "2026-10-01T00:00:00.000Z",
-        })),
-      }),
+      jsonResponse(organizationsPage([north, south].map(organizationRecord))),
     ...Object.fromEntries(
       Object.entries(groupsOf).map(([orgId, groups]) => [
         `GET /api/v1/organizations/${orgId}/groups`,
@@ -207,9 +223,19 @@ describe("Admin entry and route authority", () => {
     },
   );
 
-  it("sends /admin to the create-user screen for the platform administrator", async () => {
-    mockTransport(platformRoutes());
+  // AC-13 replaced the old /admin -> /admin/users/new redirect: /admin is now
+  // the users directory, and the wizard is one link away.
+  it("opens the users directory at /admin and links to the create-user screen", async () => {
+    mockTransport(
+      platformRoutes({
+        "GET /api/v1/admin/users": () =>
+          jsonResponse({ users: [], page: 1, pageSize: 20, total: 0 }),
+      }),
+    );
     renderApp({ route: "/admin" });
+    await screen.findByRole("heading", { level: 1, name: "Administración" });
+    expect(window.location.pathname).toBe("/admin");
+    fireEvent.click(screen.getByRole("link", { name: "Crear usuario" }));
     await screen.findByRole("heading", { level: 1, name: "Crear usuario" });
     expect(window.location.pathname).toBe(NEW_USER);
   });
@@ -228,7 +254,7 @@ describe("platform create-user wizard", () => {
       screen.getByRole("heading", { name: /Paso 2 de 4/ }),
     );
 
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     fireEvent.change(within(card(1)).getByLabelText("Rol en la organización"), {
       target: { value: "ADMIN" },
     });
@@ -239,10 +265,10 @@ describe("platform create-user wizard", () => {
         }),
       ).getByRole("button", { name: "Leer facturas" }),
     );
-    addOrganization(2, "org-2");
+    addOrganization(2, "00000000-0000-4000-9000-000000000002");
 
     expect((await toStep3()).textContent).toBe("Paso 3 de 4: Grupos");
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     fireEvent.click(
       within(
         screen.getByRole("group", {
@@ -250,7 +276,7 @@ describe("platform create-user wizard", () => {
         }),
       ).getByRole("button", { name: "Crear facturas" }),
     );
-    await addGroup("Academia Norte", "group-b");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000098");
     fireEvent.click(
       within(
         screen.getByRole("group", {
@@ -258,7 +284,7 @@ describe("platform create-user wizard", () => {
         }),
       ).getByRole("button", { name: "Eliminar facturas propias" }),
     );
-    await addGroup("Instituto Sur", "group-c");
+    await addGroup("Instituto Sur", "00000000-0000-4000-a000-000000000099");
 
     await toSummary();
     // The summary reads back everything that will be sent.
@@ -286,27 +312,189 @@ describe("platform create-user wizard", () => {
       rut: "11111111-1",
       memberships: [
         {
-          organizationId: "org-1",
+          organizationId: "00000000-0000-4000-9000-000000000001",
           role: "ADMIN",
           permissions: { ...NO_PERMISSIONS, readInvoices: true },
           groups: [
             {
-              groupId: "group-a",
+              groupId: "00000000-0000-4000-a000-000000000097",
               permissions: { ...NO_PERMISSIONS, createInvoices: true },
             },
             {
-              groupId: "group-b",
+              groupId: "00000000-0000-4000-a000-000000000098",
               permissions: { ...NO_PERMISSIONS, deleteOwnInvoices: true },
             },
           ],
         },
         {
-          organizationId: "org-2",
+          organizationId: "00000000-0000-4000-9000-000000000002",
           role: "USER",
           permissions: NO_PERMISSIONS,
-          groups: [{ groupId: "group-c", permissions: NO_PERMISSIONS }],
+          groups: [
+            {
+              groupId: "00000000-0000-4000-a000-000000000099",
+              permissions: NO_PERMISSIONS,
+            },
+          ],
         },
       ],
+    });
+  });
+
+  describe("many organizations (CR-285)", () => {
+    const MANY = Array.from({ length: 150 }, (_unused, index) =>
+      organizationRecord({
+        id: namedId("org", index),
+        name: `Organización ${String(index).padStart(3, "0")}`,
+      }),
+    );
+    const manyRoutes = () =>
+      platformRoutes({
+        "GET /api/v1/organizations": pagedList(
+          "organizations",
+          MANY,
+          ({ id }) => id,
+          {
+            defaultPageSize: 100,
+            matches: (org, text) =>
+              org.name.toLowerCase().includes(text.toLowerCase()),
+          },
+        ),
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000140/groups":
+          () => jsonResponse({ groups: [] }),
+        "POST /api/v1/admin/users": () => created(),
+      });
+    const pickerOptions = () =>
+      optionsOf(within(card(1)).getByLabelText("Organización"));
+
+    it("finds an organization past the first page by searching and creates the user in it", async () => {
+      const transport = mockTransport(manyRoutes());
+      renderApp({ route: NEW_USER });
+      await fillData();
+      await toStep2();
+      press("Agregar a una organización");
+
+      // Only the first page is preloaded, and the picker says so.
+      await within(card(1)).findByText(/Mostrando 100 de 150 organizaciones/);
+      expect(pickerOptions()).toHaveLength(101); // placeholder + 100
+      expect(pickerOptions()).not.toContain(
+        "Organización 140 (00000000-0000-4000-9000-000000000140)",
+      );
+
+      fireEvent.change(within(card(1)).getByLabelText("Buscar organización"), {
+        target: { value: "organización 140" },
+      });
+      await waitFor(() =>
+        expect(pickerOptions()).toContain(
+          "Organización 140 (00000000-0000-4000-9000-000000000140)",
+        ),
+      );
+      expect(pickerOptions()).toHaveLength(2);
+      const searches = transport
+        .calls("GET /api/v1/organizations")
+        .map(({ search }) => new URLSearchParams(search));
+      expect(searches.at(-1)?.get("search")).toBe("organización 140");
+
+      fireEvent.change(within(card(1)).getByLabelText("Organización"), {
+        target: { value: "00000000-0000-4000-9000-000000000140" },
+      });
+      expect(
+        (within(card(1)).getByLabelText("Organización") as HTMLSelectElement)
+          .value,
+      ).toBe("00000000-0000-4000-9000-000000000140");
+      await toStep3();
+      await toSummary();
+      // The summary names the organization although it was never preloaded.
+      expect(screen.getByText(/Organización 140/)).toBeTruthy();
+      press("Crear usuario");
+      await screen.findByRole("dialog", { name: "Contraseña temporal" });
+      const body = transport.calls("POST /api/v1/admin/users")[0].body as {
+        memberships: Array<{ organizationId: string }>;
+      };
+      expect(
+        body.memberships.map(({ organizationId }) => organizationId),
+      ).toEqual(["00000000-0000-4000-9000-000000000140"]);
+    });
+
+    it("keeps a chosen organization selectable when a later search leaves it out", async () => {
+      mockTransport(manyRoutes());
+      renderApp({ route: NEW_USER });
+      await fillData();
+      await toStep2();
+      press("Agregar a una organización");
+      await within(card(1)).findByText(/Mostrando 100 de 150/);
+      fireEvent.change(within(card(1)).getByLabelText("Buscar organización"), {
+        target: { value: "Organización 141" },
+      });
+      await waitFor(() =>
+        expect(pickerOptions()).toContain(
+          "Organización 141 (00000000-0000-4000-9000-000000000141)",
+        ),
+      );
+      fireEvent.change(within(card(1)).getByLabelText("Organización"), {
+        target: { value: "00000000-0000-4000-9000-000000000141" },
+      });
+      fireEvent.change(within(card(1)).getByLabelText("Buscar organización"), {
+        target: { value: "zzz" },
+      });
+      await within(card(1)).findByText(
+        "Ninguna organización coincide con la búsqueda.",
+      );
+      expect(pickerOptions()).toContain(
+        "Organización 141 (00000000-0000-4000-9000-000000000141)",
+      );
+      expect(
+        (within(card(1)).getByLabelText("Organización") as HTMLSelectElement)
+          .value,
+      ).toBe("00000000-0000-4000-9000-000000000141");
+    });
+
+    it("preselects ?organizationId when it is past the first page", async () => {
+      const transport = mockTransport({
+        ...manyRoutes(),
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000140": () =>
+          jsonResponse({
+            organization: {
+              id: "00000000-0000-4000-9000-000000000140",
+              name: "Organización 140",
+              slug: "00000000-0000-4000-9000-000000000140",
+              description: null,
+            },
+            summary: { memberCount: 0, groupCount: 0 },
+          }),
+      });
+      renderApp({
+        route: `${NEW_USER}?organizationId=00000000-0000-4000-9000-000000000140`,
+      });
+      await fillData();
+      await toStep2();
+      expect(
+        (within(card(1)).getByLabelText("Organización") as HTMLSelectElement)
+          .value,
+      ).toBe("00000000-0000-4000-9000-000000000140");
+      expect(
+        transport.calls(
+          "GET /api/v1/organizations/00000000-0000-4000-9000-000000000140",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("does not show the search box when every organization is already offered", async () => {
+      mockTransport(platformRoutes());
+      renderApp({ route: NEW_USER });
+      await fillData();
+      await toStep2();
+      press("Agregar a una organización");
+      expect(
+        within(card(1)).queryByLabelText("Buscar organización"),
+      ).toBeNull();
+      expect(optionsOf(within(card(1)).getByLabelText("Organización"))).toEqual(
+        [
+          "Selecciona una organización",
+          "Academia Norte (00000000-0000-4000-9000-000000000001)",
+          "Instituto Sur (00000000-0000-4000-9000-000000000002)",
+        ],
+      );
     });
   });
 
@@ -333,21 +521,21 @@ describe("platform create-user wizard", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     expect(optionsOf(within(card(1)).getByLabelText("Organización"))).toEqual([
       "Selecciona una organización",
-      "Academia Norte (org-1)",
-      "Instituto Sur (org-2)",
+      "Academia Norte (00000000-0000-4000-9000-000000000001)",
+      "Instituto Sur (00000000-0000-4000-9000-000000000002)",
     ]);
     press("Agregar a una organización");
     // The second card cannot pick the organization the first one holds.
     expect(optionsOf(within(card(2)).getByLabelText("Organización"))).toEqual([
       "Selecciona una organización",
-      "Instituto Sur (org-2)",
+      "Instituto Sur (00000000-0000-4000-9000-000000000002)",
     ]);
     // Once every organization is taken, the add button says why it is off.
     fireEvent.change(within(card(2)).getByLabelText("Organización"), {
-      target: { value: "org-2" },
+      target: { value: "00000000-0000-4000-9000-000000000002" },
     });
     const add = screen.getByRole("button", {
       name: "Agregar a una organización",
@@ -377,9 +565,13 @@ describe("platform create-user wizard", () => {
       "Contabilidad",
       "Ventas",
     ]);
-    fireEvent.change(selects[0], { target: { value: "group-a" } });
+    fireEvent.change(selects[0], {
+      target: { value: "00000000-0000-4000-a000-000000000097" },
+    });
     expect(optionsOf(selects[1])).toEqual(["Selecciona un grupo", "Ventas"]);
-    fireEvent.change(selects[1], { target: { value: "group-b" } });
+    fireEvent.change(selects[1], {
+      target: { value: "00000000-0000-4000-a000-000000000098" },
+    });
     // Every group of the organization is taken: the button explains itself.
     const addGroupButton = within(
       groupsOfOrganization("Academia Norte"),
@@ -402,15 +594,15 @@ describe("platform create-user wizard", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     expect(
       within(groupsOfOrganization("Academia Norte")).getAllByLabelText("Grupo"),
     ).toHaveLength(1);
     press("Atrás");
     fireEvent.change(within(card(1)).getByLabelText("Organización"), {
-      target: { value: "org-2" },
+      target: { value: "00000000-0000-4000-9000-000000000002" },
     });
     await toStep3();
     expect(
@@ -418,7 +610,7 @@ describe("platform create-user wizard", () => {
         "Grupo",
       ),
     ).toHaveLength(0);
-    await addGroup("Instituto Sur", "group-c");
+    await addGroup("Instituto Sur", "00000000-0000-4000-a000-000000000099");
     fireEvent.click(
       within(groupsOfOrganization("Instituto Sur")).getByRole("button", {
         name: "Quitar grupo Operaciones de Instituto Sur",
@@ -443,8 +635,8 @@ describe("platform create-user wizard", () => {
   it("shows an empty state for an organization without groups and for no organizations", async () => {
     mockTransport(
       platformRoutes({
-        "GET /api/v1/organizations/org-2/groups": () =>
-          jsonResponse({ groups: [] }),
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/groups":
+          () => jsonResponse({ groups: [] }),
       }),
     );
     renderApp({ route: NEW_USER });
@@ -455,7 +647,7 @@ describe("platform create-user wizard", () => {
       screen.getByText("Sin organizaciones seleccionadas; puedes continuar."),
     ).toBeTruthy();
     press("Atrás");
-    addOrganization(1, "org-2");
+    addOrganization(1, "00000000-0000-4000-9000-000000000002");
     await toStep3();
     expect(
       await screen.findByText("Esta organización no tiene grupos."),
@@ -470,7 +662,7 @@ describe("platform create-user wizard", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     fireEvent.click(
       within(
         screen.getByRole("group", {
@@ -514,7 +706,7 @@ describe("platform create-user wizard", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     fireEvent.click(
       within(card(1)).getByRole("button", { name: "Organización 1" }),
     );
@@ -551,7 +743,9 @@ describe("platform create-user wizard", () => {
     expect(screen.getByText("Selecciona una organización.")).toBeTruthy();
     expect(select.getAttribute("aria-invalid")).toBe("true");
     expect(document.activeElement).toBe(select);
-    fireEvent.change(select, { target: { value: "org-1" } });
+    fireEvent.change(select, {
+      target: { value: "00000000-0000-4000-9000-000000000001" },
+    });
     await toStep3();
     const section = within(groupsOfOrganization("Academia Norte"));
     await waitFor(() =>
@@ -591,7 +785,7 @@ describe("platform create-user wizard", () => {
     });
     expect(first.getAttribute("aria-expanded")).toBe("false");
     fireEvent.change(within(card(2)).getByLabelText("Organización"), {
-      target: { value: "org-2" },
+      target: { value: "00000000-0000-4000-9000-000000000002" },
     });
     press("Siguiente");
     expect(first.getAttribute("aria-expanded")).toBe("true");
@@ -599,12 +793,12 @@ describe("platform create-user wizard", () => {
       within(card(1)).getByLabelText("Organización"),
     );
     fireEvent.change(within(card(1)).getByLabelText("Organización"), {
-      target: { value: "org-1" },
+      target: { value: "00000000-0000-4000-9000-000000000001" },
     });
     await toStep3();
     // A group left empty and then folded reopens on the next attempt.
     await addGroup("Academia Norte", "");
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     const folded = within(groupsOfOrganization("Academia Norte")).getByRole(
       "button",
       { name: "Grupo 1" },
@@ -654,7 +848,7 @@ describe("platform create-user wizard", () => {
   it("explains that there are no organizations and links to creating one", async () => {
     mockTransport(
       platformRoutes({
-        "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
+        "GET /api/v1/organizations": () => jsonResponse(organizationsPage([])),
       }),
     );
     renderApp({ route: NEW_USER });
@@ -711,7 +905,7 @@ describe("platform create-user wizard", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
     await toSummary();
     const reads = transport.calls("GET /api/v1/organizations").length;
@@ -836,20 +1030,36 @@ describe("platform create-user wizard", () => {
     const { store } = renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     await toSummary();
     const listReads = transport.calls("GET /api/v1/organizations").length;
     const client = store.getSnapshot().client;
-    const key = (...parts: string[]) => ["identity", "admin-1", ...parts];
+    const key = (...parts: string[]) => [
+      "identity",
+      "00000000-0000-4000-b000-000000000001",
+      ...parts,
+    ];
     const seeded = [
-      key("org", "org-1", "memberships"),
-      key("org", "org-1", "users"),
-      key("org", "org-1", "group", "group-a", "memberships"),
-      key("org", "org-1", "group", "group-b", "memberships"),
-      key("org", "org-2", "memberships"),
-      key("org", "org-2", "users"),
+      key("org", "00000000-0000-4000-9000-000000000001", "memberships"),
+      key("org", "00000000-0000-4000-9000-000000000001", "users"),
+      key(
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "group",
+        "00000000-0000-4000-a000-000000000097",
+        "memberships",
+      ),
+      key(
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "group",
+        "00000000-0000-4000-a000-000000000098",
+        "memberships",
+      ),
+      key("org", "00000000-0000-4000-9000-000000000002", "memberships"),
+      key("org", "00000000-0000-4000-9000-000000000002", "users"),
     ];
     for (const queryKey of seeded) client.setQueryData(queryKey, []);
     press("Crear usuario");
@@ -872,13 +1082,15 @@ describe("platform create-user wizard", () => {
 
   it("preselects the organization from ?organizationId when it is in the list, and ignores unknown ones", async () => {
     mockTransport(platformRoutes());
-    renderApp({ route: `${NEW_USER}?organizationId=org-2` });
+    renderApp({
+      route: `${NEW_USER}?organizationId=00000000-0000-4000-9000-000000000002`,
+    });
     await fillData();
     await toStep2();
     expect(
       (within(card(1)).getByLabelText("Organización") as HTMLSelectElement)
         .value,
-    ).toBe("org-2");
+    ).toBe("00000000-0000-4000-9000-000000000002");
     // The preselected card starts open.
     expect(
       within(card(1))
@@ -902,7 +1114,7 @@ describe("platform create-user wizard", () => {
         "GET /api/v1/organizations": () =>
           fails
             ? errorResponse(500, "INTERNAL")
-            : jsonResponse({ organizations: [] }),
+            : jsonResponse(organizationsPage([])),
       }),
     );
     renderApp({ route: NEW_USER });
@@ -921,16 +1133,16 @@ describe("platform create-user wizard", () => {
         "GET /api/v1/organizations": () =>
           fails
             ? errorResponse(500, "INTERNAL")
-            : jsonResponse({ organizations: [north, south] }),
+            : jsonResponse(organizationsPage([north, south])),
       }),
     );
     const { store } = renderApp({ route: NEW_USER });
     await fillData("Diego Rojas", "111111111");
     const reads = transport.calls("GET /api/v1/organizations").length;
     fails = true;
-    void store
-      .getSnapshot()
-      .client.invalidateQueries({ queryKey: ["identity", "admin-1", "orgs"] });
+    void store.getSnapshot().client.invalidateQueries({
+      queryKey: ["identity", "00000000-0000-4000-b000-000000000001", "orgs"],
+    });
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/No fue posible actualizar/);
     expect(transport.calls("GET /api/v1/organizations").length).toBeGreaterThan(
@@ -957,7 +1169,7 @@ describe("temporary password choice", () => {
     return jsonResponse(
       {
         user: {
-          id: "user-9",
+          id: "00000000-0000-4000-8000-000000000009",
           name: "Diego Rojas",
           rut: "111111111",
           mustChangePassword: true,
@@ -1162,7 +1374,9 @@ describe("temporary password choice", () => {
 
 /** The single-organization wizard lives in a tab of the add-member screen. */
 async function openOrganizationWizard() {
-  const view = renderApp({ route: "/organizations/org-1/members/new" });
+  const view = renderApp({
+    route: "/organizations/00000000-0000-4000-9000-000000000001/members/new",
+  });
   await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
   fireEvent.click(screen.getByRole("tab", { name: "Crear persona nueva" }));
   return view;
@@ -1175,19 +1389,24 @@ describe("single-organization mode on the add-member screen", () => {
   const routes = (post: () => Response) => ({
     "GET /api/v1/auth/profile": () => jsonResponse({ profile: admin }),
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
-    "GET /api/v1/organizations": () => jsonResponse({ organizations: [] }),
-    "GET /api/v1/organizations/org-1/memberships": () =>
-      jsonResponse({ memberships: [] }),
-    "GET /api/v1/organizations/org-1/users": () => jsonResponse({ users: [] }),
-    "GET /api/v1/organizations/org-1/groups": () =>
-      jsonResponse({
-        groups: groupsOf["org-1"].map((group) => ({
-          ...group,
-          organizationId: "org-1",
-          description: null,
-        })),
-      }),
-    "POST /api/v1/organizations/org-1/users": post,
+    "GET /api/v1/organizations": () => jsonResponse(organizationsPage([])),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+      () => jsonResponse({ memberships: [] }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      () => jsonResponse(usersPage([])),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+      () =>
+        jsonResponse({
+          groups: groupsOf["00000000-0000-4000-9000-000000000001"].map(
+            (group) => ({
+              ...group,
+              organizationId: "00000000-0000-4000-9000-000000000001",
+              description: null,
+            }),
+          ),
+        }),
+    "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      post,
   });
 
   it("fixes the organization, shows only its role, permissions and groups, and posts the organization body", async () => {
@@ -1195,7 +1414,11 @@ describe("single-organization mode on the add-member screen", () => {
       routes(() =>
         jsonResponse(
           {
-            user: { id: "user-9", name: "Diego Rojas", rut: "111111111" },
+            user: {
+              id: "00000000-0000-4000-8000-000000000009",
+              name: "Diego Rojas",
+              rut: "111111111",
+            },
             membership: {},
             groups: [],
             temporaryPassword: SECRET,
@@ -1229,7 +1452,7 @@ describe("single-organization mode on the add-member screen", () => {
       "Ventas",
     ]);
     fireEvent.change(groups.getByLabelText("Grupo"), {
-      target: { value: "group-b" },
+      target: { value: "00000000-0000-4000-a000-000000000098" },
     });
     fireEvent.click(
       within(
@@ -1242,7 +1465,9 @@ describe("single-organization mode on the add-member screen", () => {
     press("Crear usuario");
     await screen.findByRole("dialog", { name: "Contraseña temporal" });
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/users")[0].body,
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users",
+      )[0].body,
     ).toEqual({
       name: "Diego Rojas",
       rut: "11111111-1",
@@ -1250,7 +1475,7 @@ describe("single-organization mode on the add-member screen", () => {
       permissions: { ...NO_PERMISSIONS, createInvoices: true },
       groups: [
         {
-          groupId: "group-b",
+          groupId: "00000000-0000-4000-a000-000000000098",
           permissions: { ...NO_PERMISSIONS, readInvoices: true },
         },
       ],
@@ -1264,7 +1489,11 @@ describe("single-organization mode on the add-member screen", () => {
       routes(() =>
         jsonResponse(
           {
-            user: { id: "user-9", name: "Diego Rojas", rut: "111111111" },
+            user: {
+              id: "00000000-0000-4000-8000-000000000009",
+              name: "Diego Rojas",
+              rut: "111111111",
+            },
             membership: {},
             groups: [],
           },
@@ -1292,10 +1521,14 @@ describe("single-organization mode on the add-member screen", () => {
     await screen.findByText(
       /La persona deberá cambiar su contraseña temporal al iniciar sesión/,
     );
-    expect(window.location.pathname).toBe("/organizations/org-1/members");
+    expect(window.location.pathname).toBe(
+      "/organizations/00000000-0000-4000-9000-000000000001/members",
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/users")[0].body,
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users",
+      )[0].body,
     ).toEqual({
       name: "Diego Rojas",
       rut: "11111111-1",
@@ -1313,7 +1546,7 @@ describe("identity switch", () => {
   it("leaves nothing of the platform administrator's wizard or organizations for the next person", async () => {
     let signedIn: "admin" | "other" = "admin";
     const other = profileFixture({
-      id: "user-2",
+      id: "00000000-0000-4000-8000-000000000002",
       name: "Bruno Díaz",
       rut: "111111111",
       memberships: [],
@@ -1332,9 +1565,9 @@ describe("identity switch", () => {
     const { store } = renderApp({ route: NEW_USER });
     await fillData("Persona A Secreta");
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     const clientOfAdmin = store.getSnapshot().client;
     expect(serializeClient(clientOfAdmin)).toContain("Academia Norte");
 
@@ -1360,7 +1593,7 @@ describe("identity switch", () => {
       "Academia Norte",
       "Instituto Sur",
       "Contabilidad",
-      "admin-1",
+      "00000000-0000-4000-b000-000000000001",
     ])
       expect(dump).not.toContain(leaked);
     for (const leaked of [
@@ -1381,11 +1614,18 @@ describe("identity switch", () => {
 describe("groups that are not loaded do not pass (CR-258)", () => {
   const NOT_LOADED =
     "Los grupos de esta organización aún no se cargan. Espera o reintenta antes de continuar.";
-  const GROUPS = "GET /api/v1/organizations/org-1/groups";
+  const GROUPS =
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups";
 
   /** Empties the cached groups and re-reads them (the failing read). */
   async function forgetGroups(client: QueryClient) {
-    const queryKey = ["identity", "admin-1", "org", "org-1", "groups"];
+    const queryKey = [
+      "identity",
+      "00000000-0000-4000-b000-000000000001",
+      "org",
+      "00000000-0000-4000-9000-000000000001",
+      "groups",
+    ];
     await act(async () => {
       await client.resetQueries({ queryKey });
     });
@@ -1406,20 +1646,22 @@ describe("groups that are not loaded do not pass (CR-258)", () => {
           failing
             ? errorResponse(500, "INTERNAL")
             : jsonResponse({
-                groups: groupsOf["org-1"].map((group) => ({
-                  ...group,
-                  organizationId: "org-1",
-                  description: null,
-                })),
+                groups: groupsOf["00000000-0000-4000-9000-000000000001"].map(
+                  (group) => ({
+                    ...group,
+                    organizationId: "00000000-0000-4000-9000-000000000001",
+                    description: null,
+                  }),
+                ),
               }),
       }),
     );
     const { store } = renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
 
     failing = true;
     await forgetGroups(store.getSnapshot().client);
@@ -1442,11 +1684,13 @@ describe("groups that are not loaded do not pass (CR-258)", () => {
           failing
             ? errorResponse(500, "INTERNAL")
             : jsonResponse({
-                groups: groupsOf["org-1"].map((group) => ({
-                  ...group,
-                  organizationId: "org-1",
-                  description: null,
-                })),
+                groups: groupsOf["00000000-0000-4000-9000-000000000001"].map(
+                  (group) => ({
+                    ...group,
+                    organizationId: "00000000-0000-4000-9000-000000000001",
+                    description: null,
+                  }),
+                ),
               }),
         "POST /api/v1/admin/users": () => created(),
       }),
@@ -1454,9 +1698,9 @@ describe("groups that are not loaded do not pass (CR-258)", () => {
     const { store } = renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     await toSummary();
 
     failing = true;
@@ -1473,7 +1717,7 @@ describe("groups that are not loaded do not pass (CR-258)", () => {
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
     await screen.findByText("No fue posible cargar los grupos.");
     await toSummary();
@@ -1486,19 +1730,24 @@ describe("group cap of one creation (CR-251)", () => {
   // past the cap are covered in draft.ui.test.ts.
   function renderStep(limitReached: boolean) {
     mockTransport({
-      "GET /api/v1/organizations/org-1/groups": () =>
-        jsonResponse({
-          groups: groupsOf["org-1"].map((group) => ({
-            ...group,
-            organizationId: "org-1",
-            description: null,
-          })),
-        }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () =>
+          jsonResponse({
+            groups: groupsOf["00000000-0000-4000-9000-000000000001"].map(
+              (group) => ({
+                ...group,
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                description: null,
+              }),
+            ),
+          }),
     });
     renderWithIdentity(
       <GroupsStep
         memberName="Diego Rojas"
-        organizations={[emptyOrganization("org-1")]}
+        organizations={[
+          emptyOrganization("00000000-0000-4000-9000-000000000001"),
+        ]}
         options={[north]}
         fixed={false}
         errors={{}}
@@ -1549,21 +1798,15 @@ describe("choices that vanish after a refresh (CR-232)", () => {
     const transport = mockTransport(
       platformRoutes({
         "GET /api/v1/organizations": () =>
-          jsonResponse({
-            organizations: organizations.map((org) => ({
-              ...org,
-              slug: org.id,
-              description: null,
-              enabled: true,
-              createdAt: "2026-10-01T00:00:00.000Z",
-            })),
-          }),
+          jsonResponse(
+            organizationsPage(organizations.map(organizationRecord)),
+          ),
       }),
     );
     const { store } = renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     expect(screen.queryByText(STALE_ORGANIZATION)).toBeNull();
 
     // Another administrator removed the organization: the list refreshes.
@@ -1571,7 +1814,7 @@ describe("choices that vanish after a refresh (CR-232)", () => {
     const reads = transport.calls("GET /api/v1/organizations").length;
     await act(async () => {
       await store.getSnapshot().client.invalidateQueries({
-        queryKey: ["identity", "admin-1", "orgs"],
+        queryKey: ["identity", "00000000-0000-4000-b000-000000000001", "orgs"],
       });
     });
     await waitFor(() =>
@@ -1589,7 +1832,9 @@ describe("choices that vanish after a refresh (CR-232)", () => {
     expect(screen.getByRole("heading", { name: /Paso 2 de 4/ })).toBeTruthy();
 
     // Choosing one that exists clears the flag and lets the person go on.
-    fireEvent.change(select, { target: { value: "org-2" } });
+    fireEvent.change(select, {
+      target: { value: "00000000-0000-4000-9000-000000000002" },
+    });
     expect(screen.queryByText(STALE_ORGANIZATION)).toBeNull();
     await toStep3();
   });
@@ -1599,22 +1844,16 @@ describe("choices that vanish after a refresh (CR-232)", () => {
     const transport = mockTransport(
       platformRoutes({
         "GET /api/v1/organizations": () =>
-          jsonResponse({
-            organizations: organizations.map((org) => ({
-              ...org,
-              slug: org.id,
-              description: null,
-              enabled: true,
-              createdAt: "2026-10-01T00:00:00.000Z",
-            })),
-          }),
+          jsonResponse(
+            organizationsPage(organizations.map(organizationRecord)),
+          ),
         "POST /api/v1/admin/users": () => created(),
       }),
     );
     const { store } = renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
     await toSummary();
 
@@ -1622,7 +1861,7 @@ describe("choices that vanish after a refresh (CR-232)", () => {
     const reads = transport.calls("GET /api/v1/organizations").length;
     await act(async () => {
       await store.getSnapshot().client.invalidateQueries({
-        queryKey: ["identity", "admin-1", "orgs"],
+        queryKey: ["identity", "00000000-0000-4000-b000-000000000001", "orgs"],
       });
     });
     await waitFor(() =>
@@ -1638,44 +1877,47 @@ describe("choices that vanish after a refresh (CR-232)", () => {
   });
 
   it("flags a group that no longer exists in its organization when the groups are re-read", async () => {
-    let groups = groupsOf["org-1"];
+    let groups = groupsOf["00000000-0000-4000-9000-000000000001"];
     const transport = mockTransport(
       platformRoutes({
-        "GET /api/v1/organizations/org-1/groups": () =>
-          jsonResponse({
-            groups: groups.map((group) => ({
-              ...group,
-              organizationId: "org-1",
-              description: null,
-            })),
-          }),
+        "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+          () =>
+            jsonResponse({
+              groups: groups.map((group) => ({
+                ...group,
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                description: null,
+              })),
+            }),
         "POST /api/v1/admin/users": () => errorResponse(404, "NOT_FOUND"),
       }),
     );
     renderApp({ route: NEW_USER });
     await fillData();
     await toStep2();
-    addOrganization(1, "org-1");
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
     await toStep3();
-    await addGroup("Academia Norte", "group-a");
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
     await toSummary();
 
     // The group is deleted while the person reviews the summary; the server
     // answers 404 and the choices are refreshed.
-    groups = [groupsOf["org-1"][1]];
+    groups = [groupsOf["00000000-0000-4000-9000-000000000001"][1]];
     press("Crear usuario");
     await heading(/Paso 2 de 4/);
     expect((await screen.findByRole("alert")).textContent).toContain(
       "ya no existe",
     );
     const reads = transport.calls(
-      "GET /api/v1/organizations/org-1/groups",
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
     ).length;
 
     await toStep3();
     await waitFor(() =>
       expect(
-        transport.calls("GET /api/v1/organizations/org-1/groups").length,
+        transport.calls(
+          "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups",
+        ).length,
       ).toBeGreaterThan(reads),
     );
     // The group draft is flagged, with its permissions still in place.

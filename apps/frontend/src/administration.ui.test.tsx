@@ -10,14 +10,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderApp } from "./test/renderApp";
 import {
-  NO_PERMISSIONS,
   deferred,
   errorResponse,
+  groupMembershipsPage,
   jsonResponse,
   membership,
   mockTransport,
+  NO_PERMISSIONS,
+  orgMembershipsPage,
   profileFixture,
   serializeClient,
+  usersPage,
 } from "./test/transport";
 
 afterEach(() => {
@@ -25,26 +28,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const org = { id: "org-1", name: "Academia Norte" };
+const org = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia Norte",
+};
 const admin = profileFixture({ memberships: [membership(org, "ADMIN")] });
 const members = [
   {
-    userId: "user-1",
-    organizationId: "org-1",
+    userId: "00000000-0000-4000-8000-000000000001",
+    organizationId: "00000000-0000-4000-9000-000000000001",
     role: "ADMIN",
     permissions: NO_PERMISSIONS,
     groups: [],
-    user: { id: "user-1", name: "Ada Lovelace", rut: "123456785" },
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Ada Lovelace",
+      rut: "123456785",
+    },
   },
   {
-    userId: "user-3",
-    organizationId: "org-1",
+    userId: "00000000-0000-4000-8000-000000000003",
+    organizationId: "00000000-0000-4000-9000-000000000001",
     role: "USER",
     permissions: NO_PERMISSIONS,
     groups: [
-      { groupId: "group-a", name: "Equipo A", permissions: NO_PERMISSIONS },
+      {
+        groupId: "00000000-0000-4000-a000-000000000097",
+        name: "Equipo A",
+        permissions: NO_PERMISSIONS,
+      },
     ],
-    user: { id: "user-3", name: "Carla Soto", rut: "190347907" },
+    user: {
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "Carla Soto",
+      rut: "190347907",
+    },
   },
 ];
 
@@ -57,51 +75,57 @@ function baseRoutes() {
         organizations: [
           {
             ...org,
-            slug: "org-1",
+            slug: "00000000-0000-4000-9000-000000000001",
             description: null,
             enabled: true,
             createdAt: "2026-10-01T00:00:00.000Z",
           },
         ],
+        page: 1,
+        pageSize: 100,
+        total: 1,
       }),
-    "GET /api/v1/organizations/org-1": () =>
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001": () =>
       jsonResponse({
         organization: {
           ...org,
-          slug: "org-1",
+          slug: "00000000-0000-4000-9000-000000000001",
           description: null,
         },
         summary: { memberCount: 2, groupCount: 1 },
       }),
-    "GET /api/v1/organizations/org-1/memberships": () =>
-      jsonResponse({ memberships: members }),
-    "GET /api/v1/organizations/org-1/groups": () =>
-      jsonResponse({
-        groups: [
-          {
-            id: "group-a",
-            organizationId: "org-1",
-            name: "Equipo A",
-            description: null,
-          },
-        ],
-      }),
-    "GET /api/v1/organizations/org-1/groups/group-a/memberships": () =>
-      jsonResponse({
-        memberships: [
-          {
-            userId: "user-3",
-            groupId: "group-a",
-            organizationId: "org-1",
-            permissions: NO_PERMISSIONS,
-            user: members[1].user,
-          },
-        ],
-      }),
-    "GET /api/v1/organizations/org-1/users": () =>
-      jsonResponse({
-        users: members.map(({ user, role }) => ({ ...user, role })),
-      }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+      () => jsonResponse(orgMembershipsPage(members)),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+      () =>
+        jsonResponse({
+          groups: [
+            {
+              id: "00000000-0000-4000-a000-000000000097",
+              organizationId: "00000000-0000-4000-9000-000000000001",
+              name: "Equipo A",
+              description: null,
+            },
+          ],
+        }),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships":
+      () =>
+        jsonResponse(
+          groupMembershipsPage([
+            {
+              userId: "00000000-0000-4000-8000-000000000003",
+              groupId: "00000000-0000-4000-a000-000000000097",
+              organizationId: "00000000-0000-4000-9000-000000000001",
+              permissions: NO_PERMISSIONS,
+              user: members[1].user,
+            },
+          ]),
+        ),
+    "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+      () =>
+        jsonResponse(
+          usersPage(members.map(({ user, role }) => ({ ...user, role }))),
+        ),
   };
 }
 
@@ -121,7 +145,7 @@ async function fillWizard(name: string, rut: string) {
   await screen.findByRole("heading", { name: /Paso 4 de 4/ });
 }
 
-const MEMBERS = "/organizations/org-1/members";
+const MEMBERS = "/organizations/00000000-0000-4000-9000-000000000001/members";
 
 /** Opens a person's own page as a deep link, like a reload would. */
 async function openMemberPage(userId: string, name: string) {
@@ -154,30 +178,36 @@ describe("organization members (AC-11)", () => {
   it("changes a role with PATCH {role} and refetches only this organization's memberships", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
-      "PATCH /api/v1/organizations/org-1/memberships/user-3": () =>
-        jsonResponse({
-          membership: {
-            userId: "user-3",
-            organizationId: "org-1",
-            role: "ADMIN",
-          },
-        }),
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003":
+        () =>
+          jsonResponse({
+            membership: {
+              userId: "00000000-0000-4000-8000-000000000003",
+              organizationId: "00000000-0000-4000-9000-000000000001",
+              role: "ADMIN",
+            },
+          }),
     });
-    await openMemberPage("user-3", "Carla Soto");
+    await openMemberPage("00000000-0000-4000-8000-000000000003", "Carla Soto");
     const select = await screen.findByLabelText("Rol de Carla Soto");
     fireEvent.change(select, { target: { value: "ADMIN" } });
     await waitFor(() =>
       expect(
-        transport.calls("PATCH /api/v1/organizations/org-1/memberships/user-3"),
+        transport.calls(
+          "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003",
+        ),
       ).toHaveLength(1),
     );
     expect(
-      transport.calls("PATCH /api/v1/organizations/org-1/memberships/user-3")[0]
-        .body,
+      transport.calls(
+        "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003",
+      )[0].body,
     ).toEqual({ role: "ADMIN" });
     await waitFor(() =>
       expect(
-        transport.calls("GET /api/v1/organizations/org-1/memberships"),
+        transport.calls(
+          "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships",
+        ),
       ).toHaveLength(2),
     );
     // Another person's role does not touch the profile.
@@ -187,10 +217,13 @@ describe("organization members (AC-11)", () => {
   it("announces LAST_ADMIN_REQUIRED accessibly and keeps the role unchanged", async () => {
     mockTransport({
       ...baseRoutes(),
-      "PATCH /api/v1/organizations/org-1/memberships/user-1": () =>
-        errorResponse(409, "LAST_ADMIN_REQUIRED"),
+      "PATCH /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001":
+        () => errorResponse(409, "LAST_ADMIN_REQUIRED"),
     });
-    await openMemberPage("user-1", "Ada Lovelace");
+    await openMemberPage(
+      "00000000-0000-4000-8000-000000000001",
+      "Ada Lovelace",
+    );
     const select = (await screen.findByLabelText(
       "Rol de Ada Lovelace",
     )) as HTMLSelectElement;
@@ -209,17 +242,22 @@ describe("organization members (AC-11)", () => {
   it("removes a member with DELETE and refreshes the profile when the actor removes themselves", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
-      "DELETE /api/v1/organizations/org-1/memberships/user-1": () =>
-        new Response(null, { status: 204 }),
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001":
+        () => new Response(null, { status: 204 }),
     });
-    await openMemberPage("user-1", "Ada Lovelace");
+    await openMemberPage(
+      "00000000-0000-4000-8000-000000000001",
+      "Ada Lovelace",
+    );
     const trigger = await screen.findByRole("button", {
       name: "Quitar a Ada Lovelace de la organización",
     });
     fireEvent.click(trigger);
     // Nothing is sent until the removal is confirmed.
     expect(
-      transport.calls("DELETE /api/v1/organizations/org-1/memberships/user-1"),
+      transport.calls(
+        "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001",
+      ),
     ).toHaveLength(0);
     fireEvent.click(
       screen.getByRole("button", { name: "Confirmar quitar a Ada Lovelace" }),
@@ -227,7 +265,7 @@ describe("organization members (AC-11)", () => {
     await waitFor(() =>
       expect(
         transport.calls(
-          "DELETE /api/v1/organizations/org-1/memberships/user-1",
+          "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000001",
         ),
       ).toHaveLength(1),
     );
@@ -239,10 +277,10 @@ describe("organization members (AC-11)", () => {
   it("goes back to the members list with a status message after removing someone else", async () => {
     mockTransport({
       ...baseRoutes(),
-      "DELETE /api/v1/organizations/org-1/memberships/user-3": () =>
-        new Response(null, { status: 204 }),
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003":
+        () => new Response(null, { status: 204 }),
     });
-    await openMemberPage("user-3", "Carla Soto");
+    await openMemberPage("00000000-0000-4000-8000-000000000003", "Carla Soto");
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Quitar a Carla Soto de la organización",
@@ -260,7 +298,7 @@ describe("organization members (AC-11)", () => {
   it("CR-109 marks this organization's group memberships stale after a removal, not another organization's", async () => {
     const groupKey = (organizationId: string, groupId: string) => [
       "identity",
-      "user-1",
+      "00000000-0000-4000-8000-000000000001",
       "org",
       organizationId,
       "group",
@@ -269,14 +307,28 @@ describe("organization members (AC-11)", () => {
     ];
     mockTransport({
       ...baseRoutes(),
-      "DELETE /api/v1/organizations/org-1/memberships/user-3": () =>
-        new Response(null, { status: 204 }),
+      "DELETE /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships/00000000-0000-4000-8000-000000000003":
+        () => new Response(null, { status: 204 }),
     });
-    const { store } = renderApp({ route: `${MEMBERS}/user-3` });
+    const { store } = renderApp({
+      route: `${MEMBERS}/00000000-0000-4000-8000-000000000003`,
+    });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const client = store.getSnapshot().client;
-    client.setQueryData(groupKey("org-1", "group-z"), { memberships: [] });
-    client.setQueryData(groupKey("org-2", "group-z"), { memberships: [] });
+    client.setQueryData(
+      groupKey(
+        "00000000-0000-4000-9000-000000000001",
+        "00000000-0000-4000-a000-000000000122",
+      ),
+      { memberships: [] },
+    );
+    client.setQueryData(
+      groupKey(
+        "00000000-0000-4000-9000-000000000002",
+        "00000000-0000-4000-a000-000000000122",
+      ),
+      { memberships: [] },
+    );
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -289,28 +341,39 @@ describe("organization members (AC-11)", () => {
 
     await waitFor(() =>
       expect(
-        client.getQueryState(groupKey("org-1", "group-z"))?.isInvalidated,
+        client.getQueryState(
+          groupKey(
+            "00000000-0000-4000-9000-000000000001",
+            "00000000-0000-4000-a000-000000000122",
+          ),
+        )?.isInvalidated,
       ).toBe(true),
     );
     expect(
-      client.getQueryState(groupKey("org-2", "group-z"))?.isInvalidated,
+      client.getQueryState(
+        groupKey(
+          "00000000-0000-4000-9000-000000000002",
+          "00000000-0000-4000-a000-000000000122",
+        ),
+      )?.isInvalidated,
     ).toBe(false);
   });
 
   it("adds an existing person by RUT and goes back to the members list with a status message", async () => {
     const transport = mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/memberships": () =>
-        jsonResponse(
-          {
-            membership: {
-              userId: "user-4",
-              organizationId: "org-1",
-              role: "USER",
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () =>
+          jsonResponse(
+            {
+              membership: {
+                userId: "00000000-0000-4000-8000-000000000004",
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                role: "USER",
+              },
             },
-          },
-          201,
-        ),
+            201,
+          ),
     });
     renderApp({ route: `${MEMBERS}/new` });
     await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
@@ -320,7 +383,9 @@ describe("organization members (AC-11)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
     await screen.findByText("Persona agregada a la organización.");
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/memberships")[0].body,
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships",
+      )[0].body,
     ).toEqual({
       rut: "19034790-7",
       role: "USER",
@@ -334,8 +399,8 @@ describe("organization members (AC-11)", () => {
   it("explains USER_NOT_FOUND for an unknown RUT", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/memberships": () =>
-        errorResponse(404, "USER_NOT_FOUND"),
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () => errorResponse(404, "USER_NOT_FOUND"),
     });
     renderApp({ route: `${MEMBERS}/new` });
     await screen.findByRole("heading", { level: 1, name: "Agregar miembro" });
@@ -357,7 +422,8 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
     const gate = deferred<Response>();
     const transport = mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () => gate.promise,
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => gate.promise,
     });
     const { store } = await openNewPerson();
 
@@ -376,14 +442,14 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       jsonResponse(
         {
           user: {
-            id: "user-9",
+            id: "00000000-0000-4000-8000-000000000009",
             name: "Diego Rojas",
             rut: "111111111",
             mustChangePassword: true,
           },
           membership: {
-            userId: "user-9",
-            organizationId: "org-1",
+            userId: "00000000-0000-4000-8000-000000000009",
+            organizationId: "00000000-0000-4000-9000-000000000001",
             role: "USER",
           },
           temporaryPassword: issued,
@@ -397,7 +463,9 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
     });
     expect(within(dialog).getByText(issued)).toBeTruthy();
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/users")[0].body,
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users",
+      )[0].body,
     ).toEqual({
       name: "Diego Rojas",
       rut: "11111111-1",
@@ -406,7 +474,9 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
       groups: [],
     });
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/users"),
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users",
+      ),
     ).toHaveLength(1);
     expect(dialog.contains(document.activeElement)).toBe(true);
 
@@ -425,7 +495,9 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
     expect(window.location.pathname).toBe(MEMBERS);
     await waitFor(() =>
       expect(
-        transport.calls("GET /api/v1/organizations/org-1/memberships"),
+        transport.calls(
+          "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships",
+        ),
       ).toHaveLength(1),
     );
     // Navigation does not take focus away from the open dialog.
@@ -449,24 +521,25 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
   it("closes the dialog with its button and returns focus to the page title", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () =>
-        jsonResponse(
-          {
-            user: {
-              id: "user-9",
-              name: "Diego",
-              rut: "111111111",
-              mustChangePassword: true,
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () =>
+          jsonResponse(
+            {
+              user: {
+                id: "00000000-0000-4000-8000-000000000009",
+                name: "Diego",
+                rut: "111111111",
+                mustChangePassword: true,
+              },
+              membership: {
+                userId: "00000000-0000-4000-8000-000000000009",
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                role: "USER",
+              },
+              temporaryPassword: issued,
             },
-            membership: {
-              userId: "user-9",
-              organizationId: "org-1",
-              role: "USER",
-            },
-            temporaryPassword: issued,
-          },
-          201,
-        ),
+            201,
+          ),
     });
     await openNewPerson();
     await fillWizard("Diego", "111111111");
@@ -490,24 +563,25 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
   it("keeps Tab inside the dialog and labels it for assistive technology", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () =>
-        jsonResponse(
-          {
-            user: {
-              id: "user-9",
-              name: "Diego",
-              rut: "111111111",
-              mustChangePassword: true,
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () =>
+          jsonResponse(
+            {
+              user: {
+                id: "00000000-0000-4000-8000-000000000009",
+                name: "Diego",
+                rut: "111111111",
+                mustChangePassword: true,
+              },
+              membership: {
+                userId: "00000000-0000-4000-8000-000000000009",
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                role: "USER",
+              },
+              temporaryPassword: issued,
             },
-            membership: {
-              userId: "user-9",
-              organizationId: "org-1",
-              role: "USER",
-            },
-            temporaryPassword: issued,
-          },
-          201,
-        ),
+            201,
+          ),
     });
     await openNewPerson();
     await fillWizard("Diego", "111111111");
@@ -541,16 +615,19 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
     expect(screen.getByText("RUT inválido")).toBeTruthy();
     expect(document.activeElement).toBe(rut);
     expect(
-      transport.calls("POST /api/v1/organizations/org-1/users"),
+      transport.calls(
+        "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users",
+      ),
     ).toHaveLength(0);
   });
 
   it("keeps the typed values and speaks Spanish on a network failure", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () => {
-        throw new TypeError("offline");
-      },
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => {
+          throw new TypeError("offline");
+        },
     });
     await openNewPerson();
     await fillWizard("Diego", "111111111");
@@ -566,44 +643,70 @@ describe("user provisioning keeps the temporary password out of the cache (AC-11
   it("marks this organization's users stale after provisioning, leaving other organizations alone", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () =>
-        jsonResponse(
-          {
-            user: {
-              id: "user-9",
-              name: "Diego",
-              rut: "111111111",
-              mustChangePassword: true,
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () =>
+          jsonResponse(
+            {
+              user: {
+                id: "00000000-0000-4000-8000-000000000009",
+                name: "Diego",
+                rut: "111111111",
+                mustChangePassword: true,
+              },
+              membership: {
+                userId: "00000000-0000-4000-8000-000000000009",
+                organizationId: "00000000-0000-4000-9000-000000000001",
+                role: "USER",
+              },
+              temporaryPassword: "Tmp-Secret-1",
             },
-            membership: {
-              userId: "user-9",
-              organizationId: "org-1",
-              role: "USER",
-            },
-            temporaryPassword: "Tmp-Secret-1",
-          },
-          201,
-        ),
+            201,
+          ),
     });
     const { store } = await openNewPerson();
     const client = store.getSnapshot().client;
-    client.setQueryData(["identity", "user-1", "org", "org-1", "users"], []);
-    client.setQueryData(["identity", "user-1", "org", "org-2", "users"], []);
+    client.setQueryData(
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000001",
+        "users",
+      ],
+      [],
+    );
+    client.setQueryData(
+      [
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        "00000000-0000-4000-9000-000000000002",
+        "users",
+      ],
+      [],
+    );
     await fillWizard("Diego", "111111111");
     fireEvent.click(screen.getByRole("button", { name: "Crear usuario" }));
     await screen.findByRole("dialog");
     const stale = (org: string) =>
-      client.getQueryState(["identity", "user-1", "org", org, "users"])
-        ?.isInvalidated;
-    await waitFor(() => expect(stale("org-1")).toBe(true));
-    expect(stale("org-2")).toBe(false);
+      client.getQueryState([
+        "identity",
+        "00000000-0000-4000-8000-000000000001",
+        "org",
+        org,
+        "users",
+      ])?.isInvalidated;
+    await waitFor(() =>
+      expect(stale("00000000-0000-4000-9000-000000000001")).toBe(true),
+    );
+    expect(stale("00000000-0000-4000-9000-000000000002")).toBe(false);
   });
 
   it("reports USER_CONFLICT without opening a dialog", async () => {
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () =>
-        errorResponse(409, "USER_CONFLICT"),
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => errorResponse(409, "USER_CONFLICT"),
     });
     await openNewPerson();
     await fillWizard("Diego", "111111111");
@@ -628,12 +731,16 @@ describe("CR-104 issued credential survives navigation within the identity", () 
     jsonResponse(
       {
         user: {
-          id: "user-9",
+          id: "00000000-0000-4000-8000-000000000009",
           name: "Diego Rojas",
           rut: "111111111",
           mustChangePassword: true,
         },
-        membership: { userId: "user-9", organizationId: "org-1", role: "USER" },
+        membership: {
+          userId: "00000000-0000-4000-8000-000000000009",
+          organizationId: "00000000-0000-4000-9000-000000000001",
+          role: "USER",
+        },
         temporaryPassword: issued,
       },
       201,
@@ -643,7 +750,8 @@ describe("CR-104 issued credential survives navigation within the identity", () 
     const gate = deferred<Response>();
     mockTransport({
       ...baseRoutes(),
-      "POST /api/v1/organizations/org-1/users": () => gate.promise,
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/users":
+        () => gate.promise,
       "POST /api/v1/auth/logout": () => new Response(null, { status: 204 }),
     });
     const view = await openNewPerson();

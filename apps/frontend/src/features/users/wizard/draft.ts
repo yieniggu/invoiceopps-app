@@ -21,10 +21,28 @@ export interface GroupDraft {
   permissions: InvoicePermissions;
 }
 
+/** An organization that can be chosen for the new user. */
+export interface OrganizationOption {
+  id: string;
+  name: string;
+  /** Shown next to the name in pickers to tell similar names apart. */
+  slug?: string;
+}
+
+/** "Name (slug)" when the slug is known, otherwise just the name. */
+export const organizationOptionLabel = ({ name, slug }: OrganizationOption) =>
+  slug ? `${name} (${slug})` : name;
+
 export interface OrganizationDraft {
   key: string;
   /** "" until an organization is chosen. */
   organizationId: string;
+  /**
+   * What the choice looked like when it was made (name, slug). An organization
+   * found by searching is not in the preloaded page, so the draft carries it:
+   * the card, the groups step and the summary can name it without it.
+   */
+  picked?: OrganizationOption;
   role: OrganizationRole;
   permissions: InvoicePermissions;
   groups: GroupDraft[];
@@ -58,21 +76,30 @@ export const emptyGroup = (): GroupDraft => ({
   permissions: NO_PERMISSIONS,
 });
 
-export const emptyOrganization = (organizationId = ""): OrganizationDraft => ({
+export const emptyOrganization = (
+  organizationId = "",
+  picked?: OrganizationOption,
+): OrganizationDraft => ({
   key: nextKey(),
   organizationId,
+  picked,
   role: "USER",
   permissions: NO_PERMISSIONS,
   groups: [],
 });
 
-export const emptyUser = (organizationId?: string): UserDraft => ({
+export const emptyUser = (
+  organizationId?: string,
+  picked?: OrganizationOption,
+): UserDraft => ({
   name: "",
   rut: "",
   passwordMode: "generated",
   temporaryPassword: "",
   temporaryPasswordRepeat: "",
-  organizations: organizationId ? [emptyOrganization(organizationId)] : [],
+  organizations: organizationId
+    ? [emptyOrganization(organizationId, picked)]
+    : [],
 });
 
 export interface DataErrors {
@@ -122,9 +149,17 @@ export const GROUPS_NOT_LOADED_MESSAGE =
 export function staleOrganizations(
   draft: UserDraft,
   options: ReadonlyArray<{ id: string }>,
+  /**
+   * The options are every organization there is. When they are only the first
+   * page of a longer list, an organization missing from them may simply be
+   * further down (it was found by searching), so nothing can be said about it
+   * here: the server's 404 at submit time catches a vanished one.
+   */
+  complete = true,
 ): Record<string, string> {
   const known = new Set(options.map(({ id }) => id));
   const stale: Record<string, string> = {};
+  if (!complete) return stale;
   for (const organization of draft.organizations)
     if (organization.organizationId && !known.has(organization.organizationId))
       stale[organization.key] = STALE_ORGANIZATION_MESSAGE;
@@ -166,6 +201,7 @@ export function staleGroups(
 export function validateOrganizations(
   draft: UserDraft,
   options: ReadonlyArray<{ id: string }>,
+  complete = true,
 ): Record<string, { organization: string }> {
   const errors: Record<string, { organization: string }> = {};
   for (const organization of draft.organizations)
@@ -174,7 +210,7 @@ export function validateOrganizations(
         organization: "Selecciona una organización.",
       };
   for (const [key, organization] of Object.entries(
-    staleOrganizations(draft, options),
+    staleOrganizations(draft, options, complete),
   ))
     errors[key] = { organization };
   return errors;

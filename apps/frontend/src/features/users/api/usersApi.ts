@@ -1,8 +1,10 @@
+import { withQuery } from "../../../lib/pagination";
 import { apiRequest } from "../../auth/api/apiRequest";
+import type { PageRequest } from "../../orgs/types";
 import type {
   CreateUserInput,
   IssuedCredential,
-  OrganizationUser,
+  OrganizationUserPage,
   ProvisionedUser,
   ProvisionUserInput,
 } from "../types";
@@ -10,13 +12,15 @@ import type {
 const base = (organizationId: string) =>
   `/api/v1/organizations/${encodeURIComponent(organizationId)}/users`;
 
-export const listOrganizationUsers = (
+/** One page of the organization's people; `search` is a name or RUT fragment. */
+export const listOrganizationUsersPage = (
   organizationId: string,
+  params: PageRequest & { search?: string },
   signal?: AbortSignal,
 ) =>
-  apiRequest<{ users: OrganizationUser[] }>(base(organizationId), {
+  apiRequest<OrganizationUserPage>(withQuery(base(organizationId), params), {
     signal,
-  }).then((result) => result.users);
+  });
 
 /**
  * Both provisioning endpoints answer with the user and, when the server

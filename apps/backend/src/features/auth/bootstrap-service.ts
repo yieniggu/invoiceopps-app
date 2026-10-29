@@ -110,6 +110,7 @@ export function createBootstrapService(
             new BootstrapRejectedError(
               "Bootstrap conflicted with a concurrent run; retry",
             ),
+          "bootstrap.designation",
         );
       } catch (error) {
         if (!isUniqueViolation(error) || attempt >= MAX_UNIQUE_RETRIES - 1) {

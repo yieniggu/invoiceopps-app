@@ -13,10 +13,13 @@ export interface OrganizationFormValues {
 type TextField = "name" | "slug" | "description" | "firstAdminRut";
 
 /**
- * Presentational create-organization form: the data and the first
- * administrator. (The API cannot edit name, slug or description afterwards.)
+ * Presentational organization form. In `create` mode it asks for the data and
+ * the first administrator; in `edit` mode only name and description are
+ * editable, the slug is shown read-only (it is immutable) and there is no
+ * first administrator.
  */
 export function OrganizationForm({
+  mode = "create",
   values,
   onChange,
   invalid,
@@ -30,6 +33,7 @@ export function OrganizationForm({
   onSubmit,
   children,
 }: {
+  mode?: "create" | "edit";
   values: OrganizationFormValues;
   onChange?: (field: TextField, value: string) => void;
   invalid?: "name" | "slug";
@@ -65,19 +69,28 @@ export function OrganizationForm({
         />
       </label>
       <FieldMessage id={nameMessageId} text={nameMessage ?? ""} />
-      <label>
-        Identificador (slug)
-        <input
-          ref={slugInput}
-          value={values.slug}
-          onChange={(event) => set("slug")(event.target.value)}
-          disabled={pending}
-          aria-invalid={invalid === "slug"}
-          aria-describedby={slugMessageId}
-          required
-        />
-      </label>
-      <FieldMessage id={slugMessageId} text={slugMessage ?? ""} />
+      {mode === "edit" ? (
+        <p>
+          Identificador (no se puede cambiar):{" "}
+          <span className="slug">{values.slug}</span>
+        </p>
+      ) : (
+        <>
+          <label>
+            Identificador (slug)
+            <input
+              ref={slugInput}
+              value={values.slug}
+              onChange={(event) => set("slug")(event.target.value)}
+              disabled={pending}
+              aria-invalid={invalid === "slug"}
+              aria-describedby={slugMessageId}
+              required
+            />
+          </label>
+          <FieldMessage id={slugMessageId} text={slugMessage ?? ""} />
+        </>
+      )}
       <label>
         Descripción (opcional)
         <input
@@ -86,16 +99,18 @@ export function OrganizationForm({
           disabled={pending}
         />
       </label>
-      <RutField
-        label="RUT del primer administrador"
-        missingMessage="Ingresa el RUT"
-        value={values.firstAdminRut}
-        onChange={set("firstAdminRut")}
-        disabled={pending}
-        submitted={submitted}
-        inputRef={rutInput}
-        required
-      />
+      {mode === "create" ? (
+        <RutField
+          label="RUT del primer administrador"
+          missingMessage="Ingresa el RUT"
+          value={values.firstAdminRut}
+          onChange={set("firstAdminRut")}
+          disabled={pending}
+          submitted={submitted}
+          inputRef={rutInput}
+          required
+        />
+      ) : null}
       {children}
     </form>
   );

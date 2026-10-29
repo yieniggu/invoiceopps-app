@@ -27,16 +27,14 @@ import {
   validateGroups,
   validateOrganizations,
   type OrganizationDraft,
+  type OrganizationOption,
   type PasswordMode,
   type UserDraft,
 } from "../wizard/draft";
 import { classifyFailure } from "../wizard/failure";
 import { useDraftGroupOptions } from "../wizard/useDraftGroupOptions";
 import { GroupsStep } from "../wizard/GroupsStep";
-import {
-  OrganizationDraftCard,
-  type OrganizationOption,
-} from "../wizard/OrganizationDraftCard";
+import { OrganizationDraftCard } from "../wizard/OrganizationDraftCard";
 import { useKeySet } from "../wizard/useOpenSet";
 import { WizardSummary } from "../wizard/WizardSummary";
 
@@ -72,19 +70,28 @@ export interface WizardSubmitter {
  */
 export function CreateUserWizard({
   organizations,
+  organizationsTotal,
   fixedOrganization,
   initialOrganizationId,
+  initialOrganization,
   submitter,
   successFocusRef,
   title,
   headingLevel = 2,
   doneAction,
 }: {
-  /** Selectable organizations (platform mode). */
+  /** Selectable organizations (platform mode): the first page of the list. */
   organizations: OrganizationOption[];
+  /**
+   * How many organizations exist in all. When it exceeds `organizations`, the
+   * picker searches the server for the rest.
+   */
+  organizationsTotal?: number;
   fixedOrganization?: OrganizationOption;
   /** Platform mode: an organization to start with (already validated). */
   initialOrganizationId?: string;
+  /** The starting organization when it is not in the first page. */
+  initialOrganization?: OrganizationOption;
   submitter: WizardSubmitter;
   /** Receives focus when the temporary-password dialog closes. */
   successFocusRef: RefObject<HTMLButtonElement | null>;
@@ -94,14 +101,19 @@ export function CreateUserWizard({
   doneAction?: ReactNode;
 }) {
   const startOrganization = fixedOrganization?.id ?? initialOrganizationId;
-  const options = fixedOrganization ? [fixedOrganization] : organizations;
+  const listed = fixedOrganization ? [fixedOrganization] : organizations;
+  // Only a page of the list is preloaded when there are many organizations.
+  const total = fixedOrganization
+    ? 1
+    : Math.max(organizationsTotal ?? listed.length, listed.length);
+  const complete = total <= listed.length;
   const titleId = useId();
   const nameMessageId = useId();
   const passwordMessageId = useId();
   const repeatMessageId = useId();
   const addReasonId = useId();
   const [draft, setDraft] = useState<UserDraft>(() =>
-    emptyUser(startOrganization),
+    emptyUser(startOrganization, initialOrganization),
   );
   const [step, setStep] = useState<Step>(1);
   const [attempted, setAttempted] = useState(false);
@@ -134,6 +146,13 @@ export function CreateUserWizard({
         ?.focus();
   }, [focusInvalid]);
 
+  // Every organization the wizard can name: the preloaded page plus those the
+  // person found by searching (the draft remembers them).
+  const options = [...listed];
+  for (const { picked } of draft.organizations)
+    if (picked && !options.some(({ id }) => id === picked.id))
+      options.push(picked);
+
   const failure = submitter.error
     ? classifyFailure(submitter.error)
     : undefined;
@@ -159,9 +178,9 @@ export function CreateUserWizard({
   // What was chosen must still exist among the loaded options: a refresh can
   // remove an organization or a group while the draft keeps its id.
   const groupOptions = useDraftGroupOptions(draft, step >= 3);
-  const organizationErrors = validateOrganizations(draft, options);
+  const organizationErrors = validateOrganizations(draft, listed, complete);
   const groupErrors = validateGroups(draft, groupOptions);
-  const staleOrganizationMessages = staleOrganizations(draft, options);
+  const staleOrganizationMessages = staleOrganizations(draft, listed, complete);
   const staleGroupMessages = staleGroups(draft, groupOptions);
   const dataValid =
     !dataErrors.name &&
@@ -206,7 +225,7 @@ export function CreateUserWizard({
     submitter.submit(draft, {
       onSuccess: (name) => {
         setCreated({ name, mode });
-        setDraft(emptyUser(startOrganization));
+        setDraft(emptyUser(startOrganization, initialOrganization));
         stepChanged.current = false;
         setAttempted(false);
         setStep(1);
@@ -268,7 +287,8 @@ export function CreateUserWizard({
   const chosen = new Set(
     draft.organizations.map(({ organizationId }) => organizationId),
   );
-  const remaining = options.filter(({ id }) => !chosen.has(id));
+  // With many organizations "none left" cannot be known from the page alone.
+  const exhausted = complete && listed.every(({ id }) => chosen.has(id));
   const addOrganization = () => {
     const added = emptyOrganization();
     update({ ...draft, organizations: [...draft.organizations, added] });
@@ -292,12 +312,11 @@ export function CreateUserWizard({
       temporaryPasswordRepeat: "",
     });
 
-  const addDisabledReason =
-    remaining.length === 0
-      ? "Ya agregaste todas las organizaciones disponibles."
-      : draft.organizations.length >= MAX_ORGANIZATIONS
-        ? `Alcanzaste el máximo de ${MAX_ORGANIZATIONS} organizaciones.`
-        : "";
+  const addDisabledReason = exhausted
+    ? "Ya agregaste todas las organizaciones disponibles."
+    : draft.organizations.length >= MAX_ORGANIZATIONS
+      ? `Alcanzaste el máximo de ${MAX_ORGANIZATIONS} organizaciones.`
+      : "";
 
   return (
     <form
@@ -439,6 +458,8 @@ export function CreateUserWizard({
                 memberName={memberName}
                 draft={organization}
                 organizations={options}
+                pickerOptions={listed}
+                organizationsTotal={total}
                 takenOrganizationIds={chosen}
                 fixed={fixedOrganization !== undefined}
                 errorMessage={

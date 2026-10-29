@@ -9,9 +9,10 @@ import {
   type MemberRow,
 } from "../../members/MembersTableScreen";
 import { paths } from "../../navigation/paths";
+import { usePageParam } from "../../navigation/useListParams";
 import { permissionRatio } from "../../permissions/types";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
-import { useGroupMembersQuery } from "../hooks/useGroups";
+import { useGroupMembersPageQuery } from "../hooks/useGroups";
 import type { GroupMember } from "../types";
 
 /** People of a group, with selection for bulk permission edits. */
@@ -28,8 +29,15 @@ export function GroupMembersScreen({ profile }: { profile: Profile }) {
   );
 }
 
+/** Rows per page of the group's people. */
+const PAGE_SIZE = 20;
+
 function MembersView({ organization, group }: GroupContext) {
-  const members = useGroupMembersQuery(organization.id, group.id);
+  const { page, setPage } = usePageParam();
+  const members = useGroupMembersPageQuery(organization.id, group.id, {
+    page,
+    pageSize: PAGE_SIZE,
+  });
 
   const columns: SelectionColumn<MemberRow<GroupMember>>[] = [
     {
@@ -49,7 +57,12 @@ function MembersView({ organization, group }: GroupContext) {
 
   return (
     <MembersTableScreen
-      query={members}
+      query={{
+        data: members.data?.memberships,
+        isPending: members.isPending,
+        isError: members.isError,
+        refetch: members.refetch,
+      }}
       backTo={paths.group(organization.id, group.id)}
       backLabel={group.name}
       eyebrow={`${organization.name} · ${group.name}`}
@@ -73,6 +86,17 @@ function MembersView({ organization, group }: GroupContext) {
       columns={columns}
       bulkPath={(userIds) =>
         paths.bulkGroupPermissions(organization.id, group.id, userIds)
+      }
+      pagination={
+        members.data
+          ? {
+              page,
+              pageSize: members.data.pageSize || PAGE_SIZE,
+              total: members.data.total,
+              busy: members.isPlaceholderData,
+              onPageChange: setPage,
+            }
+          : undefined
       }
     />
   );

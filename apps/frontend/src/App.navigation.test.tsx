@@ -1,3 +1,4 @@
+import { namedId } from "./test/ids";
 import { ACCESS_NONE } from "./test/transport";
 import {
   act,
@@ -24,11 +25,19 @@ vi.mock("./features/session/AppRoutes", async (importOriginal) => {
 });
 
 const organizations = [
-  { id: "org-A", name: "Academia A", slug: "academy-a" },
-  { id: "org-B", name: "Academia B", slug: "academy-b" },
+  {
+    id: "00000000-0000-4000-9000-f9e9c6048aeb",
+    name: "Academia A",
+    slug: "academy-a",
+  },
+  {
+    id: "00000000-0000-4000-9000-fa19c6501c7e",
+    name: "Academia B",
+    slug: "academy-b",
+  },
 ];
 const profile = {
-  id: "user-1",
+  id: "00000000-0000-4000-8000-000000000001",
   name: "Ada Lovelace",
   rut: "12345678-5",
   email: "ada@example.test",
@@ -41,7 +50,7 @@ const profile = {
   })),
 };
 const groups = organizations.map((organization, index) => ({
-  id: `group-${index === 0 ? "A" : "B"}`,
+  id: namedId("group", index === 0 ? "A" : "B"),
   name: `Grupo ${index === 0 ? "A" : "B"}`,
   description: null,
   organization: { id: organization.id, name: organization.name },
@@ -61,13 +70,13 @@ function listResponse(ownerId: string) {
       {
         id: `invoice-${ownerId}`,
         businessId: `invoice-${ownerId}`,
-        organizationId: "organization-1",
-        groupId: "group-1",
+        organizationId: "00000000-0000-4000-9000-000000000001",
+        groupId: "00000000-0000-4000-a000-000000000001",
         currency: "CLP",
         issuedOn: "2026-10-25",
         dueOn: "2026-11-25",
         processingStatus: "NOT_REQUESTED",
-        createdByUserId: "user-1",
+        createdByUserId: "00000000-0000-4000-8000-000000000001",
         createdAt: "2026-10-21T00:00:00Z",
         supplierName: `Proveedor ${ownerId}`,
         amountPesos: 10000,
@@ -213,7 +222,7 @@ describe("APP12 S1 navigation and shared context", () => {
     navigate(navigation, "Mi perfil");
     expect(api.lists).not.toHaveBeenCalled();
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor user-1");
+    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
     expect(
       api.lists.mock.calls.every(
         ([url]) => url.pathname === "/api/v1/invoices",
@@ -234,9 +243,9 @@ describe("APP12 S1 navigation and shared context", () => {
     render(<App />);
     const navigation = await screen.findByRole("navigation");
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor user-1");
+    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
     api.lists.mockImplementation(async (url) =>
-      url.searchParams.get("ownerId") === "group-B"
+      url.searchParams.get("ownerId") === "00000000-0000-4000-a000-ffafcb640f47"
         ? pending.promise
         : listResponse(url.searchParams.get("ownerId") ?? ""),
     );
@@ -244,7 +253,9 @@ describe("APP12 S1 navigation and shared context", () => {
     await waitFor(() =>
       expect(
         api.lists.mock.calls.some(
-          ([url]) => url.searchParams.get("ownerId") === "group-B",
+          ([url]) =>
+            url.searchParams.get("ownerId") ===
+            "00000000-0000-4000-a000-ffafcb640f47",
         ),
       ).toBe(true),
     );
@@ -274,14 +285,22 @@ describe("APP12 S1 navigation and shared context", () => {
         .value,
     ).toBe("");
     expect(api.lists.mock.calls.slice(boundary)).toEqual([]);
-    expect(screen.queryByText("Proveedor group-B")).toBeNull();
+    expect(
+      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
+    ).toBeNull();
     // Even after returning to invoices, revoked groups from the old /groups response are excluded.
     navigate(navigation, "Panel principal");
     navigate(navigation, "Facturas");
     expect(screen.queryByRole("option", { name: /Grupo B/ })).toBeNull();
-    expect(screen.queryByText("Proveedor group-B")).toBeNull();
-    await act(async () => pending.resolve(listResponse("group-B")));
-    expect(screen.queryByText("Proveedor group-B")).toBeNull();
+    expect(
+      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
+    ).toBeNull();
+    await act(async () =>
+      pending.resolve(listResponse("00000000-0000-4000-a000-ffafcb640f47")),
+    );
+    expect(
+      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
+    ).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
@@ -291,17 +310,19 @@ describe("APP12 S1 navigation and shared context", () => {
 
     const navigation = await screen.findByRole("navigation");
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor user-1");
+    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
     selectGroupB();
-    await screen.findByText("Proveedor group-B");
+    await screen.findByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47");
     expectGroupBVisible();
     expect(
       api.lists.mock.calls.some(
         ([url]) =>
           url.pathname === "/api/v1/invoices" &&
-          url.searchParams.get("organizationId") === "org-B" &&
+          url.searchParams.get("organizationId") ===
+            "00000000-0000-4000-9000-fa19c6501c7e" &&
           url.searchParams.get("ownerType") === "group" &&
-          url.searchParams.get("ownerId") === "group-B",
+          url.searchParams.get("ownerId") ===
+            "00000000-0000-4000-a000-ffafcb640f47",
       ),
     ).toBe(true);
 
@@ -310,17 +331,19 @@ describe("APP12 S1 navigation and shared context", () => {
     expectGroupBVisible();
 
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor group-B");
+    await screen.findByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47");
     expectGroupBVisible();
-    expect(screen.queryByText("Proveedor user-1")).toBeNull();
+    expect(
+      screen.queryByText("Proveedor 00000000-0000-4000-8000-000000000001"),
+    ).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
   it.each([
     {
       path: "/api/v1/invoices",
-      current: "Proveedor group-B",
-      stale: "Proveedor user-1",
+      current: "Proveedor 00000000-0000-4000-a000-ffafcb640f47",
+      stale: "Proveedor 00000000-0000-4000-8000-000000000001",
     },
   ])(
     "control: rejects a delayed $path context A response after selecting context B",
@@ -328,7 +351,9 @@ describe("APP12 S1 navigation and shared context", () => {
       const api = mockHttp();
       const pending = deferredResponse();
       api.lists.mockImplementation(async (url) =>
-        url.pathname === path && url.searchParams.get("ownerId") === "user-1"
+        url.pathname === path &&
+        url.searchParams.get("ownerId") ===
+          "00000000-0000-4000-8000-000000000001"
           ? pending.promise
           : listResponse(url.searchParams.get("ownerId") ?? ""),
       );
@@ -360,7 +385,9 @@ describe("APP12 S1 navigation and shared context", () => {
         });
         fireEvent.change(selector, { target: { value: option.value } });
         await screen.findByText(current);
-        await act(async () => pending.resolve(listResponse("user-1")));
+        await act(async () =>
+          pending.resolve(listResponse("00000000-0000-4000-8000-000000000001")),
+        );
 
         expect(screen.getByText(current)).toBeTruthy();
         expect(screen.queryByText(stale)).toBeNull();
@@ -380,7 +407,9 @@ describe("APP12 S1 navigation and shared context", () => {
         ).toBeTruthy();
         expect(api.unexpected).toEqual([]);
       } finally {
-        await act(async () => pending.resolve(listResponse("user-1")));
+        await act(async () =>
+          pending.resolve(listResponse("00000000-0000-4000-8000-000000000001")),
+        );
       }
     },
   );
@@ -397,7 +426,9 @@ describe("APP12 S1 navigation and shared context", () => {
         }),
       );
       api.lists.mockImplementation(async (url) =>
-        url.pathname === path && url.searchParams.get("ownerId") === "user-1"
+        url.pathname === path &&
+        url.searchParams.get("ownerId") ===
+          "00000000-0000-4000-8000-000000000001"
           ? response
           : listResponse(url.searchParams.get("ownerId") ?? ""),
       );
@@ -405,11 +436,17 @@ describe("APP12 S1 navigation and shared context", () => {
       navigate(await screen.findByRole("navigation"), "Facturas");
       await waitFor(() => expect(body).toHaveBeenCalledTimes(1));
       selectGroupB();
-      const current = "Proveedor group-B";
+      const current = "Proveedor 00000000-0000-4000-a000-ffafcb640f47";
       await screen.findByText(current);
-      await act(async () => completeBody(await listResponse("user-1").json()));
+      await act(async () =>
+        completeBody(
+          await listResponse("00000000-0000-4000-8000-000000000001").json(),
+        ),
+      );
       expect(screen.getByText(current)).toBeTruthy();
-      expect(screen.queryByText("Proveedor user-1")).toBeNull();
+      expect(
+        screen.queryByText("Proveedor 00000000-0000-4000-8000-000000000001"),
+      ).toBeNull();
       expect(api.unexpected).toEqual([]);
     },
   );
@@ -420,7 +457,7 @@ describe("APP12 S1 navigation and shared context", () => {
     navigate(await screen.findByRole("navigation"), "Mi perfil");
     expect(screen.getByText(profile.name)).toBeTruthy();
     navigate(screen.getByRole("navigation"), "Facturas");
-    await screen.findByText("Proveedor user-1");
+    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
     expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/auth/profile", {
       credentials: "same-origin",
     });
@@ -431,7 +468,8 @@ describe("APP12 S1 navigation and shared context", () => {
       api.lists.mock.calls.some(
         ([url]) =>
           url.pathname === "/api/v1/invoices" &&
-          url.searchParams.get("organizationId") === "org-A" &&
+          url.searchParams.get("organizationId") ===
+            "00000000-0000-4000-9000-f9e9c6048aeb" &&
           url.searchParams.get("ownerType") === "user" &&
           url.searchParams.get("ownerId") === profile.id,
       ),

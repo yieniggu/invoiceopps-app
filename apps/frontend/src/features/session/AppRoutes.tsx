@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from "react-router";
 
 import { PageHeader } from "../../components/PageHeader";
 import type { Profile } from "../auth/types";
+import { AdminUserScreen } from "../admin/screens/AdminUserScreen";
+import { AdminUsersScreen } from "../admin/screens/AdminUsersScreen";
 import { CreateUserScreen } from "../admin/screens/CreateUserScreen";
 import { DashboardScreen } from "../dashboard/DashboardScreen";
 import { AddGroupMembersScreen } from "../groups/screens/AddGroupMembersScreen";
@@ -18,12 +20,14 @@ import { paths } from "../navigation/paths";
 import { AddOrganizationMemberScreen } from "../orgs/screens/AddOrganizationMemberScreen";
 import { BulkOrganizationPermissionsScreen } from "../orgs/screens/BulkOrganizationPermissionsScreen";
 import { CreateOrganizationScreen } from "../orgs/screens/CreateOrganizationScreen";
+import { OrganizationEditScreen } from "../orgs/screens/OrganizationEditScreen";
 import { OrganizationDetailScreen } from "../orgs/screens/OrganizationDetailScreen";
 import { OrganizationMemberScreen } from "../orgs/screens/OrganizationMemberScreen";
 import { OrganizationMembersScreen } from "../orgs/screens/OrganizationMembersScreen";
 import { OrganizationsScreen } from "../orgs/screens/OrganizationsScreen";
 import { PoliciesUnavailableScreen } from "../policies/PoliciesUnavailableScreen";
 import { ProfileScreen } from "../profile/ProfileScreen";
+import { UserProfileScreen } from "../users/screens/UserProfileScreen";
 import { WorkspaceBoundary } from "../workspace/WorkspaceContext";
 import type {
   ContextState,
@@ -133,6 +137,10 @@ export function AppRoutes({
         element={<OrganizationDetailScreen profile={profile} />}
       />
       <Route
+        path="organizations/:organizationId/edit"
+        element={<OrganizationEditScreen profile={profile} />}
+      />
+      <Route
         path="organizations/:organizationId/members"
         element={<OrganizationMembersScreen profile={profile} />}
       />
@@ -177,6 +185,10 @@ export function AppRoutes({
         element={<GroupMemberScreen profile={profile} />}
       />
       <Route
+        path="users/:userId"
+        element={<UserProfileScreen profile={profile} />}
+      />
+      <Route
         path="groups"
         element={
           <MyGroupsScreen
@@ -197,11 +209,9 @@ export function AppRoutes({
           // the same page as for any unknown URL.
           profile.isPlatformAdministrator ? (
             <Routes>
-              <Route
-                index
-                element={<Navigate to={paths.adminNewUser} replace />}
-              />
+              <Route index element={<AdminUsersScreen />} />
               <Route path="users/new" element={<CreateUserScreen />} />
+              <Route path="users/:userId" element={<AdminUserScreen />} />
               <Route path="*" element={<NotFoundScreen />} />
             </Routes>
           ) : (

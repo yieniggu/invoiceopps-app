@@ -1,8 +1,12 @@
 import { z } from "zod";
 
 import { OrganizationRole } from "../../generated/prisma/client.js";
+import {
+  paginationQueryShape,
+  paginationResponseShape,
+} from "../../pagination.js";
 import { InvoicePermissionsSchema } from "../groups/permissions-schema.js";
-import { RutInputSchema } from "../orgs/schemas.js";
+import { NameSchema, RutInputSchema } from "../orgs/schemas.js";
 import {
   DefinedTemporaryPasswordSchema,
   GroupGrantResultSchema,
@@ -12,6 +16,7 @@ import {
   TemporaryPasswordSchema,
   uniqueGroupIds,
 } from "../users/schemas.js";
+import { hasNoNul, NO_NUL } from "../../text.js";
 
 export const MAX_ORGANIZATIONS_PER_USER_CREATION = 50;
 
@@ -45,7 +50,7 @@ export const AdminUserMembershipGrantSchema = z
 
 export const AdminUserCreateRequestSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(120).refine(hasNoNul, NO_NUL),
     rut: RutInputSchema,
     memberships: z
       .array(AdminUserMembershipGrantSchema)
@@ -98,3 +103,113 @@ export const AdminUserCreateResponseSchema = z
     temporaryPassword: TemporaryPasswordSchema.optional(),
   })
   .meta({ id: "AdminUserCreateResponse" });
+
+export const AdminUserParamsSchema = z.object({ userId: z.string() });
+
+export const AdminUserDeactivationSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    rut: z.string(),
+    // Null while the user is enabled.
+    disabledAt: z.iso.datetime().nullable(),
+  })
+  .meta({ id: "AdminUserDeactivation" });
+
+export const AdminUserDeactivationResponseSchema = z
+  .object({ user: AdminUserDeactivationSchema })
+  .meta({ id: "AdminUserDeactivationResponse" });
+
+export const AdminUserStatusSchema = z.enum(["all", "active", "disabled"]);
+
+export const AdminUserListQuerySchema = z
+  .object({
+    search: NameSchema.optional().meta({
+      description:
+        "Case-insensitive part of the name, or part of the RUT typed with or without dots and hyphen",
+    }),
+    status: AdminUserStatusSchema.default("all"),
+    ...paginationQueryShape,
+  })
+  .strict()
+  .meta({ id: "AdminUserListQuery" });
+
+export const AdminUserListItemSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    rut: z.string(),
+    // Null while the user is enabled.
+    disabledAt: z.iso.datetime().nullable(),
+    recentlyActive: z.boolean(),
+  })
+  .meta({ id: "AdminUserListItem" });
+
+export const AdminUserListResponseSchema = z
+  .object({
+    users: z.array(AdminUserListItemSchema),
+    ...paginationResponseShape,
+  })
+  .meta({ id: "AdminUserListResponse" });
+
+export const AdminUserDetailSchema = AdminUserListItemSchema.extend({
+  email: z.string().nullable(),
+  mustChangePassword: z.boolean(),
+  isPlatformAdministrator: z.boolean(),
+}).meta({ id: "AdminUserDetail" });
+
+export const AdminUserDetailGroupSchema = z
+  .object({
+    group: z.object({ id: z.string(), name: z.string() }),
+    permissions: InvoicePermissionsSchema,
+  })
+  .meta({ id: "AdminUserDetailGroup" });
+
+export const AdminUserDetailMembershipSchema = z
+  .object({
+    organization: z.object({
+      id: z.string(),
+      name: z.string(),
+      slug: z.string(),
+    }),
+    role: z.enum(OrganizationRole),
+    permissions: InvoicePermissionsSchema,
+    groups: z.array(AdminUserDetailGroupSchema),
+  })
+  .meta({ id: "AdminUserDetailMembership" });
+
+export const AdminUserDetailResponseSchema = z
+  .object({
+    user: AdminUserDetailSchema,
+    memberships: z.array(AdminUserDetailMembershipSchema),
+  })
+  .meta({ id: "AdminUserDetailResponse" });
+
+export const AdminUserUpdateRequestSchema = z
+  .object({ name: NameSchema.optional(), rut: RutInputSchema.optional() })
+  .strict()
+  .refine(
+    (request) => request.name !== undefined || request.rut !== undefined,
+    { message: "At least one of name or rut is required" },
+  )
+  .meta({
+    id: "AdminUserUpdateRequest",
+    description:
+      "Changing the RUT revokes the user's sessions and API tokens; a change to the actor's own RUT is refused.",
+  });
+
+export const AdminUserUpdateResponseSchema = z
+  .object({ user: AdminUserDetailSchema })
+  .meta({ id: "AdminUserUpdateResponse" });
+
+export const AdminUserPasswordResetRequestSchema = z
+  .object({ temporaryPassword: DefinedTemporaryPasswordSchema.optional() })
+  .strict()
+  .meta({ id: "AdminUserPasswordResetRequest" });
+
+export const AdminUserPasswordResetResponseSchema = z
+  .object({
+    temporaryPassword: TemporaryPasswordSchema.optional(),
+    expiresAt: z.iso.datetime(),
+  })
+  .meta({ id: "AdminUserPasswordResetResponse" });
