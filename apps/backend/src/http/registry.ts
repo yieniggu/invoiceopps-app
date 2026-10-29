@@ -57,6 +57,8 @@ export interface Operation {
   secured: boolean;
   /** Path parameters; names must match the `{name}` segments of `path`. */
   params?: ZodObject;
+  /** Request headers, documented one by one; the handler validates them. */
+  headers?: ZodObject;
   /** Query parameters, documented one by one; the handler validates them. */
   query?: ZodObject;
   requestBody?: ZodType;

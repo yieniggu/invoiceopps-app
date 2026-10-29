@@ -20,6 +20,7 @@ export interface LogFields {
   groupId?: string;
   actorUserId?: string;
   targetUserId?: string;
+  invoiceId?: string;
   /** Transaction conflicts: fixed operation label, attempt and outcome. */
   operation?: string;
   attempt?: number;

@@ -160,7 +160,7 @@ describe("RP0 OpenAPI document contract", () => {
     expect(validator.version).toBe("3.1");
   });
 
-  it("documents exactly the mounted registry operations and no invoice creation", async () => {
+  it("documents exactly the mounted registry operations, including invoice creation", async () => {
     const documented = enumerateOpenApiRoutes(document).map((route) =>
       routeKey(route.method, route.path),
     );
@@ -181,7 +181,7 @@ describe("RP0 OpenAPI document contract", () => {
       ),
     );
     const paths = document.paths as Record<string, Json>;
-    expect(paths["/api/v1/invoices"]?.post).toBeUndefined();
+    expect(paths["/api/v1/invoices"]?.post).toBeDefined();
   });
 
   it("defines the Error envelope, AuthProfile, InvoiceCreateRequest and Invoice schemas", () => {
@@ -222,12 +222,16 @@ describe("RP0 OpenAPI document contract", () => {
     for (const field of [
       "businessId",
       "organizationId",
-      "groupId",
       "supplierName",
       "createdByUserId",
     ]) {
       expect(invoice[field]?.type).toBe("string");
     }
+    // The organization scope has no group: null in the response, optional and
+    // nullable in the request (AC-01, AC-09).
+    expect(invoice.groupId?.type).toEqual(["string", "null"]);
+    expect(createProperties.groupId?.type).toEqual(["string", "null"]);
+    expect(create.required).not.toContain("groupId");
     for (const model of [invoice, createProperties]) {
       expect(model.amountPesos).toMatchObject({
         type: "integer",

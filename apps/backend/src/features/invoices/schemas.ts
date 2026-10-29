@@ -9,12 +9,23 @@ const supplierName = z.string().trim().min(1).max(200);
 const amountPesos = z.int().min(1).max(MAX_AMOUNT_PESOS);
 const currency = z.enum(["CLP"]);
 const civilDate = z.iso.date();
+// An omitted or null groupId is the organization scope, normalized to null.
+const scopeGroupId = z.uuid().nullable().default(null);
 const businessStatus = z.enum(["PENDING", "APPROVED", "REJECTED", "CANCELLED"]);
+
+/** Opaque client-generated key of a retryable write (Idempotency-Key header). */
+export const IdempotencyKeySchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{16,128}$/, "Expected 16 to 128 of A-Z a-z 0-9 _ -");
+
+export const IdempotencyKeyHeaderSchema = z.object({
+  "Idempotency-Key": IdempotencyKeySchema,
+});
 
 export const InvoiceCreateRequestSchema = z
   .object({
     organizationId: z.uuid(),
-    groupId: z.uuid(),
+    groupId: scopeGroupId,
     businessId,
     supplierName,
     amountPesos,
@@ -50,7 +61,7 @@ export const InvoiceSchema = z
   .object({
     id: InvoiceId,
     organizationId: z.uuid(),
-    groupId: z.uuid(),
+    groupId: z.uuid().nullable(),
     businessId,
     supplierName,
     amountPesos,
@@ -84,6 +95,10 @@ export const InvoiceSchema = z
       },
     ],
   });
+
+export const InvoiceResponseSchema = z
+  .object({ invoice: InvoiceSchema })
+  .meta({ id: "InvoiceResponse", description: "Envelope of one invoice." });
 
 // Legacy read inputs (RP0-11 owns the final shape); not published in OpenAPI
 // because they carry no `id` meta and no operation references them.

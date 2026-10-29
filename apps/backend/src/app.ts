@@ -28,6 +28,11 @@ import {
   InvoiceListOptionsSchema,
   ResourceContextSchema,
 } from "./features/invoices/schemas.js";
+import { createInvoiceOperations } from "./features/invoices/routes.js";
+import {
+  createInvoiceCreateService,
+  type InvoiceCreateService,
+} from "./features/invoices/services.js";
 import { createOrganizationOperations } from "./features/orgs/routes.js";
 import {
   createOrganizationService,
@@ -136,6 +141,8 @@ export interface AppOptions {
   users?: UserService;
   adminUsers?: AdminUserService;
   groupAdministration?: GroupService;
+  /** Backs the documented POST /api/v1/invoices (the GET routes use `invoices`). */
+  invoiceCreation?: InvoiceCreateService;
   invoices?: InvoiceService;
   businessPolicies?: BusinessPolicyService;
   /**
@@ -155,6 +162,7 @@ export function createApp(
     users,
     adminUsers,
     groupAdministration,
+    invoiceCreation,
     invoices,
     businessPolicies,
     trustProxyHops,
@@ -190,6 +198,10 @@ export function createApp(
     ...createGroupOperations(
       auth,
       groupAdministration ?? (prisma && createGroupService(prisma)),
+    ),
+    ...createInvoiceOperations(
+      auth,
+      invoiceCreation ?? (prisma && createInvoiceCreateService(prisma)),
     ),
   ];
   app.use(createJsonBodyParser(operations));

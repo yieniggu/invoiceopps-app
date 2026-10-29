@@ -68,7 +68,8 @@ export function isUniqueViolation(error: unknown) {
 /** Seconds a client should wait before repeating a conflicted request. */
 const RETRY_AFTER_SECONDS = "1";
 
-function retryableConflict() {
+/** The 503 RETRYABLE_CONFLICT error (Retry-After) of an exhausted retry. */
+export function retryableConflict() {
   return new ApiError(
     503,
     "RETRYABLE_CONFLICT",

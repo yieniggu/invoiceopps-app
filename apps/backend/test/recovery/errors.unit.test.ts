@@ -93,3 +93,15 @@ describe("B3c S1 error codes", () => {
     expect(ERROR_CODES).not.toContain("PLATFORM_ADMINISTRATOR_PROTECTED");
   });
 });
+
+describe("B4 invoice creation error codes", () => {
+  it("declares the idempotency, businessId and deleted-invoice codes", () => {
+    expect(ERROR_CODES).toEqual(
+      expect.arrayContaining([
+        "IDEMPOTENCY_CONFLICT",
+        "BUSINESS_ID_CONFLICT",
+        "INVOICE_DELETED",
+      ]),
+    );
+  });
+});
