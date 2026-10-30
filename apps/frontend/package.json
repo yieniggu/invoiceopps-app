@@ -20,12 +20,10 @@
     "vite": "8.2.2"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "jsdom": "^30.0.1",
-    "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vitest": "5.0.0"
   }

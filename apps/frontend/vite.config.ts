@@ -2,7 +2,6 @@
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 
 // Non-default local ports avoid clashing with other apps on 3000/5173. The
 // IPv4 loopback target avoids `localhost` resolving to another IPv4/IPv6 server.
@@ -18,7 +17,7 @@ const sameOriginRule = {
 };
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   server: {
     port: 5380,
     strictPort: true,
