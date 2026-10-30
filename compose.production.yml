@@ -1,0 +1,146 @@
+# Production stack for a single Docker host behind a TLS-terminating tunnel.
+# Nothing here publishes a host port: the only entry point is the `web`
+# service, reachable as `invoiceops-web:80` from the external `edge` network
+# (where the tunnel connector lives). See DEPLOY.md.
+name: invoiceops
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-invoiceops}
+      POSTGRES_DB: ${POSTGRES_DB:-invoiceops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Read only by the init script on the first start of an empty volume.
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-invoiceops_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+    healthcheck:
+      # TCP on purpose: during first-start initialisation the temporary server
+      # answers on the unix socket only, and clients must not see it as ready.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./ops/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks: [db]
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+      target: runtime
+    platform: linux/amd64
+    image: invoiceops-backend:${INVOICEOPS_VERSION:-latest}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-invoiceops_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@db:5432/${POSTGRES_DB:-invoiceops}?schema=public
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # nginx (`web`) is the only proxy in front of the backend.
+      AUTH_TRUST_PROXY_HOPS: "1"
+      # Browser-facing origin checked on cookie writes (TLS ends upstream).
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://invoiceops.aglai.dev}
+    networks:
+      api:
+        aliases: [invoiceops-backend]
+      db:
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    platform: linux/amd64
+    image: invoiceops-web:${INVOICEOPS_VERSION:-latest}
+    networks:
+      api:
+      edge:
+        aliases: [invoiceops-web]
+    depends_on:
+      backend:
+        condition: service_healthy
+        # nginx resolves invoiceops-backend once at startup: restart web
+        # whenever the backend container is recreated.
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # One-shot: applies pending Prisma migrations (idempotent). Uses the owner
+  # role; the app itself connects as the unprivileged POSTGRES_APP_USER.
+  migrate:
+    profiles: [ops]
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+      target: tooling
+    platform: linux/amd64
+    image: invoiceops-backend-tooling:${INVOICEOPS_VERSION:-latest}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-invoiceops}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-invoiceops}?schema=public
+    networks: [db]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot interactive: creates the first platform administrator. The CLI
+  # only accepts a loopback database, so it shares the db network namespace
+  # and reaches PostgreSQL on 127.0.0.1 without publishing anything.
+  bootstrap:
+    profiles: [ops]
+    image: invoiceops-backend:${INVOICEOPS_VERSION:-latest}
+    pull_policy: never
+    platform: linux/amd64
+    network_mode: "service:db"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-invoiceops_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@127.0.0.1:5432/${POSTGRES_DB:-invoiceops}?schema=public
+    stdin_open: true
+    tty: true
+    command: ["node", "dist/recovery-bootstrap.js"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+networks:
+  api:
+    name: invoiceops_api
+  db:
+    name: invoiceops_db
+    internal: true
+  edge:
+    external: true
+    name: ${INVOICEOPS_EDGE_NETWORK:-aglai_edge}
+
+volumes:
+  postgres_data:
+    name: invoiceops_postgres_data

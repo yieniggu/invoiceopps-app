@@ -4,6 +4,8 @@
 > el overlay de la recuperación P0; base de desarrollo `invoiceops`) y el
 > [runbook de recuperación](../invoiceops-stack/RECOVERY_RUNBOOK.md). Este README
 > describe la aplicación; sus recetas no habilitan operaciones remotas.
+>
+> **Despliegue en producción (un host Docker detrás de un túnel):** [`DEPLOY.md`](DEPLOY.md).
 
 Aplicación académica InvoiceOps: backend Express con TypeScript, frontend React
 con Vite y PostgreSQL, con un único esquema consolidado de recuperación P0
@@ -284,7 +286,11 @@ acepta `true`, `false` o vacío (sin distinguir mayúsculas ni espacios); cualqu
 otro valor detiene el arranque con un error. `AUTH_TRUST_PROXY_HOPS` (entero no
 negativo; vacío o sin definir = no confiar en ningún proxy; un valor inválido
 detiene el arranque) indica cuántos proxies inversos confiables preceden al
-backend para que `request.ip` sea el cliente real y no el proxy.
+backend para que `request.ip` sea el cliente real y no el proxy. `PUBLIC_ORIGIN`
+(origen del navegador, p. ej. `https://invoiceops.aglai.dev`, sin ruta; vacío = se
+usa `Host` y `X-Forwarded-Proto`; un valor inválido detiene el arranque) fija el
+`Origin` exacto que exigen las escrituras con cookie cuando TLS termina antes del
+backend.
 Las variables se aplican al proceso del backend (`pnpm dev`, ruta A); el overlay
 de Docker no las reenvía; el `docker-compose.yml` base solo fija
 `AUTH_TRUST_PROXY_HOPS=1` (nginx es el único proxy) y publica solo en loopback el

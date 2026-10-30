@@ -1,0 +1,22 @@
+# Drives the unchanged interactive bootstrap CLI through a real pty.
+# usage: expect -f bootstrap.exp -- <docker compose ... run --rm bootstrap>
+# Name, RUT and passwords come from the environment so they never reach argv.
+set timeout 180
+log_user 0
+spawn -noecho {*}$argv
+expect "Name: "
+send "$env(PRODLIKE_ADMIN_NAME)\r"
+expect "RUT: "
+send "$env(PRODLIKE_ADMIN_RUT)\r"
+expect "Temporary password: "
+send "$env(PRODLIKE_ADMIN_TEMP_PASSWORD)\r"
+expect "Repeat the temporary password: "
+send "$env(PRODLIKE_ADMIN_TEMP_PASSWORD)\r"
+expect {
+  -re {Platform administrator[^\r\n]*} { puts "bootstrap: $expect_out(0,string)" }
+  timeout { puts "bootstrap: timed out: $expect_out(buffer)"; exit 1 }
+  eof { puts "bootstrap: ended without confirmation: $expect_out(buffer)"; exit 1 }
+}
+expect eof
+catch wait result
+exit [lindex $result 3]
