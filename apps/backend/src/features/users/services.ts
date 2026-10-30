@@ -241,100 +241,114 @@ export function createUserService(prisma: PrismaClient): UserService {
   return {
     async listUsers(actorUserId, organizationId, query) {
       // One snapshot for the count and the page, so total matches the rows.
-      return prisma.$transaction(
-        async (transaction) => {
-          await requireOrganizationAdmin(
-            transaction,
-            actorUserId,
-            organizationId,
-          );
-          const where: Prisma.OrganizationMembershipWhereInput = {
-            organizationId,
-            ...(query.search === undefined
-              ? {}
-              : { user: userSearchCondition(query.search) }),
-          };
-          const total = await transaction.organizationMembership.count({
-            where,
-          });
-          const memberships = await transaction.organizationMembership.findMany(
-            {
-              where,
-              orderBy: [
-                { user: { name: "asc" } },
-                { user: { rut: "asc" } },
-                { userId: "asc" },
-              ],
-              ...pageWindow(query),
-              select: {
-                role: true,
-                user: { select: { id: true, name: true, rut: true } },
-              },
+      return runSerializable(
+        () =>
+          prisma.$transaction(
+            async (transaction) => {
+              await requireOrganizationAdmin(
+                transaction,
+                actorUserId,
+                organizationId,
+              );
+              const where: Prisma.OrganizationMembershipWhereInput = {
+                organizationId,
+                ...(query.search === undefined
+                  ? {}
+                  : { user: userSearchCondition(query.search) }),
+              };
+              const total = await transaction.organizationMembership.count({
+                where,
+              });
+              const memberships =
+                await transaction.organizationMembership.findMany({
+                  where,
+                  orderBy: [
+                    { user: { name: "asc" } },
+                    { user: { rut: "asc" } },
+                    { userId: "asc" },
+                  ],
+                  ...pageWindow(query),
+                  select: {
+                    role: true,
+                    user: { select: { id: true, name: true, rut: true } },
+                  },
+                });
+              return {
+                users: memberships.map(({ role, user }) => ({ ...user, role })),
+                page: query.page,
+                pageSize: query.pageSize,
+                total,
+              };
             },
-          );
-          return {
-            users: memberships.map(({ role, user }) => ({ ...user, role })),
-            page: query.page,
-            pageSize: query.pageSize,
-            total,
-          };
-        },
-        { isolationLevel: "RepeatableRead" },
+            { isolationLevel: "RepeatableRead" },
+          ),
+        undefined,
+        "user_list",
       );
     },
 
     async getUser(actorUserId, targetUserId) {
-      return prisma.$transaction(
-        async (transaction) => {
-          // Visible to the platform administrator, to the user itself and to
-          // users sharing an organization; everybody else gets the same 404
-          // as a nonexistent user.
-          const unrestricted =
-            actorUserId === targetUserId ||
-            (await isPlatformAdministrator(transaction, actorUserId));
-          const target = await transaction.user.findUnique({
-            where: { id: targetUserId },
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              lastActiveAt: true,
-              disabledAt: true,
-              memberships: {
-                where: unrestricted
-                  ? {}
-                  : {
-                      organization: {
-                        memberships: { some: { userId: actorUserId } },
-                      },
+      return runSerializable(
+        () =>
+          prisma.$transaction(
+            async (transaction) => {
+              // Visible to the platform administrator, to the user itself and to
+              // users sharing an organization; everybody else gets the same 404
+              // as a nonexistent user.
+              const unrestricted =
+                actorUserId === targetUserId ||
+                (await isPlatformAdministrator(transaction, actorUserId));
+              const target = await transaction.user.findUnique({
+                where: { id: targetUserId },
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  lastActiveAt: true,
+                  disabledAt: true,
+                  memberships: {
+                    where: unrestricted
+                      ? {}
+                      : {
+                          organization: {
+                            memberships: { some: { userId: actorUserId } },
+                          },
+                        },
+                    orderBy: [
+                      { organization: { name: "asc" } },
+                      { organizationId: "asc" },
+                    ],
+                    select: {
+                      organization: { select: { id: true, name: true } },
                     },
-                orderBy: [
-                  { organization: { name: "asc" } },
-                  { organizationId: "asc" },
-                ],
-                select: { organization: { select: { id: true, name: true } } },
-              },
+                  },
+                },
+              });
+              if (
+                !target ||
+                (!unrestricted && target.memberships.length === 0)
+              ) {
+                throw new ApiError(404, "NOT_FOUND", "Not found");
+              }
+              return {
+                user: {
+                  id: target.id,
+                  name: target.name,
+                  email: target.email,
+                  recentlyActive: isRecentlyActive(
+                    target.lastActiveAt,
+                    target.disabledAt,
+                  ),
+                },
+                sharedOrganizations: target.memberships.map(
+                  ({ organization }) => organization,
+                ),
+              };
             },
-          });
-          if (!target || (!unrestricted && target.memberships.length === 0)) {
-            throw new ApiError(404, "NOT_FOUND", "Not found");
-          }
-          return {
-            user: {
-              id: target.id,
-              name: target.name,
-              email: target.email,
-              recentlyActive: isRecentlyActive(
-                target.lastActiveAt,
-                target.disabledAt,
-              ),
-            },
-            sharedOrganizations: target.memberships.map(
-              ({ organization }) => organization,
-            ),
-          };
-        },
-        { isolationLevel: "RepeatableRead" },
+            { isolationLevel: "RepeatableRead" },
+          ),
+        undefined,
+        "user_get",
       );
     },
 

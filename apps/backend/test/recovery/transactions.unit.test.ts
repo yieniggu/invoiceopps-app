@@ -194,6 +194,7 @@ describe("runSerializable conflict logging", () => {
         "level",
         "operation",
         "outcome",
+        "reason",
         "time",
       ]);
     }
@@ -224,7 +225,25 @@ describe("runSerializable conflict logging", () => {
         operation: "test.timeout",
         attempt: 1,
         outcome: "gave_up",
+        reason: "timeout",
       }),
+    ]);
+  });
+
+  it("logs reason conflict for a retried and an exhausted serialization race (CR-371)", async () => {
+    const warnings = captureWarnings();
+    await runSerializable(
+      async () => {
+        throw Object.assign(new Error("c"), { code: "P2034" });
+      },
+      undefined,
+      "test.race",
+    ).catch(() => undefined);
+
+    expect(warnings()).toEqual([
+      expect.objectContaining({ outcome: "retry", reason: "conflict" }),
+      expect.objectContaining({ outcome: "retry", reason: "conflict" }),
+      expect.objectContaining({ outcome: "gave_up", reason: "conflict" }),
     ]);
   });
 });

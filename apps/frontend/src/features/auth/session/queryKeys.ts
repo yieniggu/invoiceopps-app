@@ -145,6 +145,55 @@ export const groupMembershipsByIdsKey = (
     userIds,
   ] as const;
 
-/** Legacy group catalogue feeding the invoice and policy workspace. */
+/** Group catalogue behind the shared workspace (selected owner, policies). */
 export const workspaceGroupsKey = (identityId: string) =>
   [...identity(identityId), "workspace", "groups"] as const;
+
+/**
+ * Invoice list of the organization scope («Toda la organización» and «Sin
+ * grupo asignado», told apart by `ungrouped` in the filters). Without filters it is
+ * the prefix of every list of the organization.
+ */
+export const orgInvoicesKey = (
+  identityId: string,
+  organizationId: string,
+  filters?: object,
+) =>
+  filters === undefined
+    ? ([...orgScope(identityId, organizationId), "invoices"] as const)
+    : ([...orgScope(identityId, organizationId), "invoices", filters] as const);
+
+/** Invoice list of one group; without filters the prefix of every list. */
+export const groupInvoicesKey = (
+  identityId: string,
+  organizationId: string,
+  groupId: string,
+  filters?: object,
+) =>
+  filters === undefined
+    ? ([
+        ...orgScope(identityId, organizationId),
+        "group",
+        groupId,
+        "invoices",
+      ] as const)
+    : ([
+        ...orgScope(identityId, organizationId),
+        "group",
+        groupId,
+        "invoices",
+        filters,
+      ] as const);
+
+/** Every cached invoice detail of one organization (prefix match). */
+export const orgInvoiceDetailsKey = (
+  identityId: string,
+  organizationId: string,
+) => [...orgScope(identityId, organizationId), "invoice"] as const;
+
+/** One invoice of an organization. */
+export const invoiceKey = (
+  identityId: string,
+  organizationId: string,
+  invoiceId: string,
+) => [...orgScope(identityId, organizationId), "invoice", invoiceId] as const;

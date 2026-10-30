@@ -357,12 +357,12 @@ describe("APP-04 organization groups", () => {
     expect(
       await screen.findByText(/No tienes organizaciones asignadas/),
     ).toBeTruthy();
-    await navigate("Facturas");
+    // Platform authority is not an invoice permission: no «Facturas» entry.
     expect(
-      await screen.findByText(
-        "No tienes organizaciones para consultar facturas.",
-      ),
-    ).toBeTruthy();
+      within(screen.getByRole("navigation")).queryByRole("link", {
+        name: "Facturas",
+      }),
+    ).toBeNull();
     expect(
       transport.requests.some(
         ({ path }) =>

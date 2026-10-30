@@ -1,4 +1,4 @@
-import { ACCESS_NONE } from "./test/transport";
+import { NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -10,9 +10,15 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
 
-const organization = { id: "org", name: "Academia", slug: "academy" };
+const organization = {
+  id: "00000000-0000-4000-9000-000000000001",
+  name: "Academia",
+  slug: "academy",
+};
+const GROUP_B = "00000000-0000-4000-a000-000000000066";
+const INVOICE_A = "00000000-0000-4000-8000-0000000000a1";
+const INVOICE_B = "00000000-0000-4000-8000-0000000000b2";
 const profile = {
   id: "user-A",
   name: "Persona A",
@@ -20,7 +26,21 @@ const profile = {
   email: null,
   username: null,
   isPlatformAdministrator: false,
-  memberships: [{ organization, role: "USER", ...ACCESS_NONE }],
+  // «Facturas» is offered to people who can read invoices.
+  memberships: [
+    {
+      organization,
+      role: "USER",
+      permissions: { ...NO_PERMISSIONS, readInvoices: true },
+      groups: [
+        {
+          group: { id: GROUP_B, name: "Grupo B" },
+          permissions: NO_PERMISSIONS,
+          effective: { ...NO_PERMISSIONS, readInvoices: true },
+        },
+      ],
+    },
+  ],
 };
 const groups = [
   {
@@ -31,11 +51,15 @@ const groups = [
     members: [],
   },
 ];
+const businessIds: Record<string, string> = {
+  [INVOICE_A]: "INV-A",
+  [INVOICE_B]: "INV-B",
+};
 const invoice = (id: string) => ({
-  id: id,
-  businessId: id,
-  organizationId: "00000000-0000-4000-9000-000000000001",
-  groupId: "00000000-0000-4000-a000-000000000001",
+  id,
+  businessId: businessIds[id],
+  organizationId: organization.id,
+  groupId: null,
   currency: "CLP",
   issuedOn: "2026-10-25",
   dueOn: "2026-11-25",
@@ -65,10 +89,12 @@ function http() {
     .mockImplementation(async (url) => {
       if (url.pathname === "/api/v1/invoices")
         return json({
-          invoices: [invoice("INV-A"), invoice("INV-B")],
-          nextCursor: null,
+          items: [invoice(INVOICE_A), invoice(INVOICE_B)],
+          page: 1,
+          pageSize: 20,
+          total: 2,
         });
-      if (/^\/api\/v1\/invoices\/INV-[AB]$/.test(url.pathname))
+      if (/^\/api\/v1\/invoices\/[0-9a-f-]{36}$/.test(url.pathname))
         return json({ invoice: invoice(url.pathname.split("/")[4]) });
       throw new Error(`Unexpected read ${url.pathname}`);
     });
@@ -127,41 +153,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const DETAIL = `/api/v1/invoices/${INVOICE_A}`;
+
 describe("APP12 S1 CR003-008 regressions", () => {
-  it("CR003 retains owner keyboard focus in shared Facturas without stale owner data", async () => {
+  it("CR003 retains selector keyboard focus in Facturas without stale context data", async () => {
     const api = http();
     await start("Facturas");
     const selector = await screen.findByRole("combobox", {
-      name: "Propietario",
+      name: "Ver facturas de",
     });
     selector.focus();
     fireEvent.change(selector, {
-      target: { value: "org:group:00000000-0000-4000-a000-000000000066" },
+      target: { value: `group:${organization.id}:${GROUP_B}` },
     });
     expect(document.activeElement).toBe(
-      screen.getByRole("combobox", { name: "Propietario" }),
+      screen.getByRole("combobox", { name: "Ver facturas de" }),
     );
     await waitFor(() =>
       expect(
         api.read.mock.calls.some(
-          ([url]) =>
-            url.searchParams.get("ownerId") ===
-            "00000000-0000-4000-a000-000000000066",
+          ([url]) => url.searchParams.get("groupId") === GROUP_B,
         ),
       ).toBe(true),
     );
+    expect(document.activeElement).toBe(
+      screen.getByRole("combobox", { name: "Ver facturas de" }),
+    );
   });
-  it("CR003 retains focus in standalone Facturas", async () => {
-    http();
-    render(<InvoiceWorkspace profile={profile} groups={groups} />);
-    const selector = screen.getByRole("combobox", { name: "Propietario" });
-    selector.focus();
-    fireEvent.change(selector, {
-      target: { value: "org:group:00000000-0000-4000-a000-000000000066" },
-    });
-    await waitFor(() => expect(document.activeElement).toBe(selector));
-  });
-  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", DETAIL])(
     "CR007 expires the current session on protected GET %s 401",
     async (path) => {
       const api = http();
@@ -170,16 +189,14 @@ describe("APP12 S1 CR003-008 regressions", () => {
         url.pathname === path ? json({}, 401) : original(url),
       );
       await start("Facturas");
-      if (path === "/api/v1/invoices/INV-A")
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Ver INV-A" }),
-        );
+      if (path === DETAIL)
+        fireEvent.click(await screen.findByRole("link", { name: "INV-A" }));
       await screen.findByRole("button", { name: "Iniciar sesión" });
       expect(screen.queryByRole("navigation")).toBeNull();
       expect(screen.queryByRole("button", { name: "Salir" })).toBeNull();
     },
   );
-  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", DETAIL])(
     "CR007 ignores late old-session %s 401 after unmount",
     async (path) => {
       const api = http();
@@ -194,10 +211,8 @@ describe("APP12 S1 CR003-008 regressions", () => {
         return original(url);
       });
       await start("Facturas");
-      if (path === "/api/v1/invoices/INV-A")
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Ver INV-A" }),
-        );
+      if (path === DETAIL)
+        fireEvent.click(await screen.findByRole("link", { name: "INV-A" }));
       await waitFor(() => expect(intercepted).toBe(true));
       fireEvent.click(screen.getByRole("button", { name: "Salir" }));
       await screen.findByRole("button", { name: "Iniciar sesión" });
@@ -208,7 +223,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
       expect(screen.queryByRole("alert")).toBeNull();
     },
   );
-  it.each(["/api/v1/invoices", "/api/v1/invoices/INV-A"])(
+  it.each(["/api/v1/invoices", DETAIL])(
     "CR007 ignores delayed old-session %s JSON after a current 401",
     async (path) => {
       const api = http();
@@ -225,10 +240,8 @@ describe("APP12 S1 CR003-008 regressions", () => {
         return original(url);
       });
       await start("Facturas");
-      if (path === "/api/v1/invoices/INV-A")
-        fireEvent.click(
-          await screen.findByRole("button", { name: "Ver INV-A" }),
-        );
+      if (path === DETAIL)
+        fireEvent.click(await screen.findByRole("link", { name: "INV-A" }));
       await waitFor(() => expect(parse).toHaveBeenCalled());
       api.read.mockImplementation(async (url) =>
         url.pathname === "/api/v1/invoices" ? json({}, 401) : original(url),

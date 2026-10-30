@@ -4,6 +4,7 @@ import {
   forbiddenResponse,
   notFoundResponse,
   retryableConflictResponse,
+  retryableReadConflictResponse,
   unauthenticatedResponse,
   validationResponse,
 } from "../../http/standard-responses.js";
@@ -53,6 +54,7 @@ export function createUserOperations(
           "only an organization ADMIN or the platform administrator lists users",
         ),
         404: notFoundResponse(NOT_A_MEMBER),
+        503: retryableReadConflictResponse,
       },
       handler: controller.list,
     },
@@ -75,6 +77,7 @@ export function createUserOperations(
         404: notFoundResponse(
           "the user does not exist or shares no organization with the caller (indistinguishable)",
         ),
+        503: retryableReadConflictResponse,
       },
       handler: controller.get,
     },

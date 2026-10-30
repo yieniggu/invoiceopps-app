@@ -48,11 +48,9 @@ export function OrganizationsScreen({
       hasMemberships &&
       contextState === "error" ? (
         <>
-          <p role="alert">
-            No fue posible cargar el contexto de las organizaciones.
-          </p>
+          <p role="alert">No fue posible cargar tus organizaciones.</p>
           <button type="button" onClick={onRetry}>
-            Reintentar contexto organizacional
+            Reintentar
           </button>
         </>
       ) : null}

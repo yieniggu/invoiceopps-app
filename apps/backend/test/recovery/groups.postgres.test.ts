@@ -86,6 +86,176 @@ describe("RP0-07 GET /organizations/{organizationId}/groups", () => {
     ).toEqual([second.id]);
   });
 
+  describe("organization-wide invoice readers", () => {
+    const ORG_READ = { ...NO_FLAGS, readInvoices: true };
+    const idsOf = (body: { groups: Array<{ id: string }> }) =>
+      body.groups.map((group) => group.id);
+    const groupsPath = (organizationId: string) =>
+      `/organizations/${organizationId}/groups`;
+
+    async function readerScenario(flags: typeof ORG_READ) {
+      const s = await scenario();
+      const other = await makeGroup(s.org.id, "Zeta");
+      const reader = await makeUser("Org Reader");
+      await join(reader.id, s.org.id, "USER", flags);
+      await addToGroup(other.id, reader.id, s.org.id, NO_FLAGS);
+      return { ...s, other, reader, cookie: await cookieFor(reader) };
+    }
+
+    it("lists every group, with the same group DTO and no member data, to a USER with organization read", async () => {
+      const s = await scenario();
+      const second = await makeGroup(s.org.id, "Zeta");
+      const reader = await makeUser("Org Reader");
+      await join(reader.id, s.org.id, "USER", ORG_READ);
+
+      const response = await call(
+        "get",
+        groupsPath(s.org.id),
+        await cookieFor(reader),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.groups).toEqual([
+        {
+          id: s.group.id,
+          organizationId: s.org.id,
+          name: "Finance",
+          description: null,
+        },
+        {
+          id: second.id,
+          organizationId: s.org.id,
+          name: "Zeta",
+          description: null,
+        },
+      ]);
+      expect(Object.keys(response.body)).toEqual(["groups"]);
+    });
+
+    it("reports a group count equal to the list length for an organization reader (CR-335)", async () => {
+      const s = await readerScenario(ORG_READ);
+      await makeGroup(s.org.id, "Omega");
+
+      const list = await call("get", groupsPath(s.org.id), s.cookie);
+      const summary = await call("get", `/organizations/${s.org.id}`, s.cookie);
+
+      expect(list.status).toBe(200);
+      expect(list.body.groups).toHaveLength(3);
+      expect(summary.status).toBe(200);
+      expect(summary.body.summary.groupCount).toBe(list.body.groups.length);
+    });
+
+    it("keeps the count equal to the list for a member without organization read and for an administrator (CR-335)", async () => {
+      const s = await readerScenario(NO_FLAGS);
+      const memberList = await call("get", groupsPath(s.org.id), s.cookie);
+      const memberSummary = await call(
+        "get",
+        `/organizations/${s.org.id}`,
+        s.cookie,
+      );
+      const adminCookie = await cookieFor(s.admin);
+      const adminList = await call("get", groupsPath(s.org.id), adminCookie);
+      const adminSummary = await call(
+        "get",
+        `/organizations/${s.org.id}`,
+        adminCookie,
+      );
+
+      expect(memberList.body.groups).toHaveLength(1);
+      expect(memberSummary.body.summary.groupCount).toBe(1);
+      expect(adminList.body.groups).toHaveLength(2);
+      expect(adminSummary.body.summary.groupCount).toBe(2);
+    });
+
+    it("keeps own groups only for a USER without organization read, even with group-level read elsewhere", async () => {
+      const s = await readerScenario(NO_FLAGS);
+      const third = await makeGroup(s.org.id, "Omega");
+      await addToGroup(third.id, s.reader.id, s.org.id, ORG_READ);
+
+      const response = await call("get", groupsPath(s.org.id), s.cookie);
+
+      expect(response.status).toBe(200);
+      expect(idsOf(response.body).sort()).toEqual(
+        [s.other.id, third.id].sort(),
+      );
+      expect(idsOf(response.body)).not.toContain(s.group.id);
+    });
+
+    it("does not widen the list for other organization flags", async () => {
+      const s = await readerScenario({
+        ...NO_FLAGS,
+        createInvoices: true,
+      });
+
+      const response = await call("get", groupsPath(s.org.id), s.cookie);
+
+      expect(idsOf(response.body)).toEqual([s.other.id]);
+    });
+
+    it("shows only own groups when the organization is disabled", async () => {
+      const s = await readerScenario(ORG_READ);
+      await prisma.organization.update({
+        where: { id: s.org.id },
+        data: { enabled: false },
+      });
+
+      const response = await call("get", groupsPath(s.org.id), s.cookie);
+
+      expect(response.status).toBe(200);
+      expect(idsOf(response.body)).toEqual([s.other.id]);
+    });
+
+    it("is blocked with ONBOARDING_REQUIRED while a temporary password is pending", async () => {
+      const s = await readerScenario(ORG_READ);
+      const cookie = s.cookie;
+      await prisma.user.update({
+        where: { id: s.reader.id },
+        data: { mustChangePassword: true },
+      });
+
+      const response = await call("get", groupsPath(s.org.id), cookie);
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("ONBOARDING_REQUIRED");
+    });
+
+    it("reduces the list on the next request after the organization read is revoked", async () => {
+      const s = await readerScenario(ORG_READ);
+      expect(
+        idsOf((await call("get", groupsPath(s.org.id), s.cookie)).body),
+      ).toHaveLength(2);
+
+      const revoke = await call(
+        "put",
+        `/organizations/${s.org.id}/memberships/${s.reader.id}/permissions`,
+        await cookieFor(s.admin),
+        { permissions: NO_FLAGS },
+      );
+      expect(revoke.status).toBe(200);
+
+      const after = await call("get", groupsPath(s.org.id), s.cookie);
+      expect(idsOf(after.body)).toEqual([s.other.id]);
+    });
+
+    it("still answers 404 to a non-member and keeps the ADMIN list complete", async () => {
+      const s = await readerScenario(ORG_READ);
+
+      const outsider = await call(
+        "get",
+        groupsPath(s.org.id),
+        await cookieFor(s.outsider),
+      );
+      const admin = await call(
+        "get",
+        groupsPath(s.org.id),
+        await cookieFor(s.admin),
+      );
+
+      expect(outsider.status).toBe(404);
+      expect(idsOf(admin.body).sort()).toEqual([s.group.id, s.other.id].sort());
+    });
+  });
+
   it("lists every group of any existing organization for the platform administrator", async () => {
     const s = await scenario();
     const response = await call(

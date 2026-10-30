@@ -697,6 +697,7 @@ describe("B3c follow-up migration", () => {
     expect(result.rows.map((row) => row.migration_name)).toEqual([
       "20261026000000_initial_recovery_p0",
       "20261028000000_user_status_activity",
+      "20261029000000_invoice_events",
     ]);
   });
 
@@ -707,6 +708,8 @@ describe("B3c follow-up migration", () => {
        ORDER BY indexname`,
     );
     expect(result.rows.map((row) => row.indexname)).toEqual([
+      "Invoice_businessId_trgm_idx",
+      "Invoice_supplierName_trgm_idx",
       "Organization_name_trgm_idx",
       "User_name_trgm_idx",
       "User_rut_trgm_idx",
@@ -1043,5 +1046,229 @@ describe("RP0-22 schema: ApiToken optional group scope", () => {
 
   it("still rejects a group from another organization (composite FK)", async () => {
     await expectCode(insertToken(otherOrganizationId, groupId), FK_VIOLATION);
+  });
+});
+
+describe("RP0-12 InvoiceEvent table (20261029000000_invoice_events)", () => {
+  const MIGRATION = new URL(
+    "../../prisma/migrations/20261029000000_invoice_events/migration.sql",
+    import.meta.url,
+  );
+
+  it("defines the InvoiceEventType enum with INVOICE_DELETED", async () => {
+    const result = await client.query(
+      `SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'InvoiceEventType' ORDER BY e.enumsortorder`,
+    );
+    expect(result.rows.map((row) => row.enumlabel)).toEqual([
+      "INVOICE_DELETED",
+    ]);
+  });
+
+  it("has the columns with the expected nullability", async () => {
+    const expected: Record<string, string> = {
+      id: "NO",
+      invoiceId: "NO",
+      type: "NO",
+      actorUserId: "NO",
+      organizationId: "NO",
+      groupId: "YES",
+      createdAt: "NO",
+    };
+    const result = await client.query(
+      `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='InvoiceEvent'`,
+    );
+    const actual = Object.fromEntries(
+      result.rows.map((row) => [row.column_name, row.is_nullable]),
+    );
+    expect(actual).toEqual(expected);
+    expect(
+      (await columnInfo("InvoiceEvent", "createdAt"))?.column_default,
+    ).toMatch(/CURRENT_TIMESTAMP|now\(\)/i);
+  });
+
+  it("restricts the foreign keys to Invoice, User and Organization", async () => {
+    const result = await client.query(
+      `SELECT a.attname AS column_name, c.confrelid::regclass::text AS target, c.confdeltype AS on_delete
+         FROM pg_constraint c
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.contype = 'f' AND c.conrelid = '"InvoiceEvent"'::regclass`,
+    );
+    const byColumn = Object.fromEntries(
+      result.rows.map((row) => [row.column_name, row]),
+    );
+    expect(byColumn.invoiceId.target).toBe('"Invoice"');
+    expect(byColumn.actorUserId.target).toBe('"User"');
+    expect(byColumn.organizationId.target).toBe('"Organization"');
+    for (const column of ["invoiceId", "actorUserId", "organizationId"]) {
+      // 'r' is ON DELETE RESTRICT.
+      expect(byColumn[column].on_delete, column).toBe("r");
+    }
+  });
+
+  it("has a unique constraint on (invoiceId, type)", async () => {
+    expect(await uniqueIndexColumns("InvoiceEvent")).toContainEqual([
+      "invoiceId",
+      "type",
+    ]);
+  });
+
+  it("has an index on (organizationId, createdAt, id)", async () => {
+    const result = await client.query(
+      `SELECT array_agg(a.attname::text ORDER BY k.ord) AS columns
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+        WHERE c.relname = 'InvoiceEvent'
+        GROUP BY i.indexrelid`,
+    );
+    expect(result.rows.map((row) => row.columns)).toContainEqual([
+      "organizationId",
+      "createdAt",
+      "id",
+    ]);
+  });
+
+  it("can be applied again without error (idempotent)", async () => {
+    await client.query(await readFile(MIGRATION, "utf8"));
+  });
+});
+
+describe("invoice read indexes and scope immutability (CR-328, CR-336)", () => {
+  const PARTIAL = "Invoice_organizationId_active_createdAt_id_idx";
+
+  async function indexDefinition(name: string) {
+    const result = await client.query(
+      `SELECT indexdef FROM pg_indexes
+        WHERE schemaname = current_schema() AND tablename = 'Invoice' AND indexname = $1`,
+      [name],
+    );
+    return result.rows[0]?.indexdef as string | undefined;
+  }
+
+  it("has the partial index for the organization-wide list", async () => {
+    const definition = await indexDefinition(PARTIAL);
+
+    expect(definition).toBeDefined();
+    expect(definition).toMatch(
+      /\("organizationId", "createdAt" DESC, id DESC\)/,
+    );
+    expect(definition).toMatch(/WHERE \("deletedAt" IS NULL\)/);
+  });
+
+  it.each(["businessId", "supplierName"])(
+    "has a trigram GIN index on %s",
+    async (column) => {
+      const definition = await indexDefinition(`Invoice_${column}_trgm_idx`);
+
+      expect(definition).toMatch(/USING gin .*gin_trgm_ops/);
+      expect(definition).toContain(`"${column}"`);
+    },
+  );
+
+  it("plans the organization-wide list through the partial index", async () => {
+    const creator = await createUser("planner");
+    const organization = await createOrganization("org-plan");
+    const group = await createGroup(organization);
+    for (let n = 0; n < 5; n += 1) {
+      await insertInvoice(organization, group, creator);
+    }
+    // Only an index that already yields the requested order can avoid the
+    // (disabled) explicit sort, so the plan is deterministic on small data.
+    await client.query("BEGIN");
+    try {
+      await client.query("SET LOCAL enable_seqscan = off");
+      await client.query("SET LOCAL enable_bitmapscan = off");
+      await client.query("SET LOCAL enable_sort = off");
+      const plan = await client.query(
+        `EXPLAIN (FORMAT TEXT) SELECT id FROM "Invoice"
+          WHERE "organizationId" = $1 AND "deletedAt" IS NULL
+          ORDER BY "createdAt" DESC, id DESC LIMIT 20`,
+        [organization],
+      );
+      const text = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
+
+      expect(text).toContain(PARTIAL);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  });
+
+  it("plans the q search (ILIKE '%term%', 3+ characters) through the trigram indexes (CR-372)", async () => {
+    const creator = await createUser("searcher");
+    const organization = await createOrganization("org-search");
+    const group = await createGroup(organization);
+    for (let n = 0; n < 5; n += 1) {
+      await insertInvoice(organization, group, creator);
+    }
+    // With sequential scans disabled the only way to answer the substring
+    // predicates is through the GIN trigram indexes, so the plan is
+    // deterministic on small data. Nothing is committed.
+    await client.query("BEGIN");
+    try {
+      await client.query("SET LOCAL enable_seqscan = off");
+      const plan = await client.query(
+        `EXPLAIN (FORMAT TEXT) SELECT id FROM "Invoice"
+          WHERE "businessId" ILIKE '%abc%' OR "supplierName" ILIKE '%abc%'`,
+      );
+      const text = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
+
+      expect(text).toContain("Bitmap Index Scan");
+      expect(text).toContain("Invoice_businessId_trgm_idx");
+      expect(text).toContain("Invoice_supplierName_trgm_idx");
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  });
+
+  describe("scope immutability trigger", () => {
+    it.each([
+      ["groupId", `"groupId" = $2, "scopeKey" = $2`],
+      ["scopeKey", `"scopeKey" = 'organization'`],
+      ["groupId to null", `"groupId" = NULL`],
+    ])("rejects changing %s", async (_label, assignment) => {
+      const creator = await createUser("scope");
+      const group = await createGroup(organizationId);
+      const otherGroup = await createGroup(organizationId);
+      const invoice = await insertInvoice(organizationId, group, creator);
+
+      await expect(
+        client.query(
+          `UPDATE "Invoice" SET ${assignment} WHERE id = $1`,
+          assignment.includes("$2") ? [invoice.id, otherGroup] : [invoice.id],
+        ),
+      ).rejects.toMatchObject({ code: "P0001" });
+    });
+
+    it("rejects moving an invoice to another organization", async () => {
+      const creator = await createUser("scope-org");
+      const group = await createGroup(organizationId);
+      const invoice = await insertInvoice(organizationId, group, creator);
+
+      await expect(
+        client.query(
+          'UPDATE "Invoice" SET "organizationId" = $2 WHERE id = $1',
+          [invoice.id, otherOrganizationId],
+        ),
+      ).rejects.toMatchObject({ code: "P0001" });
+    });
+
+    it("keeps insert and the deletion update working", async () => {
+      const creator = await createUser("scope-ok");
+      const group = await createGroup(organizationId);
+      const invoice = await insertInvoice(organizationId, group, creator);
+
+      await client.query(
+        'UPDATE "Invoice" SET "deletedAt" = now(), "deletedByUserId" = $2, "supplierName" = $3 WHERE id = $1',
+        [invoice.id, creator, "Renamed supplier"],
+      );
+      const stored = await client.query(
+        'SELECT "deletedAt", "groupId" FROM "Invoice" WHERE id = $1',
+        [invoice.id],
+      );
+
+      expect(stored.rows[0].deletedAt).not.toBeNull();
+      expect(stored.rows[0].groupId).toBe(group);
+    });
   });
 });

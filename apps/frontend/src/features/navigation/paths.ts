@@ -33,6 +33,18 @@ const listQuery = ({ search, status, page }: AdminUsersParams): string => {
 export const paths = {
   dashboard: "/dashboard",
   invoices: "/invoices",
+  /** Inbox with its context, filters and page (`search` without the `?`). */
+  invoicesWith: (search: string) =>
+    search ? `/invoices?${search}` : "/invoices",
+  /** Detail; the organization (and the invoice's group) travel in the URL. */
+  invoice: (
+    invoiceId: string,
+    scope: { organizationId: string; groupId?: string | null },
+  ) => {
+    const query = new URLSearchParams({ organizationId: scope.organizationId });
+    if (scope.groupId) query.set("groupId", scope.groupId);
+    return `/invoices/${segment(invoiceId)}?${query}`;
+  },
   policies: "/policies",
   profile: "/profile",
   changePassword: "/change-password",

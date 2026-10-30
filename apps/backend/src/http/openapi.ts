@@ -14,6 +14,7 @@ import { AuthProfileSchema } from "../features/auth/schemas.js";
 import {
   InvoiceCreateRequestSchema,
   InvoiceSchema,
+  InvoiceViewSchema,
 } from "../features/invoices/schemas.js";
 
 const SESSION_SECURITY_SCHEME = "sessionCookie";
@@ -93,14 +94,15 @@ export function buildOpenApiDocument(operations: Operation[]) {
     });
   }
 
-  // Contracts that exist before their operations do (RP0-11) are published as
-  // components only; no invoice operation is documented until it is mounted.
+  // Invoice contracts are also published as explicit components so they stay
+  // in the document even when an app is built without the invoice operations.
   const generator = new OpenApiGeneratorV31([
     ...registry.definitions,
     { type: "schema", schema: ErrorResponseSchema },
     { type: "schema", schema: AuthProfileSchema },
     { type: "schema", schema: InvoiceCreateRequestSchema },
     { type: "schema", schema: InvoiceSchema },
+    { type: "schema", schema: InvoiceViewSchema },
   ]);
 
   return generator.generateDocument({

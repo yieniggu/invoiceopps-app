@@ -3,6 +3,7 @@ import {
   type Prisma,
 } from "../../generated/prisma/client.js";
 import { ApiError } from "../../http/errors.js";
+import { loadEffectivePermissions } from "../groups/invoice-permissions.js";
 
 export async function isPlatformAdministrator(
   database: Prisma.TransactionClient,
@@ -76,6 +77,33 @@ export async function organizationGroupVisibility(
   }
   if (!membership) throw new ApiError(404, "NOT_FOUND", "Not found");
   return "own";
+}
+
+/**
+ * The groups the actor may see: organizationGroupVisibility, widened to every
+ * group for an organization-wide invoice reader (it may open any group's
+ * invoices, so it must be able to name and pick them). Disabled organizations
+ * and pending onboarding grant nothing (loadEffectivePermissions). Single
+ * source for the group list and the group count of the organization summary,
+ * so the two always agree. Actors with no access get 404.
+ */
+export async function resolveGroupVisibility(
+  database: Prisma.TransactionClient,
+  actorUserId: string,
+  organizationId: string,
+): Promise<"all" | "own"> {
+  const visibility = await organizationGroupVisibility(
+    database,
+    actorUserId,
+    organizationId,
+  );
+  if (visibility === "all") return "all";
+  const organizationRead = await loadEffectivePermissions(database, {
+    userId: actorUserId,
+    organizationId,
+    groupId: null,
+  });
+  return organizationRead.readInvoices ? "all" : "own";
 }
 
 /** 403 unless the actor is the platform administrator. */

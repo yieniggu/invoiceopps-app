@@ -439,7 +439,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     await screen.findByRole("heading", { name: "Panel principal" });
     await openPolicies();
     await screen.findByText(
-      "No tienes un contexto autorizado para consultar políticas.",
+      "No tienes un espacio de trabajo autorizado para consultar políticas.",
     );
     expect(api.read).not.toHaveBeenCalled();
   });

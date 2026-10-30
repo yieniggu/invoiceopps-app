@@ -21,9 +21,11 @@ export function invoiceMoney(pesos: number) {
   }).format(pesos);
 }
 
-// Civil dates (YYYY-MM-DD) are shown as given, without time-zone conversion.
+// Civil dates (YYYY-MM-DD) are shown as DD-MM-YYYY (es-CL) by rearranging the
+// string, never through Date, so the day cannot shift with the time zone.
 export function invoiceCivilDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "Fecha no disponible";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : "Fecha no disponible";
 }
 
 export function invoiceDate(value: string) {
@@ -36,14 +38,48 @@ export function invoiceDate(value: string) {
       }).format(date);
 }
 
-export function invoiceHttpMessage(status: number | undefined) {
-  if (status === 403)
-    return "No tienes permiso para acceder a estas facturas en el contexto seleccionado.";
-  if (status === 404)
-    return "La factura o el contexto solicitado no está disponible para tu sesión.";
-  if (status === 409)
-    return "El estado de la factura cambió. Consulta su estado actualizado antes de continuar.";
-  if (status === 400)
-    return "La consulta o la versión de política no es válida. Usa un máximo de 120 caracteres.";
-  return "Intenta nuevamente cuando la conexión esté disponible.";
+// The business runs on Chilean time: «today» is the Santiago day for everyone,
+// not the day of the viewer's device.
+const BUSINESS_TIME_ZONE = "America/Santiago";
+
+const businessDay = new Intl.DateTimeFormat("en-CA", {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** Today as a civil date (`YYYY-MM-DD`) in the business time zone. */
+export function todayCivilDate(now: Date = new Date()) {
+  const part = (type: "year" | "month" | "day") =>
+    businessDay.formatToParts(now).find((it) => it.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+/** Past due: pending and the due day already behind today (civil dates compare as text). */
+export function isOverdue(
+  invoice: { businessStatus: string; dueOn: string },
+  today: string = todayCivilDate(),
+) {
+  return (
+    invoice.businessStatus === "PENDING" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(invoice.dueOn) &&
+    invoice.dueOn < today
+  );
+}
+
+/** «1 factura» / «57 facturas». */
+export function invoiceCountText(total: number) {
+  return `${new Intl.NumberFormat("es-CL").format(total)} ${total === 1 ? "factura" : "facturas"}`;
+}
+
+/** «Mostrando 21–40 de 57». */
+export function invoiceRangeText(
+  page: number,
+  pageSize: number,
+  total: number,
+  rows: number,
+) {
+  const first = (page - 1) * pageSize + 1;
+  return `Mostrando ${first}–${first + rows - 1} de ${total}`;
 }

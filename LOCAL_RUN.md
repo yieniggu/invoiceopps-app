@@ -100,6 +100,26 @@ pnpm recovery:local:reset -- --confirm-reset=invoiceops
 > `pnpm recovery:local:reset -- --confirm-reset=invoiceops` y vuelve a ejecutar
 > `pnpm recovery:bootstrap`. La base de pruebas se recrea sola en cada ejecución.
 
+> **Cambio de esquema (facturas):** la migración idempotente
+> `20261029000000_invoice_events` agrega la tabla y el tipo enumerado
+> `InvoiceEvent` (eventos de eliminación de facturas), el índice parcial de
+> `Invoice` por organización (`WHERE "deletedAt" IS NULL`), los índices trigram
+> `pg_trgm` de `businessId` y `supplierName` y el trigger
+> `Invoice_scope_immutable`, que impide cambiar la organización, el grupo o el
+> `scopeKey` de una factura. Requiere PostgreSQL 14 o superior
+> (`CREATE OR REPLACE TRIGGER`). Se aplica con `prisma migrate deploy`, como la
+> anterior. Si tu base ya aplicó una edición anterior de esta migración (checksum
+> distinto), recrea la base una vez con
+> `pnpm recovery:local:reset -- --confirm-reset=invoiceops` y vuelve a ejecutar
+> `pnpm recovery:bootstrap`.
+>
+> **Deriva del esquema:** `pnpm --filter @invoiceops/backend db:drift` compara las
+> migraciones con `schema.prisma` en una base sombra y termina con código 2 si
+> difieren. Solo necesita
+> `SHADOW_DATABASE_URL`, una base desechable que el comando reinicia (nunca la
+> de trabajo); no usa `DATABASE_URL`. Sin `SHADOW_DATABASE_URL` el resto de
+> comandos Prisma no cambia.
+
 El reset **destruye y recrea** la base de desarrollo `invoiceops` (se pierden
 sus datos) y aplica las migraciones. Antes de conectarse exige: protocolo `postgres`/`postgresql`, host
 `localhost`, `127.0.0.1`, `::1` o socket unix, nombre de base exactamente

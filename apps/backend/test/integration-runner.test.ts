@@ -290,7 +290,7 @@ function fixture({
     if (args.includes("vitest")) {
       if (failure === "suite")
         return { status: 1, stdout: "", stderr: "synthetic suite failure" };
-      const count = failure === "organization-count" ? 22 : 26;
+      const count = failure === "organization-count" ? 22 : 24;
       return success(`Tests  ${count} passed (${count})`);
     }
     return success();
@@ -350,7 +350,7 @@ describe("integration runner orchestration without external processes", () => {
     ]);
     expect(logs).toEqual(
       expect.arrayContaining([
-        "stage: organization 26 passed",
+        "stage: organization 24 passed",
         "stage: migrations",
         "cleanup: exact owned container removed and absence verified",
       ]),
@@ -395,9 +395,9 @@ describe("integration runner orchestration without external processes", () => {
   it("requires the three group catalog SQL cases in the normal organization gate", async () => {
     const { dependencies, logs } = fixture({ failure: "organization-count" });
     await expect(runIntegrationGate(dependencies)).rejects.toThrow(
-      "organization suite did not pass all 26 expected cases",
+      "organization suite did not pass all 24 expected cases",
     );
-    expect(logs).not.toContain("stage: organization 26 passed");
+    expect(logs).not.toContain("stage: organization 24 passed");
     expect(logs).toContain(
       "cleanup: exact owned container removed and absence verified",
     );
@@ -417,7 +417,7 @@ describe("integration runner orchestration without external processes", () => {
         removes ? 1 : 0,
       );
       if (failure !== "cleanup")
-        expect(logs).not.toContain("stage: organization 26 passed");
+        expect(logs).not.toContain("stage: organization 24 passed");
       if (removes && failure !== "cleanup") {
         expect(logs).toContain(
           "cleanup: exact owned container removed and absence verified",

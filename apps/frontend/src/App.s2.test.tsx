@@ -25,10 +25,16 @@ const profile = {
   email: "ada@example.test",
   username: "ada",
   isPlatformAdministrator: false,
+  // «Facturas» is offered to people who can read invoices.
   memberships: organizations.map((organization) => ({
     organization,
     role: "USER",
-    ...ACCESS_NONE,
+    permissions: { ...NO_PERMISSIONS, readInvoices: true },
+    groups: [] as Array<{
+      group: { id: string; name: string };
+      permissions: typeof NO_PERMISSIONS;
+      effective: typeof NO_PERMISSIONS;
+    }>,
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -168,7 +174,7 @@ function http(current = profile, membershipGroups = groups) {
         });
       if (path.startsWith("/api/v1/organizations/")) return mutation();
       if (path.startsWith("/api/v1/invoices?"))
-        return json({ invoices: [], nextCursor: null });
+        return json({ items: [], page: 1, pageSize: 20, total: 0 });
       throw new Error(`Unexpected request: ${path}`);
     });
   return {
@@ -185,9 +191,9 @@ function navigate(name: string) {
     within(screen.getByRole("navigation")).getByRole("link", { name }),
   );
 }
-/** The workspace owner is chosen in the Facturas / Políticas selector. */
-async function chooseOwner(value: string) {
-  fireEvent.change(await screen.findByLabelText("Propietario"), {
+/** The invoice context is chosen in the Facturas selector. */
+async function chooseContext(value: string) {
+  fireEvent.change(await screen.findByLabelText("Ver facturas de"), {
     target: { value },
   });
 }
@@ -290,59 +296,81 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ]);
   });
 
-  it("selects only the current user's individual context from the invoice workspace selector and propagates it", async () => {
+  it("chooses the invoice context in the inbox selector and keeps it in the URL, not in a hidden global", async () => {
     const api = http();
     await start("Facturas");
-    await chooseOwner(
-      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
-    );
-    navigate("Panel principal");
+    // Two organizations: one group of options per organization, and there is no
+    // individual-owner option any more (invoices belong to an organization or
+    // to one of its groups).
+    const selector = await screen.findByLabelText("Ver facturas de");
     expect(
-      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
-    ).toContain("Academia BModalidadTrabajo individual");
-    navigate("Facturas");
+      within(selector)
+        .getAllByRole("group")
+        .map((group) => [
+          group.getAttribute("label"),
+          within(group)
+            .getAllByRole("option")
+            .map((option) => option.textContent),
+        ]),
+    ).toEqual([
+      ["Academia A", ["Toda la organización", "Sin grupo asignado"]],
+      ["Academia B", ["Toda la organización", "Sin grupo asignado"]],
+    ]);
+    await chooseContext(`ungrouped:${organizations[1].id}`);
     await waitFor(() =>
       expect(
-        api.fetchMock.mock.calls.some(([path]) =>
-          path
-            .toString()
-            .startsWith(
-              "/api/v1/invoices?organizationId=00000000-0000-4000-9000-fa19c6501c7e&ownerType=user&ownerId=00000000-0000-4000-8000-0000000000b1",
-            ),
+        api.fetchMock.mock.calls.some(
+          ([path]) =>
+            path.toString() ===
+            `/api/v1/invoices?organizationId=${organizations[1].id}&ungrouped=true&page=1&pageSize=20`,
         ),
       ).toBe(true),
     );
-    // The selector moved the workspace from the default owner to Academia B.
-    const invoiceReads = api.fetchMock.mock.calls
-      .map(([path]) => path.toString())
-      .filter((path) => /^\/api\/v1\/invoices\?/.test(path));
-    expect(invoiceReads.at(-1)).toContain(
-      "organizationId=00000000-0000-4000-9000-fa19c6501c7e",
+    expect(window.location.search).toContain(
+      `organizationId=${organizations[1].id}`,
+    );
+    navigate("Panel principal");
+    navigate("Facturas");
+    // Coming back through the menu opens the default context again.
+    await waitFor(() =>
+      expect(
+        api.fetchMock.mock.calls
+          .map(([path]) => path.toString())
+          .filter((path) => /^\/api\/v1\/invoices\?/.test(path))
+          .at(-1),
+      ).toBe(
+        `/api/v1/invoices?organizationId=${organizations[0].id}&page=1&pageSize=20`,
+      ),
     );
   });
 
-  it("selects a loaded membership group in the invoice owner selector and retains that context on the dashboard and invoices", async () => {
-    const api = http();
+  it("selects a group of the profile in the inbox selector and requests that group", async () => {
+    const equipo = { id: namedId("group", 1), name: "Equipo 1" };
+    const api = http({
+      ...profile,
+      memberships: [
+        {
+          organization: organizations[1],
+          role: "USER",
+          permissions: NO_PERMISSIONS,
+          groups: [
+            {
+              group: equipo,
+              permissions: NO_PERMISSIONS,
+              effective: { ...NO_PERMISSIONS, readInvoices: true },
+            },
+          ],
+        },
+      ],
+    });
     await start("Facturas");
-    // The owner is chosen only in the Facturas selector: there is no
-    // per-group "Trabajar con" button any more.
-    await chooseOwner(
-      "00000000-0000-4000-9000-fa19c6501c7e:group:00000000-0000-4000-a000-000000000001",
-    );
-    expect(screen.queryByRole("button", { name: /Trabajar con/ })).toBeNull();
-    navigate("Panel principal");
+    await chooseContext(`group:${organizations[1].id}:${equipo.id}`);
+    await screen.findByText(/Todavía no hay facturas/);
     expect(
-      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
-    ).toContain("Academia BModalidadGrupo: Equipo 1");
-    fireEvent.click(screen.getByRole("link", { name: "Ir a facturas" }));
-    await screen.findByText("No hay facturas para este propietario.");
-    expect(
-      api.fetchMock.mock.calls.some(([path]) =>
-        path
-          .toString()
-          .startsWith(
-            "/api/v1/invoices?organizationId=00000000-0000-4000-9000-fa19c6501c7e&ownerType=group&ownerId=00000000-0000-4000-a000-000000000001",
-          ),
+      api.fetchMock.mock.calls.some(
+        ([path]) =>
+          path.toString() ===
+          `/api/v1/invoices?organizationId=${organizations[1].id}&groupId=${equipo.id}&page=1&pageSize=20`,
       ),
     ).toBe(true);
     // Group deletion no longer exists in the contract.
@@ -700,22 +728,17 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     ).toBeTruthy();
     navigate("Organizaciones");
     expect(screen.getByRole("alert").textContent).toBe(
-      "No fue posible cargar el contexto de las organizaciones.",
+      "No fue posible cargar tus organizaciones.",
     );
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Reintentar contexto organizacional",
+        name: "Reintentar",
       }),
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     navigate("Facturas");
-    await chooseOwner(
-      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
-    );
+    await screen.findByText(/Todavía no hay facturas/);
     navigate("Panel principal");
-    expect(
-      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
-    ).toContain("Academia BModalidadTrabajo individual");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -735,9 +758,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       ),
     ).toBe(true);
     navigate("Facturas");
-    await chooseOwner(
-      "00000000-0000-4000-9000-fa19c6501c7e:user:00000000-0000-4000-8000-0000000000b1",
-    );
+    await screen.findByText(/Todavía no hay facturas/);
     navigate("Grupos");
     expect(
       await screen.findByRole("link", { name: "Ver grupo Equipo 1" }),
@@ -746,11 +767,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       screen.queryByRole("link", { name: "Ver grupo Equipo externo" }),
     ).toBeNull();
     navigate("Facturas");
-    await screen.findByText("No hay facturas para este propietario.");
+    await screen.findByText(/Todavía no hay facturas/);
     expect(screen.queryByRole("option", { name: /Equipo externo/ })).toBeNull();
     expect(
       api.fetchMock.mock.calls.some(([path]) =>
-        path.toString().includes("ownerId=outside-group"),
+        path.toString().includes("outside"),
       ),
     ).toBe(false);
   });

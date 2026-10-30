@@ -1,4 +1,4 @@
-import { membership } from "./test/transport";
+import { membership, NO_PERMISSIONS } from "./test/transport";
 import {
   cleanup,
   fireEvent,
@@ -9,7 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { Profile } from "./features/profile/ProfileScreen";
-import type { InvoiceDetail } from "./features/invoices/InvoiceWorkspace";
+import type { Invoice } from "./features/invoices/types";
 import { openPolicies } from "./test/policiesRoute";
 
 // Políticas is disabled in the product; the screen is kept unrouted. This
@@ -25,11 +25,12 @@ const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const organization = { id: id(1), name: "Academia S8", slug: "academy-s8" };
 const createdAt = "2026-10-21T00:00:00Z";
-const invoice: InvoiceDetail = {
-  id: "S8-INVOICE",
+const invoice: Invoice = {
+  id: id(50),
   businessId: "S8-INVOICE",
   organizationId: "00000000-0000-4000-9000-000000000001",
   groupId: "00000000-0000-4000-a000-000000000001",
+  groupName: "Grupo S8",
   currency: "CLP",
   issuedOn: "2026-10-25",
   dueOn: "2026-11-25",
@@ -63,7 +64,18 @@ function http({
     username: null,
     isPlatformAdministrator: platform,
     memberships: member
-      ? [membership(organization, role as "ADMIN" | "USER")]
+      ? [
+          // «Facturas» is offered to people who can read invoices.
+          membership(organization, role as "ADMIN" | "USER", {
+            permissions: { ...NO_PERMISSIONS, readInvoices: true },
+            groups: [
+              {
+                group: { id: id(3), name: "Equipo S8" },
+                effective: { ...NO_PERMISSIONS, readInvoices: true },
+              },
+            ],
+          }),
+        ]
       : [],
   };
   const fetchMock = vi
@@ -151,8 +163,8 @@ function http({
           policies: [{ version: "s8-policy", manualReviewThreshold: 0.8 }],
         });
       if (url.pathname === "/api/v1/invoices" && method === "GET")
-        return json({ invoices: [invoice], nextCursor: null });
-      if (url.pathname === "/api/v1/invoices/S8-INVOICE" && method === "GET")
+        return json({ items: [invoice], page: 1, pageSize: 20, total: 1 });
+      if (url.pathname === `/api/v1/invoices/${invoice.id}` && method === "GET")
         return json({ invoice });
       throw new Error(`Unexpected S8 boundary: ${method} ${url.pathname}`);
     });
@@ -221,10 +233,13 @@ describe("APP12 S8 global acceptance characterization", () => {
         ),
       ).toBe(true);
       await navigate(destination);
-      await screen.findByRole("heading", {
-        level: 2,
-        name: heading,
-      });
+      if (destination === "Facturas")
+        await screen.findByRole("table", { name: heading });
+      else
+        await screen.findByRole("heading", {
+          level: 2,
+          name: heading,
+        });
       if (destination === "Panel principal") {
         const card = screen.getByRole("region", {
           name: "Tu espacio de trabajo",
@@ -310,32 +325,26 @@ describe("APP12 S8 global acceptance characterization", () => {
     semantics();
   });
 
-  it("carries a group selected in Facturas to policies and the invoice detail", async () => {
+  it("opens an invoice from the inbox, keeps Políticas reachable and leaves the dashboard context alone", async () => {
     const requests = http();
     render(<App />);
     await navigate("Facturas");
-    // The owner is chosen in the Facturas selector (no per-group button).
-    fireEvent.change(await screen.findByLabelText("Propietario"), {
-      target: { value: `${organization.id}:group:${id(3)}` },
+    // The context is chosen in the Facturas selector and lives in the URL.
+    fireEvent.change(await screen.findByLabelText("Ver facturas de"), {
+      target: { value: `group:${organization.id}:${id(3)}` },
     });
+    await screen.findByRole("table", { name: "Facturas" });
     await navigate("Políticas");
+    // Políticas no longer inherits the invoice context (it lives in the URL).
     await screen.findByRole("heading", { name: "s8-policy" });
-    expect(
-      screen.getByText(/Solo lectura. Las políticas grupales/),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: "Editar s8-policy" }),
-    ).toBeNull();
     await navigate("Facturas");
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Ver S8-INVOICE" }),
-    );
-    await screen.findByRole("heading", { name: "S8-INVOICE" });
+    fireEvent.click(await screen.findByRole("link", { name: "S8-INVOICE" }));
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "S8-INVOICE",
+    });
     semantics();
     await navigate("Panel principal");
-    expect(
-      screen.getByRole("region", { name: "Tu espacio de trabajo" }).textContent,
-    ).toContain("Grupo: Equipo S8");
     expect(
       requests.mock.calls.every(
         ([input, init]) =>
@@ -355,10 +364,15 @@ describe("APP12 S8 global acceptance characterization", () => {
         screen.getByRole("region", { name: "Tu espacio de trabajo" })
           .textContent,
       ).toContain("Elige una organización o grupo para empezar.");
-      for (const destination of ["Facturas", "Políticas"]) {
-        await navigate(destination);
-        expect(screen.queryByLabelText("Propietario")).toBeNull();
-      }
+      // No invoice permission, so no «Facturas» entry (a platform
+      // administrator is not a member of any organization).
+      expect(
+        within(screen.getByRole("navigation")).queryByRole("link", {
+          name: "Facturas",
+        }),
+      ).toBeNull();
+      await navigate("Políticas");
+      expect(screen.queryByLabelText("Propietario")).toBeNull();
       expect(
         requests.mock.calls.some(([input]) =>
           /invoices|business-policies/.test(String(input)),

@@ -6,8 +6,10 @@ import {
 } from "./auth-rate-limit.js";
 import { AuthError, type AuthService } from "./auth.js";
 import type { Database, DatabaseReadiness } from "./database.js";
-import type { BusinessPolicyService } from "./business-policies.js";
-import type { InvoiceService } from "./invoices.js";
+import {
+  ResourceContextSchema,
+  type BusinessPolicyService,
+} from "./business-policies.js";
 import { createAuthOperations } from "./features/auth/routes.js";
 import {
   loadProfile,
@@ -24,14 +26,14 @@ import {
   type GroupCatalogService,
   type GroupService,
 } from "./features/groups/services.js";
-import {
-  InvoiceListOptionsSchema,
-  ResourceContextSchema,
-} from "./features/invoices/schemas.js";
 import { createInvoiceOperations } from "./features/invoices/routes.js";
 import {
   createInvoiceCreateService,
+  createInvoiceDeleteService,
+  createInvoiceReadService,
   type InvoiceCreateService,
+  type InvoiceDeleteService,
+  type InvoiceReadService,
 } from "./features/invoices/services.js";
 import { createOrganizationOperations } from "./features/orgs/routes.js";
 import {
@@ -86,16 +88,6 @@ function parseResourceContext(input: unknown) {
   return parseLegacy(ResourceContextSchema, input, "Invalid resource context");
 }
 
-function parseInvoiceListQuery(input: unknown) {
-  const context = parseResourceContext(input);
-  const options = parseLegacy(
-    InvoiceListOptionsSchema,
-    input,
-    "Invalid invoice query",
-  );
-  return { context, ...options };
-}
-
 // Identifier path parameters never contain a path separator: an encoded one
 // (%2F, %5C) or a dot segment decodes into a "different route" that proxies and
 // authorization layers did not see. Free-text parameters such as the policy
@@ -141,9 +133,12 @@ export interface AppOptions {
   users?: UserService;
   adminUsers?: AdminUserService;
   groupAdministration?: GroupService;
-  /** Backs the documented POST /api/v1/invoices (the GET routes use `invoices`). */
+  /** Backs the documented POST /api/v1/invoices. */
   invoiceCreation?: InvoiceCreateService;
-  invoices?: InvoiceService;
+  /** Backs the documented GET /api/v1/invoices and /api/v1/invoices/{invoiceId}. */
+  invoiceReads?: InvoiceReadService;
+  /** Backs the documented DELETE /api/v1/invoices/{invoiceId}. */
+  invoiceDeletion?: InvoiceDeleteService;
   businessPolicies?: BusinessPolicyService;
   /**
    * Reverse-proxy hops trusted for `request.ip` (AUTH_TRUST_PROXY_HOPS).
@@ -163,7 +158,8 @@ export function createApp(
     adminUsers,
     groupAdministration,
     invoiceCreation,
-    invoices,
+    invoiceReads,
+    invoiceDeletion,
     businessPolicies,
     trustProxyHops,
   }: AppOptions = {},
@@ -202,6 +198,8 @@ export function createApp(
     ...createInvoiceOperations(
       auth,
       invoiceCreation ?? (prisma && createInvoiceCreateService(prisma)),
+      invoiceReads ?? (prisma && createInvoiceReadService(prisma)),
+      invoiceDeletion ?? (prisma && createInvoiceDeleteService(prisma)),
     ),
   ];
   app.use(createJsonBodyParser(operations));
@@ -327,19 +325,6 @@ export function createApp(
       .json({ groups: await groupService.listGroups(profile.id) });
   });
 
-  api.get("/invoices", async (request, response) => {
-    const { context, q, cursor, limit } = parseInvoiceListQuery(request.query);
-    const invoiceService = present(invoices);
-    const profile = await currentProfile(request, response);
-    response.status(200).json(
-      await invoiceService.listInvoices(profile.id, context, {
-        q,
-        cursor,
-        limit,
-      }),
-    );
-  });
-
   api.get("/business-policies", async (request, response) => {
     const context = parseResourceContext(request.query);
     const policies = present(businessPolicies);
@@ -380,21 +365,6 @@ export function createApp(
         ),
       ),
     });
-  });
-
-  api.get("/invoices/:invoiceId", async (request, response) => {
-    const { context } = parseInvoiceListQuery(request.query);
-    const invoiceService = present(invoices);
-    const profile = await currentProfile(request, response);
-    response
-      .status(200)
-      .json(
-        await invoiceService.getInvoice(
-          profile.id,
-          context,
-          request.params.invoiceId,
-        ),
-      );
   });
 
   app.use(API_PREFIX, api);

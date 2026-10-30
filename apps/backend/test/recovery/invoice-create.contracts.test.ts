@@ -128,10 +128,10 @@ describe("RP0-09/10 POST /api/v1/invoices OpenAPI contract (AC-15)", () => {
     );
   });
 
-  it("keeps GET /api/v1/invoices undocumented (owned by RP0-11)", () => {
-    expect(at(document, "paths", "/api/v1/invoices", "get")).toBeUndefined();
+  it("documents GET /api/v1/invoices and GET /api/v1/invoices/{invoiceId} (RP0-11)", () => {
+    expect(at(document, "paths", "/api/v1/invoices", "get")).toBeDefined();
     expect(
-      at(document, "paths", "/api/v1/invoices/{invoiceId}"),
-    ).toBeUndefined();
+      at(document, "paths", "/api/v1/invoices/{invoiceId}", "get"),
+    ).toBeDefined();
   });
 });

@@ -12,6 +12,7 @@ export function EmptyState({
   description,
   action,
   headingLevel = 2,
+  compact = false,
 }: {
   icon: LucideIcon;
   title: string;
@@ -19,10 +20,12 @@ export function EmptyState({
   action?: ReactNode;
   /** Level of the title; inside a section that already has an `h2`, pass 3. */
   headingLevel?: 2 | 3;
+  /** Quiet inline variant: no dashed box, small icon, no forced height. */
+  compact?: boolean;
 }) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   return (
-    <div className="empty-state">
+    <div className={compact ? "empty-state is-compact" : "empty-state"}>
       <span className="empty-state-icon" aria-hidden="true">
         <Icon focusable="false" size={32} />
       </span>

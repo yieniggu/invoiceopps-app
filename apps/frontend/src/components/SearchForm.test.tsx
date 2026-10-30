@@ -51,3 +51,30 @@ describe("SearchForm draft versus the committed term (CR-311)", () => {
     expect(box().value).toBe("");
   });
 });
+
+describe("SearchForm autoFocus (CR-405)", () => {
+  it("focuses the box on mount in the default variant", () => {
+    render(
+      <SearchForm label="Buscar" initial="" onSearch={vi.fn()} autoFocus />,
+    );
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("focuses the box on mount in the toolbar variant", () => {
+    render(
+      <SearchForm
+        label="Buscar"
+        initial=""
+        onSearch={vi.fn()}
+        variant="toolbar"
+        autoFocus
+      />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("searchbox"));
+  });
+
+  it("does not take the focus by default", () => {
+    render(ui(""));
+    expect(document.activeElement).not.toBe(box());
+  });
+});

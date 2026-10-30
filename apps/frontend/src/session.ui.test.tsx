@@ -16,6 +16,7 @@ import {
   organizationsPage,
   membership,
   mockTransport,
+  NO_PERMISSIONS,
   profileFixture,
   serializeClient,
 } from "./test/transport";
@@ -29,7 +30,15 @@ const org = {
   id: "00000000-0000-4000-9000-000000000001",
   name: "Academia Norte",
 };
-const ada = profileFixture({ memberships: [membership(org, "USER")] });
+// «Facturas» appears in the shell only for people with an invoice permission,
+// and these tests use that entry as the sign that the shell is up.
+const ada = profileFixture({
+  memberships: [
+    membership(org, "USER", {
+      permissions: { ...NO_PERMISSIONS, readInvoices: true },
+    }),
+  ],
+});
 const bruno = profileFixture({
   id: "00000000-0000-4000-8000-000000000002",
   name: "Bruno Díaz",

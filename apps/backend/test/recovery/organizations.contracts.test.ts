@@ -109,6 +109,10 @@ describe("RP0-06/RP0-08 organization OpenAPI contract", () => {
       "groupCount",
       "memberCount",
     ]);
+    // CR-366: the description states the same visibility rule as the group list.
+    expect(String(schemas.OrganizationCounts?.description)).toContain(
+      "organization-level readInvoices",
+    );
     expect(properties("BulkPermissionsUpdateRequest").userIds).toMatchObject({
       type: "array",
       minItems: 1,

@@ -219,8 +219,10 @@ describe("admin users directory (AC-13)", () => {
     );
     expect(screen.getByText("Página 1 de 3")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Anterior" }).hasAttribute("disabled"),
-    ).toBe(true);
+      screen
+        .getByRole("button", { name: "Anterior" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     await waitFor(() => expect(window.location.search).toBe("?page=2"));
@@ -232,16 +234,16 @@ describe("admin users directory (AC-13)", () => {
       expect(
         screen
           .getByRole("button", { name: "Siguiente" })
-          .hasAttribute("disabled"),
-      ).toBe(false),
+          .getAttribute("aria-disabled"),
+      ).toBeNull(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     await screen.findByText("Página 3 de 3");
     expect(
       screen
         .getByRole("button", { name: "Siguiente" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
 
     // A new search starts again at page 1, and the filter joins the URL.
     fireEvent.change(screen.getByLabelText("Buscar por nombre o RUT"), {

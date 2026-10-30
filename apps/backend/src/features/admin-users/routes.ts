@@ -4,6 +4,7 @@ import {
   forbiddenResponse,
   notFoundResponse,
   retryableConflictResponse,
+  retryableReadConflictResponse,
   unauthenticatedResponse,
   validationResponse,
 } from "../../http/standard-responses.js";
@@ -50,6 +51,7 @@ export function createAdminUserOperations(
         ),
         401: unauthenticatedResponse,
         403: forbiddenResponse("only the platform administrator lists users"),
+        503: retryableReadConflictResponse,
       },
       handler: controller.list,
     },
@@ -70,6 +72,7 @@ export function createAdminUserOperations(
         401: unauthenticatedResponse,
         403: forbiddenResponse("only the platform administrator reads users"),
         404: notFoundResponse("the user does not exist"),
+        503: retryableReadConflictResponse,
       },
       handler: controller.detail,
     },

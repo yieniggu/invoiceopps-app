@@ -66,6 +66,86 @@ describe("consolidated Prisma schema contract", () => {
     expect(followUp).not.toMatch(/CREATE (UNIQUE )?INDEX "/);
   });
 
+  it("adds the InvoiceEvent table as an idempotent follow-up and keeps the baseline untouched", async () => {
+    const baseline = await readMigration();
+    const followUp = await readFile(
+      `${migrationsPath}20261029000000_invoice_events/migration.sql`,
+      "utf8",
+    );
+    expect(baseline).not.toContain("InvoiceEvent");
+    expect(followUp).toContain('"InvoiceEventType"');
+    expect(followUp).toContain("INVOICE_DELETED");
+    expect(followUp).toMatch(/CREATE TABLE IF NOT EXISTS "InvoiceEvent"/);
+    expect(followUp).toMatch(
+      /UNIQUE INDEX IF NOT EXISTS "[^"]+" ON "InvoiceEvent"\("invoiceId", ?"type"\)/,
+    );
+    expect(followUp).toMatch(
+      /INDEX IF NOT EXISTS "[^"]+" ON "InvoiceEvent"\("organizationId", ?"createdAt", ?"id"\)/,
+    );
+    expect(followUp.match(/ON DELETE RESTRICT/g)).toHaveLength(3);
+    expect(followUp).not.toMatch(/CREATE (UNIQUE )?INDEX "/);
+    expect(followUp).not.toMatch(/\bDROP\b/i);
+  });
+
+  it("adds the invoice read indexes and the scope trigger idempotently in the same follow-up (CR-328, CR-336)", async () => {
+    const followUp = await readFile(
+      `${migrationsPath}20261029000000_invoice_events/migration.sql`,
+      "utf8",
+    );
+    expect(followUp).toMatch(/CREATE EXTENSION IF NOT EXISTS pg_trgm/);
+    expect(
+      followUp.indexOf("CREATE EXTENSION IF NOT EXISTS pg_trgm"),
+    ).toBeLessThan(followUp.indexOf("gin_trgm_ops"));
+    expect(followUp).toMatch(
+      /CREATE INDEX IF NOT EXISTS "Invoice_organizationId_active_createdAt_id_idx" ON "Invoice"\("organizationId", ?"createdAt" DESC, ?"id" DESC\) WHERE "deletedAt" IS NULL/,
+    );
+    for (const column of ["businessId", "supplierName"]) {
+      expect(followUp).toMatch(
+        new RegExp(
+          `CREATE INDEX IF NOT EXISTS "Invoice_${column}_trgm_idx" ON "Invoice" USING GIN \\("${column}" gin_trgm_ops\\)`,
+        ),
+      );
+    }
+    expect(followUp).toMatch(
+      /CREATE OR REPLACE FUNCTION prevent_invoice_scope_change\(\)/,
+    );
+    expect(followUp).toMatch(
+      /CREATE OR REPLACE TRIGGER "Invoice_scope_immutable"\s+BEFORE UPDATE ON "Invoice"/,
+    );
+    for (const column of ["organizationId", "groupId", "scopeKey"]) {
+      expect(followUp).toContain(
+        `NEW."${column}" IS DISTINCT FROM OLD."${column}"`,
+      );
+    }
+  });
+
+  it("declares the Invoice trigram indexes in the Prisma schema and documents the raw SQL ones (CR-328)", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const invoice = modelBlock(schema, "Invoice");
+    expect(invoice).toContain(
+      '@@index([businessId(ops: raw("gin_trgm_ops"))], type: Gin, map: "Invoice_businessId_trgm_idx")',
+    );
+    expect(invoice).toContain(
+      '@@index([supplierName(ops: raw("gin_trgm_ops"))], type: Gin, map: "Invoice_supplierName_trgm_idx")',
+    );
+    expect(invoice).toContain("Invoice_organizationId_active_createdAt_id_idx");
+    expect(invoice).toContain("Invoice_scope_immutable");
+  });
+
+  it("models InvoiceEvent with restricted relations and a unique (invoiceId, type)", async () => {
+    const schema = await readFile(schemaPath, "utf8");
+    const event = modelBlock(schema, "InvoiceEvent");
+    expect(normalize(enumBlock(schema, "InvoiceEventType")).trim()).toBe(
+      "INVOICE_DELETED",
+    );
+    expect(event).toMatch(/type\s+InvoiceEventType\b/);
+    expect(event).toMatch(/groupId\s+String\?/);
+    expect(event).toMatch(/createdAt\s+DateTime\s+@default\(now\(\)\)/);
+    expect(event).toContain("@@unique([invoiceId, type])");
+    expect(event).toContain("@@index([organizationId, createdAt, id])");
+    expect(event.match(/onDelete: Restrict/g)).toHaveLength(3);
+  });
+
   it("declares USER instead of STUDENT and drops legacy models", async () => {
     const schema = await readFile(schemaPath, "utf8");
     expect(normalize(enumBlock(schema, "OrganizationRole")).trim()).toBe(

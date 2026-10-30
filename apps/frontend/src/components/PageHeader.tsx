@@ -9,12 +9,15 @@ export function PageHeader({
   description,
   action,
   eyebrow,
+  titleAddon,
 }: {
   title: string;
   description?: ReactNode;
   action?: ReactNode;
   /** Small label above the title, e.g. the organization a group belongs to. */
   eyebrow?: ReactNode;
+  /** Small element beside the title, e.g. a status badge. */
+  titleAddon?: ReactNode;
 }) {
   useLayoutEffect(() => {
     document.title = `${title} · InvoiceOps`;
@@ -24,9 +27,18 @@ export function PageHeader({
     <header className="page-header">
       <div className="page-header-text">
         {eyebrow ? <p className="page-eyebrow">{eyebrow}</p> : null}
-        <h1 id="page-title" tabIndex={-1}>
-          {title}
-        </h1>
+        {titleAddon ? (
+          <div className="page-title-row">
+            <h1 id="page-title" tabIndex={-1}>
+              {title}
+            </h1>
+            {titleAddon}
+          </div>
+        ) : (
+          <h1 id="page-title" tabIndex={-1}>
+            {title}
+          </h1>
+        )}
         {description ? <p className="page-description">{description}</p> : null}
       </div>
       {action ? <div className="page-header-action">{action}</div> : null}

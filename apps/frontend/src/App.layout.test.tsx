@@ -1,48 +1,25 @@
 /// <reference types="vite" />
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { InvoiceWorkspace } from "./features/invoices/InvoiceWorkspace";
+
+import { invoice, invoicePage, norte, orgReader } from "./test/invoices";
+import { renderApp } from "./test/renderApp";
+import { jsonResponse, mockTransport } from "./test/transport";
 
 const styles = readFileSync("src/styles.css", "utf8");
 
-const context = {
-  id: "user",
-  memberships: [
-    { organization: { id: "org", name: "Academia" }, role: "USER" },
-  ],
-};
-const longInvoiceId = "INV-" + "A".repeat(143);
+const longBusinessId = "INV-" + "A".repeat(143);
 const longVendor = "Vendor" + "B".repeat(143);
-const invoice = {
-  id: longInvoiceId,
-  businessId: longInvoiceId,
-  organizationId: "00000000-0000-4000-9000-000000000001",
-  groupId: "00000000-0000-4000-a000-000000000001",
-  currency: "CLP",
-  issuedOn: "2026-10-25",
-  dueOn: "2026-11-25",
-  processingStatus: "NOT_REQUESTED",
-  createdByUserId: "00000000-0000-4000-8000-000000000001",
+const long = invoice(1, {
+  businessId: longBusinessId,
   supplierName: longVendor,
-  amountPesos: 10000,
-  businessStatus: "PENDING",
-  createdAt: "2026-10-21",
-};
-
-function json(body: unknown) {
-  return new Response(JSON.stringify(body), { status: 200 });
-}
+});
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -51,41 +28,70 @@ describe("CR005 bounded long-content layout contracts", () => {
   it("loads the actual stylesheet for the CSS contract checks", () => {
     expect(styles).toContain(".workspace-table-scroll");
   });
-  it("keeps the invoice table in a named keyboard-scrollable region with bounded column layout and complete content", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = new URL(input.toString(), "http://test.invalid").pathname;
-      if (path === "/api/v1/invoices")
-        return json({ invoices: [invoice], nextCursor: null });
-      if (path === `/api/v1/invoices/${longInvoiceId}`)
-        return json({ invoice });
-      throw new Error(`Unexpected request: ${path}`);
+  it("keeps the invoice table in a bounded, locally scrolling region with complete content", async () => {
+    // jsdom has no layout: report an overflowing region.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(900);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
+    mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: orgReader() }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      "GET /api/v1/invoices": () => invoicePage([long]),
+      [`GET /api/v1/invoices/${long.id}`]: () =>
+        jsonResponse({ invoice: long }),
     });
-    render(
-      <>
-        <style>{styles}</style>
-        <InvoiceWorkspace profile={context} groups={[]} />
-      </>,
-    );
-    await screen.findByText(longVendor);
-    const list = screen.getByRole("region", { name: "Listado de facturas" });
-    expect(list.tabIndex).toBe(0);
-    expect(getComputedStyle(list).position).toBe("relative");
-    expect(getComputedStyle(list).minWidth).toBe("0px");
-    expect(getComputedStyle(list).maxWidth).toBe("100%");
-    expect(getComputedStyle(list).overflowX).toBe("auto");
-    const table = within(list).getByRole("table");
-    expect(getComputedStyle(table).tableLayout).toBe("fixed");
-    expect(getComputedStyle(table).minWidth).toBe("768px");
+    renderApp({ route: "/invoices" });
+    render(<style>{styles}</style>);
+    const table = await screen.findByRole("table", { name: "Facturas" });
+    // CR-354: the scroll area is a named region a keyboard user can focus and
+    // scroll; it is the table's own wrapper.
+    const region = screen.getByRole("region", { name: "Tabla de Facturas" });
+    expect(region).toBe(table.parentElement);
+    // CR-383: a tab stop only while it overflows (mocked: jsdom has no layout).
+    expect(region.getAttribute("tabindex")).toBe("0");
+    region.focus();
+    expect(document.activeElement).toBe(region);
+    expect(styles).toMatch(/\.workspace-table-scroll:focus-visible\s*{/);
+    expect(region.className).toBe("workspace-table-scroll");
+    expect(getComputedStyle(region).position).toBe("relative");
+    expect(getComputedStyle(region).minWidth).toBe("0px");
+    expect(getComputedStyle(region).maxWidth).toBe("100%");
+    expect(getComputedStyle(region).overflowX).toBe("auto");
+    // The table keeps a minimum width (52rem) and sizes its columns by content, so a
+    // narrow viewport scrolls the region instead of squeezing the columns.
+    expect(getComputedStyle(table).minWidth).toBe("832px");
+    expect(getComputedStyle(table).tableLayout).toBe("auto");
+    const cell = within(table).getByRole("cell", { name: longVendor });
+    expect(cell.textContent).toBe(longVendor);
+    expect(getComputedStyle(cell).overflowWrap).toBe("anywhere");
     expect(
-      getComputedStyle(within(list).getByText(longInvoiceId)).overflowWrap,
-    ).toBe("anywhere");
+      within(table).getByRole("link", { name: longBusinessId }).textContent,
+    ).toBe(longBusinessId);
     expect(
-      within(list).getByRole("columnheader", { name: "Detalle" }),
+      within(table).getByRole("columnheader", { name: "Número" }),
     ).toBeTruthy();
-    fireEvent.click(
-      within(list).getByRole("button", { name: `Ver ${longInvoiceId}` }),
-    );
-    await screen.findByRole("heading", { name: longInvoiceId });
-    expect(screen.getByText(longVendor)).toBeTruthy();
+  });
+
+  it("keeps a very long id complete and wrapping in the detail title", async () => {
+    mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: orgReader() }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      [`GET /api/v1/invoices/${long.id}`]: () =>
+        jsonResponse({ invoice: long }),
+    });
+    renderApp({ route: `/invoices/${long.id}?organizationId=${norte.id}` });
+    render(<style>{styles}</style>);
+    const title = await screen.findByRole("heading", {
+      level: 1,
+      name: longBusinessId,
+    });
+    expect(title.textContent).toBe(longBusinessId);
+    expect(getComputedStyle(title).overflowWrap).toBe("anywhere");
   });
 });

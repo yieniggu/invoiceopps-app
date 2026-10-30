@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 import { formatRut } from "../../rut.js";
 import { pageWindow } from "../../pagination.js";
+import { runSerializable } from "../../transactions.js";
 import { userSearchCondition } from "../../user-search.js";
 import { isRecentlyActive } from "../auth/services.js";
 import {
@@ -57,37 +58,45 @@ export async function listUsers(
   query: AdminUserListQuery,
 ): Promise<AdminUserListResponse> {
   // One snapshot for the count and the page, so total matches the rows.
-  return prisma.$transaction(
-    async (transaction) => {
-      await requirePlatformAdministrator(transaction, actorUserId);
-      const where = listWhere(query);
-      const total = await transaction.user.count({ where });
-      const rows = await transaction.user.findMany({
-        where,
-        orderBy: [{ name: "asc" }, { id: "asc" }],
-        ...pageWindow(query),
-        select: {
-          id: true,
-          name: true,
-          rut: true,
-          disabledAt: true,
-          lastActiveAt: true,
+  return runSerializable(
+    () =>
+      prisma.$transaction(
+        async (transaction) => {
+          await requirePlatformAdministrator(transaction, actorUserId);
+          const where = listWhere(query);
+          const total = await transaction.user.count({ where });
+          const rows = await transaction.user.findMany({
+            where,
+            orderBy: [{ name: "asc" }, { id: "asc" }],
+            ...pageWindow(query),
+            select: {
+              id: true,
+              name: true,
+              rut: true,
+              disabledAt: true,
+              lastActiveAt: true,
+            },
+          });
+          return {
+            users: rows.map((row) => ({
+              id: row.id,
+              name: row.name,
+              rut: formatRut(row.rut),
+              disabledAt: row.disabledAt?.toISOString() ?? null,
+              recentlyActive: isRecentlyActive(
+                row.lastActiveAt,
+                row.disabledAt,
+              ),
+            })),
+            page: query.page,
+            pageSize: query.pageSize,
+            total,
+          };
         },
-      });
-      return {
-        users: rows.map((row) => ({
-          id: row.id,
-          name: row.name,
-          rut: formatRut(row.rut),
-          disabledAt: row.disabledAt?.toISOString() ?? null,
-          recentlyActive: isRecentlyActive(row.lastActiveAt, row.disabledAt),
-        })),
-        page: query.page,
-        pageSize: query.pageSize,
-        total,
-      };
-    },
-    { isolationLevel: "RepeatableRead" },
+        { isolationLevel: "RepeatableRead" },
+      ),
+    undefined,
+    "admin_user_list",
   );
 }
 
@@ -96,48 +105,55 @@ export async function getUser(
   actorUserId: string,
   targetUserId: string,
 ): Promise<AdminUserDetailResponse> {
-  return prisma.$transaction(
-    async (transaction) => {
-      await requirePlatformAdministrator(transaction, actorUserId);
-      const row = await transaction.user.findUnique({
-        where: { id: targetUserId },
-        select: {
-          ...detailUserSelect,
-          memberships: {
-            orderBy: [
-              { organization: { name: "asc" } },
-              { organizationId: "asc" },
-            ],
+  return runSerializable(
+    () =>
+      prisma.$transaction(
+        async (transaction) => {
+          await requirePlatformAdministrator(transaction, actorUserId);
+          const row = await transaction.user.findUnique({
+            where: { id: targetUserId },
             select: {
-              role: true,
-              ...PERMISSION_SELECT,
-              organization: { select: { id: true, name: true, slug: true } },
-              groupMemberships: {
-                orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
+              ...detailUserSelect,
+              memberships: {
+                orderBy: [
+                  { organization: { name: "asc" } },
+                  { organizationId: "asc" },
+                ],
                 select: {
+                  role: true,
                   ...PERMISSION_SELECT,
-                  group: { select: { id: true, name: true } },
+                  organization: {
+                    select: { id: true, name: true, slug: true },
+                  },
+                  groupMemberships: {
+                    orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
+                    select: {
+                      ...PERMISSION_SELECT,
+                      group: { select: { id: true, name: true } },
+                    },
+                  },
                 },
               },
             },
-          },
+          });
+          if (!row) throw notFound();
+          const { memberships, ...user } = row;
+          return {
+            user: toDetailUser(user),
+            memberships: memberships.map((membership) => ({
+              organization: membership.organization,
+              role: membership.role,
+              permissions: permissionsOf(membership),
+              groups: membership.groupMemberships.map((groupMembership) => ({
+                group: groupMembership.group,
+                permissions: permissionsOf(groupMembership),
+              })),
+            })),
+          };
         },
-      });
-      if (!row) throw notFound();
-      const { memberships, ...user } = row;
-      return {
-        user: toDetailUser(user),
-        memberships: memberships.map((membership) => ({
-          organization: membership.organization,
-          role: membership.role,
-          permissions: permissionsOf(membership),
-          groups: membership.groupMemberships.map((groupMembership) => ({
-            group: groupMembership.group,
-            permissions: permissionsOf(groupMembership),
-          })),
-        })),
-      };
-    },
-    { isolationLevel: "RepeatableRead" },
+        { isolationLevel: "RepeatableRead" },
+      ),
+    undefined,
+    "admin_user_get",
   );
 }

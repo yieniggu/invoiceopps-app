@@ -27,15 +27,27 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    o nombre de usuario. Nombre, RUT y roles no se editan allí.
 3. En **Organizaciones** (`/organizations`), abre una organización vigente; en
    **Grupos** (`/groups`), abre un grupo al que perteneces con «Ver grupo». La
-   organización y el propietario de trabajo se eligen solo con el selector
-   «Propietario» de **Facturas**. Si el acceso se revoca, no se elige otro
-   propietario automáticamente.
+   organización o el grupo cuyas facturas ves se eligen solo con el selector
+   «Ver facturas de» de **Facturas**. Si el acceso se revoca, la opción
+   desaparece del selector y la selección vuelve a la predeterminada.
 4. Desde **Panel principal** (`/dashboard`), abre el trabajo deseado. El panel
-   muestra contexto y accesos, no totales financieros o métricas que la API no
+   muestra tu organización y accesos, no totales financieros o métricas que la API no
    ofrece.
-5. En **Facturas** (`/invoices`), busca por ID/proveedor y carga más resultados
-   explícitamente. **Ver…** abre el **detalle de factura**, sus hechos y su
-   riesgo.
+5. **Facturas** (`/invoices`) es la bandeja de facturas. El menú la ofrece a
+   quien tiene algún permiso de facturas (no se deduce del rol ADMIN). El
+   selector «Ver facturas de» ofrece «Toda la organización» y «Sin grupo
+   asignado» (con lectura de organización) y cada grupo con lectura efectiva; con
+   varias organizaciones, cada opción nombra la suya. Sin ninguna opción de
+   lectura se explica el motivo y no se consulta la API. La organización o el
+   grupo, el estado, las fechas de emisión, el texto (número o proveedor) y la
+   página viajan en la URL (`organizationId`, `groupId` o `ungrouped=true`,
+   `businessStatus`, `issuedFrom`, `issuedTo`, `q`, `page`); cambiar la selección o un filtro vuelve
+   a la página 1. «Actualizar» recarga la lista. Cada fila enlaza al **detalle**
+   (`/invoices/:invoiceId?organizationId=…&groupId=…`), que muestra el estado de
+   la factura y el estado de procesamiento por separado, y ofrece «Eliminar
+   factura» a quien tiene el permiso de eliminación aplicable
+   (`deleteOwnInvoices` o `deleteOthersInvoices`); aún no hay crear desde la
+   interfaz.
 6. **Políticas** (`/policies`) está deshabilitada por ahora: el ítem del menú se
    muestra con la insignia «Próximamente» y la ruta responde «No disponible por
    ahora.». El código de la pantalla de políticas se conserva sin enrutar.
@@ -85,10 +97,41 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    40 rem) las tablas de personas pasan a filas apiladas con la etiqueta de cada
    columna, sin desplazamiento horizontal.
 
-   > **Aviso (RP0-11):** por ahora los permisos de facturas se guardan y se
-   > auditan, pero **todavía no restringen la lectura**: los endpoints de facturas
-   > no consultan los permisos efectivos hasta RP0-11 (y las escrituras hasta
-   > RP0-09/10/12). No los uses como control de acceso hasta entonces.
+   > **Aviso (RP0-11):** la lectura de facturas (`GET /api/v1/invoices` y
+   > `GET /api/v1/invoices/{invoiceId}`, con `organizationId` y `groupId`
+   > opcional) ya consulta los permisos efectivos `readInvoices`.
+   >
+   > **Eliminación (RP0-12):** `DELETE /api/v1/invoices/{invoiceId}?organizationId=…[&groupId=…]`
+   > elimina lógicamente la factura (`204` sin cuerpo; repetirlo también responde
+   > `204` sin duplicar el evento). Exige `deleteOwnInvoices` si el actor es el
+   > creador y `deleteOthersInvoices` en caso contrario, resueltos con los
+   > permisos de organización (alcance organización) u organización O grupo
+   > (factura de grupo); no exige `readInvoices` ni `createInvoices`. Una factura
+   > fuera del alcance del actor responde `404` y dentro del alcance sin permiso
+   > `403`. La factura, su creador y la idempotencia se conservan, el `businessId`
+   > sigue reservado y el reintento del `POST` con la misma `Idempotency-Key`
+   > responde `410 INVOICE_DELETED`. Cada eliminación registra un evento en la
+   > tabla `InvoiceEvent`, creada por la migración `20261029000000_invoice_events`
+   > (aditiva e idempotente: la base local la aplica con el `migrate` normal). Si
+   > tu base local ya aplicó una edición anterior de esta migración aún no
+   > publicada (checksum distinto), `migrate` la reportará como modificada:
+   > recrea la base una sola vez con
+   > `pnpm recovery:local:reset -- --confirm-reset=invoiceops` y vuelve a ejecutar
+   > `pnpm recovery:bootstrap`. La misma migración añade los índices de lectura de `Invoice` (índice
+   > parcial por organización `WHERE "deletedAt" IS NULL` y trigram `pg_trgm` sobre
+   > `businessId` y `supplierName`) y un trigger que impide cambiar la
+   > organización, el grupo o el `scopeKey` de una factura: el alcance de una
+   > factura es inmutable.
+   >
+   > **Lectura y grupos (opción A):** `GET /api/v1/invoices` y el detalle devuelven
+   > `InvoiceView`, la factura más `groupName` (`null` en alcance organización).
+   > Para poder nombrar y elegir cualquier grupo, quien tiene `readInvoices` a
+   > nivel de organización ve todos los grupos en
+   > `GET /organizations/{organizationId}/groups` y los cuenta en
+   > `summary.groupCount` de `GET /organizations/{organizationId}`; sin esa
+   > lectura sólo ve sus propios grupos. Una lista y su conteo usan la misma regla.
+   > Un `invoiceId` que no es un uuid responde el mismo `404` genérico que una
+   > factura inexistente.
 
    El administrador de
    plataforma crea usuarios con varias organizaciones y grupos en **Admin →
@@ -136,8 +179,9 @@ rol (ADMIN de la organización).
 - Los registros de operaciones viven solo en memoria de sesión/navegación.
   Recargar pierde esos bloqueos; una nueva sesión no reconcilia efectos anteriores
   ni aporta idempotencia. Un cierre de sesión fallido conserva la incertidumbre.
-- Facturas usa páginas de 50 por defecto, máximo API 100. Los detalles se
-  consultan bajo acción explícita.
+- Facturas usa páginas de 20 (máximo API 100), con la página en la URL. Un 403
+  retira los datos y refresca el perfil; un 404 del detalle muestra «Factura no
+  encontrada».
 
 ### Tema claro y oscuro
 
@@ -295,8 +339,8 @@ The runner creates a new isolated container with a unique role and password, a
 loopback-only ephemeral port, and bounded memory and temporary storage. It does
 not use `.env`, persistent volumes, or the Compose `db-test` service. It applies
 the migrations (`20261026000000_initial_recovery_p0` must be the first one, then
-`20261028000000_user_status_activity`), verifies the `_prisma_migrations` ledger name, checksum and
-status against the files on disk, and runs the 26 organization-persistence
+`20261028000000_user_status_activity`, then `20261029000000_invoice_events`), verifies the `_prisma_migrations` ledger name, checksum and
+status against the files on disk, and runs the 24 organization-persistence
 PostgreSQL cases.
 
 ## Alcance actual
@@ -567,4 +611,4 @@ Las policies son owner-scoped por organización y contienen `version` y
 `manualReviewThreshold` entre 0 y 1. Las individuales sólo las administra su
 propietario; las grupales sólo un `ADMIN` de la organización. Se consultan,
 crean y actualizan mediante `GET`, `POST` y `PATCH /api/v1/business-policies` en el
-mismo contexto `organizationId`, `ownerType` y `ownerId` de las facturas.
+contexto `organizationId`, `ownerType` y `ownerId` (las facturas ya no lo usan).

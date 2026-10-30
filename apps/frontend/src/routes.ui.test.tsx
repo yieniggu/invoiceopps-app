@@ -88,7 +88,7 @@ function appRoutes(profile: () => Response | Promise<Response>) {
     "GET /api/v1/organizations/00000000-0000-4000-9000-000000000002/groups":
       () => jsonResponse({ groups: [] }),
     "GET /api/v1/invoices": () =>
-      jsonResponse({ invoices: [], nextCursor: null }),
+      jsonResponse({ items: [], page: 1, pageSize: 20, total: 0 }),
     "GET /api/v1/business-policies": () => jsonResponse({ policies: [] }),
   };
 }

@@ -7,6 +7,7 @@ export type LogLevel = "info" | "warn" | "error";
 
 export interface LogFields {
   code?: string;
+  status?: number;
   method?: string;
   route?: string;
   errorName?: string;
@@ -21,7 +22,7 @@ export interface LogFields {
   actorUserId?: string;
   targetUserId?: string;
   invoiceId?: string;
-  /** Transaction conflicts: fixed operation label, attempt and outcome. */
+  /** Transaction conflicts: fixed operation label, attempt and outcome (plus `reason`). */
   operation?: string;
   attempt?: number;
   outcome?: string;

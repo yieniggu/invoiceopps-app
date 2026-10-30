@@ -1,4 +1,5 @@
 import { expect, test } from "../support/test.ts";
+import { selectGroupScope } from "../support/invoices.ts";
 import {
   login,
   organizations,
@@ -148,13 +149,12 @@ test.describe("screen tour (seeded data)", () => {
     await app.openAs(login(people.carla), "/invoices");
     await expect(heading(page, "Facturas")).toBeVisible();
     // The seeded group's list, not whichever state the page happens to be in.
-    await page
-      .getByLabel("Propietario")
-      .selectOption({ label: "Acme Logística · Grupo: Contabilidad" });
+    await selectGroupScope(page, {
+      organization: organizations.acme.name,
+      group: "Contabilidad",
+    });
     for (const businessId of ["FAC-1001", "FAC-1002", "FAC-1003"]) {
-      await expect(
-        page.getByRole("button", { name: `Ver ${businessId}` }),
-      ).toBeVisible();
+      await expect(page.getByRole("link", { name: businessId })).toBeVisible();
     }
     await app.shot("invoices-list-tour");
   });

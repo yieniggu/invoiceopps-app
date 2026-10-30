@@ -7,7 +7,6 @@ import {
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
 import { createGroupCatalogService } from "./features/groups/services.js";
-import { createInvoiceService } from "./invoices.js";
 import { trustProxyHopsFromEnv } from "./http/trust-proxy.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -39,7 +38,6 @@ const app = createApp(database, createAuthService(database.prisma), {
   authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
   trustProxyHops,
   groups: createGroupCatalogService(database.prisma),
-  invoices: createInvoiceService(database.prisma),
   businessPolicies: createBusinessPolicyService(database.prisma),
 });
 

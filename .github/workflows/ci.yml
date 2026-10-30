@@ -29,3 +29,37 @@ jobs:
       - run: pnpm format:check
       - run: docker compose config
       - run: docker compose build
+
+  # Fails when prisma/schema.prisma and the migrations disagree on the objects
+  # Prisma models (tables, columns, enums, foreign keys and declared indexes,
+  # including the trigram GIN ones). The partial index and the scope trigger are
+  # not modelled by Prisma; test/recovery/schema.postgres.test.ts guards them.
+  schema-drift:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: drift
+          POSTGRES_PASSWORD: drift
+          POSTGRES_DB: drift_shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U drift -d drift_shadow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHADOW_DATABASE_URL: postgresql://drift:drift@127.0.0.1:5432/drift_shadow?schema=public
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.17.0
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @invoiceops/backend db:drift

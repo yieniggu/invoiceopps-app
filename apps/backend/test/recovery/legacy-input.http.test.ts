@@ -10,7 +10,6 @@ import type {
 } from "../../src/features/groups/services.js";
 import type { OrganizationService } from "../../src/features/orgs/services.js";
 import type { UserService } from "../../src/features/users/services.js";
-import type { InvoiceService } from "../../src/invoices.js";
 
 // Characterization of the input rules: exactly which bodies and queries each
 // route accepts, what the service receives, and that everything else is a 400
@@ -59,10 +58,6 @@ function harness() {
     createPolicy: vi.fn(async () => ({ version: "v1" })),
     updatePolicy: vi.fn(async () => ({ version: "v1" })),
   };
-  const invoices = {
-    listInvoices: vi.fn(async () => ({ invoices: [], nextCursor: null })),
-    getInvoice: vi.fn(async () => ({ invoice: {} })),
-  };
   const auth = {
     login: vi.fn(),
     logout: vi.fn(),
@@ -75,9 +70,8 @@ function harness() {
     organizations: platform as unknown as OrganizationService,
     users: users as unknown as UserService,
     businessPolicies: policies as unknown as BusinessPolicyService,
-    invoices: invoices as unknown as InvoiceService,
   });
-  return { app, groups, platform, users, policies, invoices };
+  return { app, groups, platform, users, policies };
 }
 
 const long = (length: number) => "x".repeat(length);
@@ -739,9 +733,8 @@ describe("legacy input: business policies", () => {
   });
 });
 
-describe("legacy input: resource context and invoice queries", () => {
+describe("legacy input: resource context query of the policy routes", () => {
   const base = "organizationId=o1&ownerType=group&ownerId=g1";
-  const context = { organizationId: "o1", ownerType: "group", ownerId: "g1" };
 
   const contexts: Array<[string, string, boolean]> = [
     ["valid group", base, true],
@@ -780,102 +773,12 @@ describe("legacy input: resource context and invoice queries", () => {
     }
   });
 
-  const listCases: Array<[string, string, "reject" | unknown]> = [
-    ["defaults", base, { q: "", cursor: undefined, limit: 50 }],
-    [
-      "trims q",
-      `${base}&q=%20abc%20`,
-      { q: "abc", cursor: undefined, limit: 50 },
-    ],
-    [
-      "q of 120",
-      `${base}&q=${long(120)}`,
-      { q: long(120), cursor: undefined, limit: 50 },
-    ],
-    ["q of 121", `${base}&q=${long(121)}`, "reject"],
-    [
-      "q of 120 plus spaces",
-      `${base}&q=${long(120)}%20%20`,
-      {
-        q: long(120),
-        cursor: undefined,
-        limit: 50,
-      },
-    ],
-    ["cursor", `${base}&cursor=abc`, { q: "", cursor: "abc", limit: 50 }],
-    ["empty cursor", `${base}&cursor=`, "reject"],
-    ["limit 1", `${base}&limit=1`, { q: "", cursor: undefined, limit: 1 }],
-    [
-      "limit 100",
-      `${base}&limit=100`,
-      { q: "", cursor: undefined, limit: 100 },
-    ],
-    ["limit 0", `${base}&limit=0`, "reject"],
-    ["limit 101", `${base}&limit=101`, "reject"],
-    ["limit 1.5", `${base}&limit=1.5`, "reject"],
-    ["limit abc", `${base}&limit=abc`, "reject"],
-    ["empty limit", `${base}&limit=`, "reject"],
-    [
-      "limit with spaces",
-      `${base}&limit=%205%20`,
-      { q: "", cursor: undefined, limit: 5 },
-    ],
-    [
-      "limit exponent",
-      `${base}&limit=1e1`,
-      { q: "", cursor: undefined, limit: 10 },
-    ],
-    [
-      "limit hex",
-      `${base}&limit=0x10`,
-      { q: "", cursor: undefined, limit: 16 },
-    ],
-    ["repeated limit", `${base}&limit=1&limit=2`, "reject"],
-    ["repeated q", `${base}&q=a&q=b`, "reject"],
-  ];
-
-  it.each(listCases)("invoice list: %s", async (_label, query, expected) => {
-    const { app, invoices } = harness();
-    const response = await request(app)
-      .get(`/api/v1/invoices?${query}`)
-      .set("Cookie", COOKIE);
-
-    if (expected === "reject") {
-      expectRejected(response);
-      expect(invoices.listInvoices).not.toHaveBeenCalled();
-    } else {
-      expect(response.status).toBe(200);
-      expect(invoices.listInvoices).toHaveBeenCalledWith(
-        ACTOR,
-        context,
-        expected,
-      );
-    }
-  });
-
-  it("invoice detail validates with the list rules (limit included)", async () => {
-    const { app, invoices } = harness();
-
-    const accepted = await request(app)
-      .get(`/api/v1/invoices/i1?${base}`)
-      .set("Cookie", COOKIE);
-    expect(accepted.status).toBe(200);
-    expect(invoices.getInvoice).toHaveBeenCalledWith(ACTOR, context, "i1");
-
-    const rejected = await request(app)
-      .get(`/api/v1/invoices/i1?${base}&limit=500`)
-      .set("Cookie", COOKIE);
-    expectRejected(rejected);
-  });
-
-  it("validates queries before the session on invoice and policy reads", async () => {
+  it("validates the policy query before the session", async () => {
     const { app } = harness();
 
-    const invoices = await request(app).get("/api/v1/invoices");
     const policies = await request(app).get("/api/v1/business-policies");
-    const valid = await request(app).get(`/api/v1/invoices?${base}`);
+    const valid = await request(app).get(`/api/v1/business-policies?${base}`);
 
-    expect(invoices.status).toBe(400);
     expect(policies.status).toBe(400);
     expect(valid.status).toBe(401);
   });

@@ -9,6 +9,7 @@ import {
 import { LinkButton } from "../../components/LinkButton";
 import { PageHeader } from "../../components/PageHeader";
 import type { Profile } from "../profile/ProfileScreen";
+import { hasInvoiceAccess } from "../invoices/invoiceScopes";
 import { paths } from "../navigation/paths";
 import type { ContextState } from "../workspace/useWorkspaceGroups";
 import { useSharedWorkspace } from "../workspace/WorkspaceContext";
@@ -62,18 +63,19 @@ export function DashboardScreen({
         description={`Bienvenido, ${profile.name}. Elige por dónde empezar.`}
       />
       <div className="dash-grid">
-        <DashboardCard
-          id="dashboard-invoices-title"
-          icon={ReceiptText}
-          title="Facturas"
-          featured
-          actions={<LinkButton to={paths.invoices}>Ir a facturas</LinkButton>}
-        >
-          <p>
-            Revisa las facturas de tu organización o grupo activo y abre su
-            detalle.
-          </p>
-        </DashboardCard>
+        {hasInvoiceAccess(profile) ? (
+          <DashboardCard
+            id="dashboard-invoices-title"
+            icon={ReceiptText}
+            title="Facturas"
+            featured
+            actions={<LinkButton to={paths.invoices}>Ir a facturas</LinkButton>}
+          >
+            <p>
+              Revisa las facturas a las que tienes acceso y abre su detalle.
+            </p>
+          </DashboardCard>
+        ) : null}
         <DashboardCard
           id="dashboard-context-title"
           icon={Briefcase}

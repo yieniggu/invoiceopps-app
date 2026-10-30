@@ -1,5 +1,5 @@
 import { namedId } from "./test/ids";
-import { ACCESS_NONE } from "./test/transport";
+import { NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -43,10 +43,22 @@ const profile = {
   email: "ada@example.test",
   username: "ada",
   isPlatformAdministrator: false,
-  memberships: organizations.map((organization) => ({
+  // «Facturas» is offered, and its contexts built, from the invoice flags of
+  // the profile: the whole of each organization and the group of each.
+  memberships: organizations.map((organization, index) => ({
     organization,
     role: "USER",
-    ...ACCESS_NONE,
+    permissions: { ...NO_PERMISSIONS, readInvoices: true },
+    groups: [
+      {
+        group: {
+          id: namedId("group", index === 0 ? "A" : "B"),
+          name: `Grupo ${index === 0 ? "A" : "B"}`,
+        },
+        permissions: NO_PERMISSIONS,
+        effective: { ...NO_PERMISSIONS, readInvoices: true },
+      },
+    ],
   })),
 };
 const groups = organizations.map((organization, index) => ({
@@ -56,6 +68,8 @@ const groups = organizations.map((organization, index) => ({
   organization: { id: organization.id, name: organization.name },
   members: [],
 }));
+const GROUP_B = namedId("group", "B");
+const [ORG_A, ORG_B] = organizations.map(({ id }) => id);
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -64,26 +78,36 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function listResponse(ownerId: string) {
+/** Which scope of the inbox a request asked for: a group, ungrouped or the whole organization. */
+function scopeOf(url: URL) {
+  return (
+    url.searchParams.get("groupId") ??
+    `${url.searchParams.get("ungrouped") === "true" ? "ungrouped" : "org"}:${url.searchParams.get("organizationId")}`
+  );
+}
+
+function listResponse(scope: string) {
   return json({
-    invoices: [
+    items: [
       {
-        id: `invoice-${ownerId}`,
-        businessId: `invoice-${ownerId}`,
+        id: "00000000-0000-4000-8000-0000000000aa",
+        businessId: `FAC-${scope}`,
         organizationId: "00000000-0000-4000-9000-000000000001",
-        groupId: "00000000-0000-4000-a000-000000000001",
+        groupId: null,
         currency: "CLP",
         issuedOn: "2026-10-25",
         dueOn: "2026-11-25",
         processingStatus: "NOT_REQUESTED",
         createdByUserId: "00000000-0000-4000-8000-000000000001",
         createdAt: "2026-10-21T00:00:00Z",
-        supplierName: `Proveedor ${ownerId}`,
+        supplierName: `Proveedor ${scope}`,
         amountPesos: 10000,
         businessStatus: "PENDING",
       },
     ],
-    nextCursor: null,
+    page: 1,
+    pageSize: 20,
+    total: 1,
   });
 }
 
@@ -101,9 +125,7 @@ function mockHttp(anonymous = false) {
     .mockImplementation(async () => json({ profile }));
   const lists = vi
     .fn<(url: URL) => Promise<Response>>()
-    .mockImplementation(async (url) =>
-      listResponse(url.searchParams.get("ownerId") ?? ""),
-    );
+    .mockImplementation(async (url) => listResponse(scopeOf(url)));
   const unexpected: string[] = [];
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
@@ -155,19 +177,11 @@ function navigate(navigation: HTMLElement, name: string) {
 
 function selectGroupB() {
   const option = screen.getByRole<HTMLOptionElement>("option", {
-    name: "Academia B · Grupo: Grupo B",
+    name: "Grupo B",
   });
-  fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
+  fireEvent.change(screen.getByLabelText("Ver facturas de"), {
     target: { value: option.value },
   });
-}
-
-function expectGroupBVisible() {
-  expect(
-    screen.getAllByText("Academia B · Grupo: Grupo B", {
-      selector: ":not(option)",
-    }).length,
-  ).toBeGreaterThan(0);
 }
 
 afterEach(() => {
@@ -222,7 +236,7 @@ describe("APP12 S1 navigation and shared context", () => {
     navigate(navigation, "Mi perfil");
     expect(api.lists).not.toHaveBeenCalled();
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
+    await screen.findByText(`Proveedor org:${ORG_A}`);
     expect(
       api.lists.mock.calls.every(
         ([url]) => url.pathname === "/api/v1/invoices",
@@ -243,20 +257,14 @@ describe("APP12 S1 navigation and shared context", () => {
     render(<App />);
     const navigation = await screen.findByRole("navigation");
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
+    await screen.findByText(`Proveedor org:${ORG_A}`);
     api.lists.mockImplementation(async (url) =>
-      url.searchParams.get("ownerId") === "00000000-0000-4000-a000-ffafcb640f47"
-        ? pending.promise
-        : listResponse(url.searchParams.get("ownerId") ?? ""),
+      scopeOf(url) === GROUP_B ? pending.promise : listResponse(scopeOf(url)),
     );
     selectGroupB();
     await waitFor(() =>
       expect(
-        api.lists.mock.calls.some(
-          ([url]) =>
-            url.searchParams.get("ownerId") ===
-            "00000000-0000-4000-a000-ffafcb640f47",
-        ),
+        api.lists.mock.calls.some(([url]) => scopeOf(url) === GROUP_B),
       ).toBe(true),
     );
     // Contact PATCH no longer publishes capabilities (CR009). Keep the original
@@ -273,191 +281,139 @@ describe("APP12 S1 navigation and shared context", () => {
     navigate(navigation, "Panel principal");
     await waitFor(() =>
       expect(
-        screen.getByRole("region", { name: "Tu espacio de trabajo" })
-          .textContent,
-      ).toContain("Elige una organización o grupo para empezar."),
+        api.fetchMock.mock.calls.filter(
+          ([path]) => String(path) === "/api/v1/auth/profile",
+        ).length,
+      ).toBeGreaterThan(1),
     );
+    await screen.findByRole("heading", { level: 1, name: "Panel principal" });
     const boundary = api.lists.mock.calls.length;
     navigate(navigation, "Facturas");
     expect(screen.queryByRole("option", { name: /Academia B/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Grupo B/ })).toBeNull();
+    // Back on the default context of the organization that is left.
     expect(
-      screen.getByRole<HTMLSelectElement>("combobox", { name: "Propietario" })
-        .value,
-    ).toBe("");
-    expect(api.lists.mock.calls.slice(boundary)).toEqual([]);
+      screen.getByLabelText<HTMLSelectElement>("Ver facturas de").value,
+    ).toBe(`organization:${ORG_A}`);
+    await screen.findByText(`Proveedor org:${ORG_A}`);
     expect(
-      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
-    ).toBeNull();
-    // Even after returning to invoices, revoked groups from the old /groups response are excluded.
+      api.lists.mock.calls
+        .slice(boundary)
+        .every(([url]) => url.searchParams.get("organizationId") === ORG_A),
+    ).toBe(true);
+    expect(screen.queryByText(`Proveedor ${GROUP_B}`)).toBeNull();
+    // Even after returning to invoices, revoked groups are excluded.
     navigate(navigation, "Panel principal");
     navigate(navigation, "Facturas");
     expect(screen.queryByRole("option", { name: /Grupo B/ })).toBeNull();
-    expect(
-      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
-    ).toBeNull();
-    await act(async () =>
-      pending.resolve(listResponse("00000000-0000-4000-a000-ffafcb640f47")),
-    );
-    expect(
-      screen.queryByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47"),
-    ).toBeNull();
+    await act(async () => pending.resolve(listResponse(GROUP_B)));
+    expect(screen.queryByText(`Proveedor ${GROUP_B}`)).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
-  it("keeps the selected organization and group visible and current across invoices and policies", async () => {
+  it("keeps the chosen invoice context in the URL only: Políticas and the menu do not carry it", async () => {
     const api = mockHttp();
     render(<App />);
 
     const navigation = await screen.findByRole("navigation");
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
+    await screen.findByText(`Proveedor org:${ORG_A}`);
     selectGroupB();
-    await screen.findByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47");
-    expectGroupBVisible();
+    await screen.findByText(`Proveedor ${GROUP_B}`);
+    expect(
+      screen.getByRole<HTMLOptionElement>("option", {
+        name: "Grupo B",
+      }).selected,
+    ).toBe(true);
     expect(
       api.lists.mock.calls.some(
         ([url]) =>
           url.pathname === "/api/v1/invoices" &&
-          url.searchParams.get("organizationId") ===
-            "00000000-0000-4000-9000-fa19c6501c7e" &&
-          url.searchParams.get("ownerType") === "group" &&
-          url.searchParams.get("ownerId") ===
-            "00000000-0000-4000-a000-ffafcb640f47",
+          url.searchParams.get("organizationId") === ORG_B &&
+          url.searchParams.get("groupId") === GROUP_B &&
+          !url.searchParams.has("ownerType") &&
+          !url.searchParams.has("ownerId"),
       ),
     ).toBe(true);
+    expect(window.location.search).toContain(`groupId=${GROUP_B}`);
 
     await openPolicies();
     await screen.findByRole("heading", { name: "Políticas", level: 1 });
-    expectGroupBVisible();
 
     navigate(navigation, "Facturas");
-    await screen.findByText("Proveedor 00000000-0000-4000-a000-ffafcb640f47");
-    expectGroupBVisible();
-    expect(
-      screen.queryByText("Proveedor 00000000-0000-4000-8000-000000000001"),
-    ).toBeNull();
+    await screen.findByText(`Proveedor org:${ORG_A}`);
+    expect(screen.queryByText(`Proveedor ${GROUP_B}`)).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
-  it.each([
-    {
-      path: "/api/v1/invoices",
-      current: "Proveedor 00000000-0000-4000-a000-ffafcb640f47",
-      stale: "Proveedor 00000000-0000-4000-8000-000000000001",
-    },
-  ])(
-    "control: rejects a delayed $path context A response after selecting context B",
-    async ({ path, current, stale }) => {
-      const api = mockHttp();
-      const pending = deferredResponse();
-      api.lists.mockImplementation(async (url) =>
-        url.pathname === path &&
-        url.searchParams.get("ownerId") ===
-          "00000000-0000-4000-8000-000000000001"
-          ? pending.promise
-          : listResponse(url.searchParams.get("ownerId") ?? ""),
-      );
-      try {
-        render(<App />);
-        navigate(await screen.findByRole("navigation"), "Facturas");
-        await screen.findByRole("combobox", { name: "Propietario" });
-        await waitFor(() =>
-          expect(
-            api.lists.mock.calls.some(([url]) => url.pathname === path),
-          ).toBe(true),
-        );
-        const region = screen
-          .getAllByRole("region", {
-            name: "Facturas",
-          })
-          .find((candidate) =>
-            within(candidate).queryByRole("combobox", { name: "Propietario" }),
-          );
-        if (!region)
-          throw new Error(
-            "Owner context selector was not rendered in the feature region",
-          );
-        const option = within(region).getByRole<HTMLOptionElement>("option", {
-          name: "Academia B · Grupo: Grupo B",
-        });
-        const selector = within(region).getByRole("combobox", {
-          name: "Propietario",
-        });
-        fireEvent.change(selector, { target: { value: option.value } });
-        await screen.findByText(current);
-        await act(async () =>
-          pending.resolve(listResponse("00000000-0000-4000-8000-000000000001")),
-        );
-
-        expect(screen.getByText(current)).toBeTruthy();
-        expect(screen.queryByText(stale)).toBeNull();
-        expect(
-          screen.getByRole<HTMLOptionElement>("option", {
-            name: "Academia B · Grupo: Grupo B",
-          }).selected,
-        ).toBe(true);
-        expect(
-          within(
-            screen.getByRole("region", {
-              name: "Facturas",
-            }),
-          ).getByText("Academia B · Grupo: Grupo B", {
-            selector: ":not(option)",
-          }),
-        ).toBeTruthy();
-        expect(api.unexpected).toEqual([]);
-      } finally {
-        await act(async () =>
-          pending.resolve(listResponse("00000000-0000-4000-8000-000000000001")),
-        );
-      }
-    },
-  );
-
-  it.each(["/api/v1/invoices"])(
-    "ignores a delayed %s response body after the shared owner changes",
-    async (path) => {
-      const api = mockHttp();
-      let completeBody!: (value: unknown) => void;
-      const response = json({});
-      const body = vi.spyOn(response, "json").mockReturnValue(
-        new Promise<unknown>((resolve) => {
-          completeBody = resolve;
-        }),
-      );
-      api.lists.mockImplementation(async (url) =>
-        url.pathname === path &&
-        url.searchParams.get("ownerId") ===
-          "00000000-0000-4000-8000-000000000001"
-          ? response
-          : listResponse(url.searchParams.get("ownerId") ?? ""),
-      );
+  it("control: rejects a delayed context A response after selecting context B", async () => {
+    const api = mockHttp();
+    const pending = deferredResponse();
+    api.lists.mockImplementation(async (url) =>
+      scopeOf(url) === `org:${ORG_A}`
+        ? pending.promise
+        : listResponse(scopeOf(url)),
+    );
+    try {
       render(<App />);
       navigate(await screen.findByRole("navigation"), "Facturas");
-      await waitFor(() => expect(body).toHaveBeenCalledTimes(1));
-      selectGroupB();
-      const current = "Proveedor 00000000-0000-4000-a000-ffafcb640f47";
-      await screen.findByText(current);
-      await act(async () =>
-        completeBody(
-          await listResponse("00000000-0000-4000-8000-000000000001").json(),
-        ),
+      await screen.findByLabelText("Ver facturas de");
+      await waitFor(() =>
+        expect(
+          api.lists.mock.calls.some(([url]) => scopeOf(url) === `org:${ORG_A}`),
+        ).toBe(true),
       );
-      expect(screen.getByText(current)).toBeTruthy();
-      expect(
-        screen.queryByText("Proveedor 00000000-0000-4000-8000-000000000001"),
-      ).toBeNull();
-      expect(api.unexpected).toEqual([]);
-    },
-  );
+      selectGroupB();
+      const current = `Proveedor ${GROUP_B}`;
+      await screen.findByText(current);
+      await act(async () => pending.resolve(listResponse(`org:${ORG_A}`)));
 
-  it("control: loads the authenticated profile and invoices using the existing organization and owner contract", async () => {
+      expect(screen.getByText(current)).toBeTruthy();
+      expect(screen.queryByText(`Proveedor org:${ORG_A}`)).toBeNull();
+      expect(
+        screen.getByRole<HTMLOptionElement>("option", {
+          name: "Grupo B",
+        }).selected,
+      ).toBe(true);
+      expect(api.unexpected).toEqual([]);
+    } finally {
+      await act(async () => pending.resolve(listResponse(`org:${ORG_A}`)));
+    }
+  });
+
+  it("ignores a delayed response body after the context changes", async () => {
+    const api = mockHttp();
+    let completeBody!: (value: unknown) => void;
+    const response = json({});
+    const body = vi.spyOn(response, "json").mockReturnValue(
+      new Promise<unknown>((resolve) => {
+        completeBody = resolve;
+      }),
+    );
+    api.lists.mockImplementation(async (url) =>
+      scopeOf(url) === `org:${ORG_A}` ? response : listResponse(scopeOf(url)),
+    );
+    render(<App />);
+    navigate(await screen.findByRole("navigation"), "Facturas");
+    await waitFor(() => expect(body).toHaveBeenCalledTimes(1));
+    selectGroupB();
+    const current = `Proveedor ${GROUP_B}`;
+    await screen.findByText(current);
+    await act(async () =>
+      completeBody(await listResponse(`org:${ORG_A}`).json()),
+    );
+    expect(screen.getByText(current)).toBeTruthy();
+    expect(screen.queryByText(`Proveedor org:${ORG_A}`)).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it("control: loads the authenticated profile and invoices of the default organization context", async () => {
     const api = mockHttp();
     render(<App />);
     navigate(await screen.findByRole("navigation"), "Mi perfil");
     expect(screen.getByText(profile.name)).toBeTruthy();
     navigate(screen.getByRole("navigation"), "Facturas");
-    await screen.findByText("Proveedor 00000000-0000-4000-8000-000000000001");
+    await screen.findByText(`Proveedor org:${ORG_A}`);
     expect(api.fetchMock).toHaveBeenCalledWith("/api/v1/auth/profile", {
       credentials: "same-origin",
     });
@@ -468,10 +424,10 @@ describe("APP12 S1 navigation and shared context", () => {
       api.lists.mock.calls.some(
         ([url]) =>
           url.pathname === "/api/v1/invoices" &&
-          url.searchParams.get("organizationId") ===
-            "00000000-0000-4000-9000-f9e9c6048aeb" &&
-          url.searchParams.get("ownerType") === "user" &&
-          url.searchParams.get("ownerId") === profile.id,
+          url.searchParams.get("organizationId") === ORG_A &&
+          !url.searchParams.has("groupId") &&
+          !url.searchParams.has("ownerType") &&
+          !url.searchParams.has("ownerId"),
       ),
     ).toBe(true);
     expect(api.unexpected).toEqual([]);

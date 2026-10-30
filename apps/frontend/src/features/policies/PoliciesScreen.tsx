@@ -28,7 +28,7 @@ type ListState =
 function httpMessage(status?: number) {
   if (status === 403) return "No tienes permiso para esta operación.";
   if (status === 404)
-    return "El contexto o la política no está disponible para tu sesión.";
+    return "El espacio de trabajo o la política no está disponible para tu sesión.";
   if (status === 409)
     return "La versión ya existe o cambió. Consulta la lista antes de continuar; no se sobrescribió automáticamente.";
   if (status === 400)
@@ -48,8 +48,8 @@ export function PoliciesScreen({ profile }: { profile: Profile }) {
     <section className="workspace-content" aria-labelledby="policies-title">
       <h2 id="policies-title">Políticas de negocio versionadas</h2>
       <p>
-        Configura el umbral de revisión manual de tu contexto. Esto no evalúa ni
-        modifica facturas.
+        Configura el umbral de revisión manual de tu espacio de trabajo. Esto no
+        evalúa ni modifica facturas.
       </p>
       {workspace.contexts.length ? (
         <label>
@@ -80,7 +80,9 @@ export function PoliciesScreen({ profile }: { profile: Profile }) {
           context={context}
         />
       ) : (
-        <p>No tienes un contexto autorizado para consultar políticas.</p>
+        <p>
+          No tienes un espacio de trabajo autorizado para consultar políticas.
+        </p>
       )}
     </section>
   );
@@ -310,8 +312,8 @@ function PolicyContext({
         <section aria-label="Operación de política">
           <h3>
             {pending
-              ? "Escritura pendiente en este contexto"
-              : "Escritura por verificar en este contexto"}
+              ? "Escritura pendiente en este espacio de trabajo"
+              : "Escritura por verificar en este espacio de trabajo"}
           </h3>
           <p>
             Intención:{" "}
@@ -320,9 +322,9 @@ function PolicyContext({
             {thresholdLabel(operation.intent.policy.manualReviewThreshold)}
           </p>
           <p>
-            El contexto permanece bloqueado para nuevas escrituras hasta recibir
-            el resultado o verificar una lectura posterior que coincida con la
-            intención.
+            El espacio de trabajo permanece bloqueado para nuevas escrituras
+            hasta recibir el resultado o verificar una lectura posterior que
+            coincida con la intención.
           </p>
           {unknown && operation.checked ? (
             <p>

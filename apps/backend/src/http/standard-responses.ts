@@ -39,3 +39,13 @@ export const retryableConflictResponse: OperationResponse = {
     "Retry-After": { description: "Seconds to wait before retrying" },
   },
 };
+
+/** Read variant of the 503: a snapshot read that timed out or lost its race. */
+export const retryableReadConflictResponse: OperationResponse = {
+  description:
+    "RETRYABLE_CONFLICT: the read timed out or conflicted with concurrent writes; nothing was changed, repeat the request after Retry-After seconds",
+  schema: ERROR,
+  headers: {
+    "Retry-After": { description: "Seconds to wait before retrying" },
+  },
+};

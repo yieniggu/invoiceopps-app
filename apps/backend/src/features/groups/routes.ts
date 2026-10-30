@@ -4,6 +4,7 @@ import {
   forbiddenResponse,
   notFoundResponse,
   retryableConflictResponse,
+  retryableReadConflictResponse,
   unauthenticatedResponse,
   validationResponse,
 } from "../../http/standard-responses.js";
@@ -47,7 +48,7 @@ export function createGroupOperations(
       method: "get",
       path: "/organizations/{organizationId}/groups",
       summary:
-        "List groups (an ADMIN and the platform administrator see all, a USER only own groups)",
+        "List groups (an ADMIN, the platform administrator and a USER whose organization-level readInvoices is effective see all; any other USER only own groups)",
       tag: TAG,
       secured: true,
       params: OrganizationParamsSchema,
@@ -59,6 +60,7 @@ export function createGroupOperations(
         401: unauthenticatedResponse,
         403: forbiddenResponse("a temporary password is still pending"),
         404: notFoundResponse(NOT_A_MEMBER),
+        503: retryableReadConflictResponse,
       },
       handler: controller.list,
     },
@@ -102,6 +104,7 @@ export function createGroupOperations(
         401: unauthenticatedResponse,
         403: forbiddenResponse(ADMIN_ONLY),
         404: notFoundResponse(NO_GROUP),
+        503: retryableReadConflictResponse,
       },
       handler: controller.listMemberships,
     },

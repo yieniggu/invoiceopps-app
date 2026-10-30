@@ -97,8 +97,14 @@ export function AppShell({
   onLogout,
   isLoggingOut,
   isPlatformAdministrator = false,
+  showInvoices = true,
 }: {
   children: ReactNode;
+  /**
+   * «Facturas» is offered to people with any invoice permission; being an
+   * administrator of an organization is not one.
+   */
+  showInvoices?: boolean;
   /** Shows the Admin entry above the profile and logout items. */
   isPlatformAdministrator?: boolean;
   onLogout: () => void;
@@ -282,7 +288,11 @@ export function AppShell({
             </button>
           </div>
           <nav id="app-sidebar-nav" aria-label="Navegación principal">
-            <ul className="nav-group">{primaryDestinations.map(renderItem)}</ul>
+            <ul className="nav-group">
+              {primaryDestinations
+                .filter(({ to }) => showInvoices || to !== paths.invoices)
+                .map(renderItem)}
+            </ul>
             <ul className="nav-group nav-group-bottom">
               {isPlatformAdministrator ? (
                 <>

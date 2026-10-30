@@ -19,7 +19,6 @@ import {
 } from "../src/features/groups/services.js";
 import { createOrganizationService } from "../src/features/orgs/services.js";
 import { createUserService } from "../src/features/users/services.js";
-import { createInvoiceService } from "../src/invoices.js";
 import { createBusinessPolicyService } from "../src/business-policies.js";
 import { parsePlatformAdministratorCommand } from "../src/platform-administrator-command.js";
 import { createPlatformAdministratorService } from "../src/platform-administrator.js";
@@ -863,7 +862,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
         group.id,
         FIRST_PAGE,
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ memberships: [], ...FIRST_PAGE, total: 0 });
     await expect(
       groups.listGroups(platformUser.id, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
@@ -1279,163 +1278,7 @@ describe("PlatformAdministrator PostgreSQL integration", () => {
   });
 });
 
-function invoiceFixture(
-  organizationId: string,
-  groupId: string,
-  createdByUserId: string,
-  businessId: string,
-  extra: Record<string, unknown> = {},
-) {
-  return {
-    businessId,
-    organizationId,
-    groupId,
-    scopeKey: groupId,
-    supplierName: "Proveedor local",
-    amountPesos: 12500,
-    currency: "CLP" as const,
-    issuedOn: new Date("2026-10-25T00:00:00.000Z"),
-    dueOn: new Date("2026-11-25T00:00:00.000Z"),
-    businessStatus: "PENDING" as const,
-    createdByUserId,
-    ...extra,
-  };
-}
-
-describe("APP-06 PostgreSQL invoice domain", () => {
-  it("reads group invoices, hides deleted ones and denies foreign contexts", async () => {
-    const organization = await persistence.createOrganization({
-      name: "AI Academy",
-      slug: "ai-academy",
-    });
-    const actor = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    const otherUser = await persistence.createUser({
-      name: "Grace Hopper",
-      rut: "12.345.679-3",
-    });
-    await prisma.organizationMembership.createMany({
-      data: [
-        {
-          userId: actor.id,
-          organizationId: organization.id,
-          role: OrganizationRole.USER,
-        },
-        {
-          userId: otherUser.id,
-          organizationId: organization.id,
-          role: OrganizationRole.USER,
-        },
-      ],
-    });
-    const group = await prisma.group.create({
-      data: { organizationId: organization.id, name: "Facturas" },
-    });
-    const otherGroup = await prisma.group.create({
-      data: { organizationId: organization.id, name: "Otro" },
-    });
-    await prisma.groupMembership.createMany({
-      data: [
-        {
-          groupId: group.id,
-          userId: actor.id,
-          organizationId: organization.id,
-        },
-        {
-          groupId: otherGroup.id,
-          userId: otherUser.id,
-          organizationId: organization.id,
-        },
-      ],
-    });
-    const visible = await prisma.invoice.create({
-      data: invoiceFixture(organization.id, group.id, actor.id, "FAC-001", {
-        supplierName: "Acme Ltd.",
-      }),
-    });
-    const foreign = await prisma.invoice.create({
-      data: invoiceFixture(
-        organization.id,
-        otherGroup.id,
-        otherUser.id,
-        "FAC-002",
-      ),
-    });
-    await prisma.invoice.create({
-      data: invoiceFixture(organization.id, group.id, actor.id, "FAC-003", {
-        deletedAt: new Date(),
-        deletedByUserId: actor.id,
-      }),
-    });
-    const invoices = createInvoiceService(prisma);
-    const context = {
-      organizationId: organization.id,
-      ownerType: "group" as const,
-      ownerId: group.id,
-    };
-
-    await expect(
-      invoices.listInvoices(actor.id, context, { q: "", limit: 50 }),
-    ).resolves.toMatchObject({
-      invoices: [
-        {
-          id: visible.id,
-          businessId: "FAC-001",
-          amountPesos: 12500,
-          issuedOn: "2026-10-25",
-          dueOn: "2026-11-25",
-          businessStatus: "PENDING",
-          processingStatus: "NOT_REQUESTED",
-        },
-      ],
-      nextCursor: null,
-    });
-    await expect(
-      invoices.listInvoices(actor.id, context, { q: "acme", limit: 50 }),
-    ).resolves.toMatchObject({ invoices: [{ businessId: "FAC-001" }] });
-    const detail = await invoices.getInvoice(actor.id, context, visible.id);
-    expect(detail).toMatchObject({ invoice: { id: visible.id } });
-    expect(Object.keys(detail.invoice).sort()).toEqual([
-      "amountPesos",
-      "businessId",
-      "businessStatus",
-      "createdAt",
-      "createdByUserId",
-      "currency",
-      "dueOn",
-      "groupId",
-      "id",
-      "issuedOn",
-      "organizationId",
-      "processingStatus",
-      "supplierName",
-    ]);
-    await expect(
-      invoices.getInvoice(actor.id, context, foreign.id),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      invoices.listInvoices(
-        actor.id,
-        { ...context, ownerId: otherGroup.id },
-        { q: "", limit: 50 },
-      ),
-    ).rejects.toMatchObject({ status: 404 });
-    // P0 has no personal invoices.
-    const personal = {
-      organizationId: organization.id,
-      ownerType: "user" as const,
-      ownerId: actor.id,
-    };
-    await expect(
-      invoices.listInvoices(actor.id, personal, { q: "", limit: 50 }),
-    ).resolves.toEqual({ invoices: [], nextCursor: null });
-    await expect(
-      invoices.getInvoice(actor.id, personal, visible.id),
-    ).rejects.toMatchObject({ status: 404 });
-  });
-
+describe("PostgreSQL business policy authorization", () => {
   it("isolates personal and group policy administration while allowing authorized policy reads", async () => {
     const organization = await persistence.createOrganization({
       name: "Policy authorization academy",
@@ -1568,91 +1411,5 @@ describe("APP-06 PostgreSQL invoice domain", () => {
     await expect(
       policies.listPolicies(otherOwner.id, groupContext),
     ).rejects.toMatchObject({ status: 404 });
-  });
-
-  it("authorizes group members and traverses stable cursor pages", async () => {
-    const organization = await persistence.createOrganization({
-      name: "Cursor Academy",
-      slug: "cursor-academy",
-    });
-    const member = await persistence.createUser({
-      name: "Ada Lovelace",
-      rut: "12.345.678-5",
-    });
-    const nonMember = await persistence.createUser({
-      name: "Grace Hopper",
-      rut: "12.345.679-3",
-    });
-    await prisma.organizationMembership.createMany({
-      data: [
-        {
-          userId: member.id,
-          organizationId: organization.id,
-          role: OrganizationRole.USER,
-        },
-        {
-          userId: nonMember.id,
-          organizationId: organization.id,
-          role: OrganizationRole.USER,
-        },
-      ],
-    });
-    const group = await prisma.group.create({
-      data: { organizationId: organization.id, name: "Invoice group" },
-    });
-    await prisma.groupMembership.create({
-      data: {
-        groupId: group.id,
-        userId: member.id,
-        organizationId: organization.id,
-      },
-    });
-    await prisma.invoice.createMany({
-      data: [1, 2, 3].map((number) =>
-        invoiceFixture(
-          organization.id,
-          group.id,
-          member.id,
-          `FAC-CURSOR-${number}`,
-          { createdAt: new Date(`2026-09-21T00:00:0${number}.000Z`) },
-        ),
-      ),
-    });
-    const invoices = createInvoiceService(prisma);
-    const groupContext = {
-      organizationId: organization.id,
-      ownerType: "group" as const,
-      ownerId: group.id,
-    };
-
-    await expect(
-      invoices.listInvoices(nonMember.id, groupContext, { q: "", limit: 50 }),
-    ).rejects.toMatchObject({ status: 404 });
-
-    const firstPage = await invoices.listInvoices(member.id, groupContext, {
-      q: "",
-      limit: 1,
-    });
-    const secondPage = await invoices.listInvoices(member.id, groupContext, {
-      q: "",
-      cursor: firstPage.nextCursor ?? undefined,
-      limit: 1,
-    });
-    const thirdPage = await invoices.listInvoices(member.id, groupContext, {
-      q: "",
-      cursor: secondPage.nextCursor ?? undefined,
-      limit: 1,
-    });
-
-    expect(firstPage).toMatchObject({
-      invoices: [{ businessId: "FAC-CURSOR-3" }],
-    });
-    expect(secondPage).toMatchObject({
-      invoices: [{ businessId: "FAC-CURSOR-2" }],
-    });
-    expect(thirdPage).toMatchObject({
-      invoices: [{ businessId: "FAC-CURSOR-1" }],
-      nextCursor: null,
-    });
   });
 });

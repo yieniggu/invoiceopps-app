@@ -1,5 +1,5 @@
 import { namedId } from "./test/ids";
-import { ACCESS_NONE, NO_PERMISSIONS } from "./test/transport";
+import { NO_PERMISSIONS } from "./test/transport";
 import {
   act,
   cleanup,
@@ -48,7 +48,16 @@ function profile(id: string, admin = false) {
           slug: id,
         },
         role: "ADMIN",
-        ...ACCESS_NONE,
+        // The inbox offers what the profile can read: the organization and the
+        // group of this person.
+        permissions: { ...NO_PERMISSIONS, readInvoices: true },
+        groups: [
+          {
+            group: { id: namedId("group", id), name: `Group ${id}` },
+            permissions: NO_PERMISSIONS,
+            effective: { ...NO_PERMISSIONS, readInvoices: true },
+          },
+        ],
       },
     ],
   };
@@ -190,7 +199,7 @@ function http(admin = false) {
             })
           : mutation();
       if (path.startsWith("/api/v1/invoices?"))
-        return json({ invoices: [], nextCursor: null });
+        return json({ items: [], page: 1, pageSize: 20, total: 0 });
       throw new Error(`Unexpected request: ${path}`);
     });
   return {
@@ -506,18 +515,15 @@ describe("CR-001 mounted session isolation", () => {
       api.patch.mockReturnValueOnce(pending.promise);
       await start();
       navigate("Facturas");
-      fireEvent.change(screen.getByRole("combobox", { name: "Propietario" }), {
+      fireEvent.change(screen.getByLabelText("Ver facturas de"), {
         target: {
-          value:
-            "00000000-0000-4000-9000-f9e9c6048aeb:group:00000000-0000-4000-a000-ffdfcbaf90da",
+          value: `group:${namedId("org", "A")}:${namedId("group", "A")}`,
         },
       });
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls.some(([path]) =>
-            path
-              .toString()
-              .includes("ownerId=00000000-0000-4000-a000-ffdfcbaf90da"),
+            path.toString().includes(`groupId=${namedId("group", "A")}`),
           ),
         ).toBe(true),
       );
@@ -535,29 +541,24 @@ describe("CR-001 mounted session isolation", () => {
       expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
       await waitFor(() =>
         expect(
-          api.fetchMock.mock.calls.some(([path]) =>
-            path.toString().startsWith("/api/v1/invoices?"),
-          ),
+          api.fetchMock.mock.calls
+            .slice(boundary)
+            .some(([path]) => path.toString().startsWith("/api/v1/invoices?")),
         ).toBe(true),
       );
-      const protectedPaths = api.fetchMock.mock.calls
+      const invoiceReads = api.fetchMock.mock.calls
         .slice(boundary)
         .filter(([path]) => /^\/api\/v1\/invoices\?/.test(path.toString()))
         .map(([path]) => new URL(path.toString(), "http://test.invalid"));
-      expect(
-        protectedPaths.some((url) => url.searchParams.get("ownerId") === "B"),
-      ).toBe(true);
-      expect(new Set(protectedPaths.map((url) => url.pathname))).toEqual(
+      expect(new Set(invoiceReads.map((url) => url.pathname))).toEqual(
         new Set(["/api/v1/invoices"]),
       );
-      for (const [path] of api.fetchMock.mock.calls.slice(boundary)) {
-        if (/^\/api\/v1\/invoices\?/.test(path.toString())) {
-          const url = new URL(path.toString(), "http://test.invalid");
-          expect(url.searchParams.get("ownerId")).toBe("B");
-          expect(url.searchParams.get("organizationId")).toBe(
-            "00000000-0000-4000-9000-fa19c6501c7e",
-          );
-        }
+      // B reads only B's organization, and never A's group.
+      for (const url of invoiceReads) {
+        expect(url.searchParams.get("organizationId")).toBe(
+          namedId("org", "B"),
+        );
+        expect(url.searchParams.get("groupId")).not.toBe(namedId("group", "A"));
       }
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
       expect(screen.getAllByRole("option", { name: /Group B/ })).toHaveLength(

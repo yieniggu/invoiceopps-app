@@ -83,8 +83,14 @@ function logConflict(
   operation: string,
   attempt: number,
   outcome: "retry" | "gave_up",
+  reason: "conflict" | "timeout",
 ) {
-  logEvent("warn", "transaction.conflict", { operation, attempt, outcome });
+  logEvent("warn", "transaction.conflict", {
+    operation,
+    attempt,
+    outcome,
+    reason,
+  });
 }
 
 /**
@@ -94,7 +100,8 @@ function logConflict(
  * (RETRYABLE_CONFLICT with Retry-After). A transaction timeout (P2028) is not
  * repeated in-process: it maps straight to the same retryable 503. Every
  * retry and every give-up logs a warning with `operationName` (a fixed label,
- * never request data) and the attempt number.
+ * never request data), the attempt number and a `reason` ("conflict" for a
+ * lost race, "timeout" for P2028).
  */
 export async function runSerializable<T>(
   operation: () => Promise<T>,
@@ -106,15 +113,15 @@ export async function runSerializable<T>(
       return await operation();
     } catch (error) {
       if (isTransactionTimeout(error)) {
-        logConflict(operationName, attempt + 1, "gave_up");
+        logConflict(operationName, attempt + 1, "gave_up", "timeout");
         throw retryableConflict();
       }
       if (!isTransactionConflict(error)) throw error;
       if (attempt === MAX_SERIALIZABLE_RETRIES - 1) {
-        logConflict(operationName, attempt + 1, "gave_up");
+        logConflict(operationName, attempt + 1, "gave_up", "conflict");
         throw conflictError();
       }
-      logConflict(operationName, attempt + 1, "retry");
+      logConflict(operationName, attempt + 1, "retry", "conflict");
       await backoff();
     }
   }

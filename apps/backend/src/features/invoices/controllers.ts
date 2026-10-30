@@ -7,18 +7,40 @@ import { requireSessionProfile } from "../auth/session.js";
 import {
   IdempotencyKeyHeaderSchema,
   InvoiceCreateRequestSchema,
+  InvoiceTargetQuerySchema,
+  InvoiceListQuerySchema,
+  InvoiceParamsSchema,
 } from "./schemas.js";
-import { invoiceLocation, type InvoiceCreateService } from "./services.js";
+import {
+  invoiceLocation,
+  type InvoiceCreateService,
+  type InvoiceDeleteService,
+  type InvoiceReadService,
+} from "./services.js";
 
 /** A route whose backing service is not wired answers like a missing session. */
-function wired(service: InvoiceCreateService | undefined) {
+function wired<Service>(service: Service | undefined) {
   if (!service) throw new ApiError(401, "UNAUTHENTICATED", "Unauthenticated");
   return service;
+}
+
+/**
+ * The invoiceId path parameter is validated like any other boundary input. A
+ * malformed id (not a uuid, a NUL byte) answers the same generic 404 as a
+ * missing invoice, so the response never tells the two apart and the value
+ * never reaches the database.
+ */
+function parseInvoiceId(params: unknown) {
+  const parsed = InvoiceParamsSchema.safeParse(params);
+  if (!parsed.success) throw new ApiError(404, "NOT_FOUND", "Not found");
+  return parsed.data.invoiceId;
 }
 
 export function createInvoiceController(
   auth: AuthService | undefined,
   invoices: InvoiceCreateService | undefined,
+  reads: InvoiceReadService | undefined,
+  deletion: InvoiceDeleteService | undefined,
 ) {
   const create: RequestHandler = async (request, response) => {
     const actor = await requireSessionProfile(auth, request, response);
@@ -68,5 +90,82 @@ export function createInvoiceController(
     response.status(201).json({ invoice });
   };
 
-  return { create };
+  const list: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const query = parseWith(
+      InvoiceListQuerySchema,
+      request.query,
+      "Invalid invoice query",
+    );
+    response.status(200).json(await wired(reads).listInvoices(actor.id, query));
+  };
+
+  const get: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const { organizationId, groupId } = parseWith(
+      InvoiceTargetQuerySchema,
+      request.query,
+      "Invalid invoice query",
+    );
+    const invoiceId = parseInvoiceId(request.params);
+    response.status(200).json(
+      await wired(reads).getInvoice(actor.id, {
+        invoiceId,
+        organizationId,
+        ...(groupId ? { groupId } : {}),
+      }),
+    );
+  };
+
+  const remove: RequestHandler = async (request, response) => {
+    const actor = await requireSessionProfile(auth, request, response);
+    const { organizationId, groupId } = parseWith(
+      InvoiceTargetQuerySchema,
+      request.query,
+      "Invalid invoice query",
+    );
+    let result;
+    let invoiceId: string;
+    try {
+      // Inside the try so a malformed id is recorded like any other 404.
+      invoiceId = parseInvoiceId(request.params);
+      result = await wired(deletion).deleteInvoice(actor.id, {
+        invoiceId,
+        organizationId,
+        ...(groupId ? { groupId } : {}),
+      });
+    } catch (error) {
+      // Denials are expected outcomes, recorded with the status only. A 503
+      // is logged where it is decided (transaction.conflict).
+      if (
+        error instanceof ApiError &&
+        (error.status === 403 || error.status === 404)
+      ) {
+        logEvent("info", "invoice.delete_rejected", {
+          feature: "invoices",
+          status: error.status,
+          code: error.code,
+          organizationId,
+          actorUserId: actor.id,
+        });
+      }
+      throw error;
+    }
+    // Only the call that deleted the invoice logs it. An authorized repeat is
+    // a no-op that writes no event and therefore logs nothing. The groupId is
+    // the invoice's real group, not the optional one of the query. Opaque ids
+    // only: never business data.
+    if (result.deleted) {
+      logEvent("info", "invoice.deleted", {
+        feature: "invoices",
+        organizationId,
+        ...(result.groupId ? { groupId: result.groupId } : {}),
+        invoiceId,
+        actorUserId: actor.id,
+      });
+    }
+    response.status(204).end();
+  };
+
+  return { create, list, get, remove };
 }

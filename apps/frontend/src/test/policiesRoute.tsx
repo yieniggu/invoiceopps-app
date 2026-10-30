@@ -40,14 +40,14 @@ export function withPoliciesRoute(Original: ComponentType<Props>) {
                 ) : state === "error" ? (
                   <>
                     <p role="alert">
-                      No fue posible cargar el contexto de trabajo.
+                      No fue posible cargar tu espacio de trabajo.
                     </p>
                     <button type="button" onClick={retry}>
-                      Reintentar contexto
+                      Reintentar
                     </button>
                   </>
                 ) : (
-                  <p role="status">Cargando contexto de trabajo...</p>
+                  <p role="status">Cargando tu espacio de trabajo...</p>
                 )}
               </div>
             }

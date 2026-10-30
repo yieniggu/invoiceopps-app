@@ -307,7 +307,9 @@ describe("CR-020 mid-session ONBOARDING_REQUIRED", () => {
         ([input]) => String(input) === "/api/v1/groups",
       ),
     ).toHaveLength(1);
-    expect(screen.queryByText(/No fue posible cargar el contexto/)).toBeNull();
+    expect(
+      screen.queryByText(/No fue posible cargar tus organizaciones/),
+    ).toBeNull();
   });
 
   it("does not reload for a plain 403", async () => {
@@ -452,6 +454,22 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
 
   it("shows the forced screen when an invoices read answers ONBOARDING_REQUIRED", async () => {
     let pending = false;
+    // «Facturas» is offered only to people who can read invoices.
+    const invoiceReader = {
+      ...sessionProfile,
+      memberships: [
+        {
+          organization: {
+            id: "00000000-0000-4000-9000-000000000001",
+            name: "Academia",
+            slug: "academy",
+          },
+          role: "USER",
+          permissions: { ...ACCESS_NONE.permissions, readInvoices: true },
+          groups: [],
+        },
+      ],
+    };
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input) => {
@@ -459,8 +477,8 @@ describe("CR-020 ONBOARDING_REQUIRED from screens", () => {
         if (url.pathname === "/api/v1/auth/profile")
           return jsonResponse({
             profile: pending
-              ? { ...sessionProfile, mustChangePassword: true }
-              : sessionProfile,
+              ? { ...invoiceReader, mustChangePassword: true }
+              : invoiceReader,
           });
         if (url.pathname === "/api/v1/groups") return jsonResponse({ groups });
         if (url.pathname.startsWith("/api/v1/invoices")) {

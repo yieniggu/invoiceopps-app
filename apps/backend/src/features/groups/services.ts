@@ -7,8 +7,8 @@ import {
   SERIALIZABLE,
 } from "../../transactions.js";
 import {
-  organizationGroupVisibility,
   requireOrganizationAdmin,
+  resolveGroupVisibility,
 } from "../orgs/authority.js";
 import {
   NO_INVOICE_PERMISSIONS,
@@ -133,21 +133,33 @@ export function createGroupService(prisma: PrismaClient): GroupService {
 
   return {
     async listGroups(actorUserId, organizationId) {
-      const visibility = await organizationGroupVisibility(
-        prisma,
-        actorUserId,
-        organizationId,
+      // One snapshot: the visibility decision and the rows must agree. Under
+      // runSerializable so a timeout (P2028) answers the retryable 503.
+      return runSerializable(
+        () =>
+          prisma.$transaction(
+            async (transaction) => {
+              const visibility = await resolveGroupVisibility(
+                transaction,
+                actorUserId,
+                organizationId,
+              );
+              return transaction.group.findMany({
+                where: {
+                  organizationId,
+                  ...(visibility === "all"
+                    ? {}
+                    : { memberships: { some: { userId: actorUserId } } }),
+                },
+                orderBy: [{ name: "asc" }, { id: "asc" }],
+                select: GROUP_SELECT,
+              });
+            },
+            { isolationLevel: "RepeatableRead" },
+          ),
+        undefined,
+        "group_list",
       );
-      return prisma.group.findMany({
-        where: {
-          organizationId,
-          ...(visibility === "all"
-            ? {}
-            : { memberships: { some: { userId: actorUserId } } }),
-        },
-        orderBy: [{ name: "asc" }, { id: "asc" }],
-        select: GROUP_SELECT,
-      });
     },
 
     async createGroup(actorUserId, organizationId, input) {
@@ -204,44 +216,49 @@ export function createGroupService(prisma: PrismaClient): GroupService {
 
     async listMemberships(actorUserId, organizationId, groupId, query) {
       // One snapshot for the count and the page, so total matches the rows.
-      return prisma.$transaction(
-        async (transaction) => {
-          await requireOrganizationAdmin(
-            transaction,
-            actorUserId,
-            organizationId,
-          );
-          await requireGroup(transaction, organizationId, groupId);
-          const where = {
-            groupId,
-            organizationId,
-            ...(query.userIds ? { userId: { in: query.userIds } } : {}),
-          };
-          const total = await transaction.groupMembership.count({ where });
-          const memberships = await transaction.groupMembership.findMany({
-            where,
-            orderBy: [
-              { user: { name: "asc" } },
-              { user: { rut: "asc" } },
-              { userId: "asc" },
-            ],
-            ...pageWindow(query),
-            select: {
-              ...GROUP_MEMBERSHIP_SELECT,
-              user: { select: { id: true, name: true, rut: true } },
+      return runSerializable(
+        () =>
+          prisma.$transaction(
+            async (transaction) => {
+              await requireOrganizationAdmin(
+                transaction,
+                actorUserId,
+                organizationId,
+              );
+              await requireGroup(transaction, organizationId, groupId);
+              const where = {
+                groupId,
+                organizationId,
+                ...(query.userIds ? { userId: { in: query.userIds } } : {}),
+              };
+              const total = await transaction.groupMembership.count({ where });
+              const memberships = await transaction.groupMembership.findMany({
+                where,
+                orderBy: [
+                  { user: { name: "asc" } },
+                  { user: { rut: "asc" } },
+                  { userId: "asc" },
+                ],
+                ...pageWindow(query),
+                select: {
+                  ...GROUP_MEMBERSHIP_SELECT,
+                  user: { select: { id: true, name: true, rut: true } },
+                },
+              });
+              return {
+                memberships: memberships.map(({ user, ...membership }) => ({
+                  ...toGroupMembershipDto(membership),
+                  user,
+                })),
+                page: query.page,
+                pageSize: query.pageSize,
+                total,
+              };
             },
-          });
-          return {
-            memberships: memberships.map(({ user, ...membership }) => ({
-              ...toGroupMembershipDto(membership),
-              user,
-            })),
-            page: query.page,
-            pageSize: query.pageSize,
-            total,
-          };
-        },
-        { isolationLevel: "RepeatableRead" },
+            { isolationLevel: "RepeatableRead" },
+          ),
+        undefined,
+        "group_memberships_list",
       );
     },
 

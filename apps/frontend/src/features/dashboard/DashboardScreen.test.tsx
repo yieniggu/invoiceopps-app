@@ -1,4 +1,4 @@
-import { membership } from "../../test/transport";
+import { membership, NO_PERMISSIONS } from "../../test/transport";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +26,15 @@ const profile: Profile = {
   ],
 };
 
+const READER: Profile = {
+  ...profile,
+  memberships: [
+    membership(profile.memberships[0]!.organization, "USER", {
+      permissions: { ...NO_PERMISSIONS, readInvoices: true },
+    }),
+  ],
+};
+
 function renderDashboard(next: Profile = profile) {
   render(
     <MemoryRouter>
@@ -44,7 +53,7 @@ afterEach(cleanup);
 
 describe("DashboardScreen cards", () => {
   it("puts Facturas first and keeps the agreed card order", () => {
-    renderDashboard({ ...profile, isPlatformAdministrator: true });
+    renderDashboard({ ...READER, isPlatformAdministrator: true });
     const titles = screen
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent);
@@ -62,7 +71,7 @@ describe("DashboardScreen cards", () => {
   });
 
   it("links each card CTA to its URL", () => {
-    renderDashboard();
+    renderDashboard(READER);
     for (const [label, path] of [
       ["Ir a facturas", "/invoices"],
       ["Ver mis organizaciones", "/organizations"],
@@ -72,6 +81,43 @@ describe("DashboardScreen cards", () => {
         screen.getByRole("link", { name: label }).getAttribute("href"),
       ).toBe(path);
     }
+  });
+
+  it("describes the invoices card by access, not by an active scope", () => {
+    renderDashboard(READER);
+    const card = screen.getByRole("region", { name: "Facturas" });
+    expect(card.textContent).toContain(
+      "Revisa las facturas a las que tienes acceso y abre su detalle.",
+    );
+    expect(document.body.textContent).not.toMatch(/contexto|grupo activo/i);
+  });
+
+  it("offers the invoices card when only a group grants an invoice flag", () => {
+    renderDashboard({
+      ...profile,
+      memberships: [
+        membership(profile.memberships[0]!.organization, "USER", {
+          groups: [
+            {
+              group: { id: "00000000-0000-4000-9000-0000000000a1", name: "G" },
+              effective: { ...NO_PERMISSIONS, deleteOwnInvoices: true },
+            },
+          ],
+        }),
+      ],
+    });
+    expect(screen.getByRole("link", { name: "Ir a facturas" })).toBeTruthy();
+  });
+
+  it("hides the invoices card and its link without any invoice flag", () => {
+    renderDashboard({ ...profile, isPlatformAdministrator: true });
+    expect(screen.queryByRole("region", { name: "Facturas" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Ir a facturas" })).toBeNull();
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Tu espacio de trabajo", "Políticas"]);
   });
 
   it("shows the Políticas card as coming soon, without a link", () => {

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+
+import { useScrollsHorizontally } from "./useScrollsHorizontally";
 
 export interface SelectionColumn<Row> {
   header: string;
@@ -38,25 +40,11 @@ export function SelectionTable<Row extends { id: string; name: string }>({
   selectAllLabel?: string;
 }) {
   const all = useRef<HTMLInputElement>(null);
-  const region = useRef<HTMLDivElement>(null);
-  const [scrolls, setScrolls] = useState(false);
+  const { ref: region, scrolls } = useScrollsHorizontally<HTMLDivElement>();
   // `indeterminate` is a DOM property with no attribute: synchronise it.
   useEffect(() => {
     if (all.current) all.current.indeterminate = someSelected;
   }, [someSelected]);
-
-  // Keyboard users need to reach a region that scrolls (to scroll it), and
-  // only that one: measure it, and measure again when its size changes.
-  useEffect(() => {
-    const node = region.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const measure = () => setScrolls(node.scrollWidth > node.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    for (const child of node.children) observer.observe(child);
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <div

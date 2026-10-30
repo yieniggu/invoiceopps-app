@@ -693,8 +693,8 @@ describe("paginated management table (AC-18, AC-23)", () => {
     expect(
       screen
         .getByRole("button", { name: "Siguiente" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
   });
 
   it("selects and edits in bulk only the people of the current page", async () => {

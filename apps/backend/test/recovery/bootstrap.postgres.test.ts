@@ -6,7 +6,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { createAuthService, hashPassword } from "../../src/auth.js";
 import { createDatabase } from "../../src/database.js";
-import { createInvoiceService } from "../../src/invoices.js";
 import {
   BootstrapRejectedError,
   createBootstrapService,
@@ -412,15 +411,13 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
         createdByUserId: author.id,
       },
     });
-    const app = createApp(database, createAuthService(prisma), {
-      invoices: createInvoiceService(prisma),
-    });
+    const app = createApp(database, createAuthService(prisma));
     const login = await request(app)
       .post("/api/v1/auth/login")
       .send({ rut: formatRut(rut), password: PASSWORD });
     const temporaryCookie = String(login.headers["set-cookie"]).split(";")[0];
     const query = (organizationId: string, groupId: string) =>
-      `/api/v1/invoices?organizationId=${organizationId}&ownerType=group&ownerId=${groupId}`;
+      `/api/v1/invoices?organizationId=${organizationId}&groupId=${groupId}`;
 
     const beforeChange = await request(app)
       .get(query(organization.id, group.id))
@@ -442,18 +439,21 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
     const unknownContext = await request(app)
       .get(query(randomUUID(), randomUUID()))
       .set("Cookie", cookie);
-    const ownScope = await request(app)
-      .get(
-        `/api/v1/invoices?organizationId=${organization.id}&ownerType=user&ownerId=${login.body.user.id}`,
-      )
+    const ungroupedScope = await request(app)
+      .get(`/api/v1/invoices?organizationId=${organization.id}&ungrouped=true`)
       .set("Cookie", cookie);
     const detail = await request(app)
       .get(
-        `/api/v1/invoices/${randomUUID()}?organizationId=${organization.id}&ownerType=group&ownerId=${group.id}`,
+        `/api/v1/invoices/${randomUUID()}?organizationId=${organization.id}&groupId=${group.id}`,
       )
       .set("Cookie", cookie);
 
-    for (const response of [outsideContext, unknownContext, ownScope, detail]) {
+    for (const response of [
+      outsideContext,
+      unknownContext,
+      ungroupedScope,
+      detail,
+    ]) {
       expect([403, 404]).toContain(response.status);
       expect(response.body).not.toHaveProperty("invoices");
       expect(response.body).not.toHaveProperty("invoice");

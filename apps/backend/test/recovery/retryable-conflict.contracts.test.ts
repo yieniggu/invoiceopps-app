@@ -63,6 +63,33 @@ describe("CR-102 RETRYABLE_CONFLICT contract", () => {
     expect(documented?.headers).toHaveProperty("Retry-After");
   });
 
+  // CR-365 / CR-371 / CR-393: snapshot reads share the 503 with a read-specific text.
+  it.each([
+    ["get", "/api/v1/invoices"],
+    ["get", "/api/v1/invoices/{invoiceId}"],
+    ["get", "/api/v1/organizations/{organizationId}"],
+    ["get", "/api/v1/organizations/{organizationId}/groups"],
+    [
+      "get",
+      "/api/v1/organizations/{organizationId}/groups/{groupId}/memberships",
+    ],
+    ["get", "/api/v1/organizations"],
+    ["get", "/api/v1/organizations/{organizationId}/members"],
+    ["get", "/api/v1/organizations/{organizationId}/memberships"],
+    ["get", "/api/v1/organizations/{organizationId}/users"],
+    ["get", "/api/v1/users/{userId}"],
+    ["get", "/api/v1/admin/users"],
+    ["get", "/api/v1/admin/users/{userId}"],
+  ])("documents the read 503 on %s %s", (method, path) => {
+    const paths = document.paths as Record<string, Record<string, Json>>;
+    const responses = paths[path]?.[method]?.responses as Record<string, Json>;
+    const documented = responses?.["503"];
+
+    expect(documented?.description).toContain("RETRYABLE_CONFLICT");
+    expect(documented?.description).not.toContain("not applied");
+    expect(documented?.headers).toHaveProperty("Retry-After");
+  });
+
   it("lists RETRYABLE_CONFLICT in the Error envelope codes", () => {
     const schemas = (document.components as Json).schemas as Record<
       string,

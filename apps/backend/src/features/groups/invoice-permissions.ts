@@ -95,6 +95,81 @@ export function permissionsOf(row: InvoicePermissions): InvoicePermissions {
   return pick(row);
 }
 
+export interface ScopePermissions {
+  /** Organization-level flags only (what the organization membership grants). */
+  organization: InvoicePermissions;
+  /** Effective flags in the requested scope (organization OR group flags). */
+  effective: InvoicePermissions;
+}
+
+/**
+ * Loads the organization, the onboarding state and both memberships once and
+ * resolves both the organization-level and the effective permissions of the
+ * requested scope. For `groupId: null` both are the same. The reads are
+ * sequential on purpose: an interactive transaction owns one connection, so
+ * concurrent reads would only queue.
+ */
+export async function loadScopePermissions(
+  database: Prisma.TransactionClient,
+  input: { userId: string; organizationId: string; groupId: string | null },
+): Promise<ScopePermissions> {
+  const organization = await database.organization.findUnique({
+    where: { id: input.organizationId },
+    select: { enabled: true },
+  });
+  const user = await database.user.findUnique({
+    where: { id: input.userId },
+    select: { mustChangePassword: true },
+  });
+  const organizationMembership =
+    await database.organizationMembership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: input.userId,
+          organizationId: input.organizationId,
+        },
+      },
+      select: PERMISSION_SELECT,
+    });
+  const groupMembership =
+    input.groupId === null
+      ? null
+      : await database.groupMembership.findFirst({
+          where: {
+            userId: input.userId,
+            organizationId: input.organizationId,
+            groupId: input.groupId,
+          },
+          select: PERMISSION_SELECT,
+        });
+
+  const base = {
+    organizationEnabled: organization?.enabled === true,
+    onboardingComplete: user !== null && !user.mustChangePassword,
+    organizationMembership: organizationMembership && {
+      permissions: pick(organizationMembership),
+    },
+  };
+  const organizationScope = resolveEffectivePermissions({
+    ...base,
+    groupMembership: null,
+    scope: "organization",
+  });
+  if (input.groupId === null) {
+    return { organization: organizationScope, effective: organizationScope };
+  }
+  return {
+    organization: organizationScope,
+    effective: resolveEffectivePermissions({
+      ...base,
+      groupMembership: groupMembership && {
+        permissions: pick(groupMembership),
+      },
+      scope: "group",
+    }),
+  };
+}
+
 /**
  * Single source of effective permissions for profile, invoices and tokens:
  * loads the organization, the onboarding state and both memberships, then
@@ -104,44 +179,5 @@ export async function loadEffectivePermissions(
   database: Prisma.TransactionClient,
   input: { userId: string; organizationId: string; groupId: string | null },
 ): Promise<InvoicePermissions> {
-  const [organization, user, organizationMembership, groupMembership] =
-    await Promise.all([
-      database.organization.findUnique({
-        where: { id: input.organizationId },
-        select: { enabled: true },
-      }),
-      database.user.findUnique({
-        where: { id: input.userId },
-        select: { mustChangePassword: true },
-      }),
-      database.organizationMembership.findUnique({
-        where: {
-          userId_organizationId: {
-            userId: input.userId,
-            organizationId: input.organizationId,
-          },
-        },
-        select: PERMISSION_SELECT,
-      }),
-      input.groupId === null
-        ? Promise.resolve(null)
-        : database.groupMembership.findFirst({
-            where: {
-              userId: input.userId,
-              organizationId: input.organizationId,
-              groupId: input.groupId,
-            },
-            select: PERMISSION_SELECT,
-          }),
-    ]);
-
-  return resolveEffectivePermissions({
-    organizationEnabled: organization?.enabled === true,
-    onboardingComplete: user !== null && !user.mustChangePassword,
-    organizationMembership: organizationMembership && {
-      permissions: pick(organizationMembership),
-    },
-    groupMembership: groupMembership && { permissions: pick(groupMembership) },
-    scope: input.groupId === null ? "organization" : "group",
-  });
+  return (await loadScopePermissions(database, input)).effective;
 }

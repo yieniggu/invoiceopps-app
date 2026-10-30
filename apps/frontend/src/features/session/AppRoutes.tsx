@@ -14,7 +14,8 @@ import { GroupMemberScreen } from "../groups/screens/GroupMemberScreen";
 import { GroupMembersScreen } from "../groups/screens/GroupMembersScreen";
 import { MyGroupsScreen } from "../groups/screens/MyGroupsScreen";
 import { OrganizationGroupsScreen } from "../groups/screens/OrganizationGroupsScreen";
-import { InvoiceWorkspace } from "../invoices/InvoiceWorkspace";
+import { InvoiceDetailScreen } from "../invoices/screens/InvoiceDetailScreen";
+import { InvoiceInboxScreen } from "../invoices/screens/InvoiceInboxScreen";
 import { NotFoundScreen } from "../navigation/NotFoundScreen";
 import { paths } from "../navigation/paths";
 import { AddOrganizationMemberScreen } from "../orgs/screens/AddOrganizationMemberScreen";
@@ -28,7 +29,6 @@ import { OrganizationsScreen } from "../orgs/screens/OrganizationsScreen";
 import { PoliciesUnavailableScreen } from "../policies/PoliciesUnavailableScreen";
 import { ProfileScreen } from "../profile/ProfileScreen";
 import { UserProfileScreen } from "../users/screens/UserProfileScreen";
-import { WorkspaceBoundary } from "../workspace/WorkspaceContext";
 import type {
   ContextState,
   WorkspaceGroup,
@@ -38,38 +38,6 @@ export interface WorkspaceState {
   state: ContextState;
   groups: WorkspaceGroup[] | undefined;
   retry: () => void;
-}
-
-/** Facturas needs the confirmed work context before it mounts. */
-function WorkspaceRoute({
-  title,
-  description,
-  workspace,
-  children,
-}: {
-  title: string;
-  description: string;
-  workspace: WorkspaceState;
-  children: (groups: WorkspaceGroup[]) => React.ReactNode;
-}) {
-  const { state, groups, retry } = workspace;
-  return (
-    <div className="screen-stack">
-      <PageHeader title={title} description={description} />
-      {state === "loaded" && groups ? (
-        <WorkspaceBoundary>{children(groups)}</WorkspaceBoundary>
-      ) : state === "error" ? (
-        <>
-          <p role="alert">No fue posible cargar el contexto de trabajo.</p>
-          <button type="button" onClick={retry}>
-            Reintentar contexto
-          </button>
-        </>
-      ) : (
-        <p role="status">Cargando contexto de trabajo...</p>
-      )}
-    </div>
-  );
 }
 
 /** URL table of everything a person with a settled password can reach. */
@@ -95,15 +63,11 @@ export function AppRoutes({
       />
       <Route
         path="invoices"
-        element={
-          <WorkspaceRoute
-            title="Facturas"
-            description="Revisa las facturas de tu organización o grupo activo y abre su detalle."
-            workspace={workspace}
-          >
-            {(groups) => <InvoiceWorkspace profile={profile} groups={groups} />}
-          </WorkspaceRoute>
-        }
+        element={<InvoiceInboxScreen profile={profile} />}
+      />
+      <Route
+        path="invoices/:invoiceId"
+        element={<InvoiceDetailScreen profile={profile} />}
       />
       <Route path="policies" element={<PoliciesUnavailableScreen />} />
       <Route

@@ -36,8 +36,12 @@ export class Api {
     method: "get" | "post" | "put" | "patch" | "delete",
     path: string,
     data?: unknown,
+    headers?: Record<string, string>,
   ): Promise<T> {
-    const response = await this.context[method](`/api/v1${path}`, { data });
+    const response = await this.context[method](`/api/v1${path}`, {
+      data,
+      headers,
+    });
     if (!response.ok()) {
       throw new Error(
         `${method.toUpperCase()} ${path} failed (${response.status()}): ${await response.text()}`,

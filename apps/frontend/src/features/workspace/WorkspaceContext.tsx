@@ -107,12 +107,6 @@ export function WorkspaceProvider({
   return <Workspace.Provider value={workspace}>{children}</Workspace.Provider>;
 }
 
-export function useWorkspace(profile: Profile, groups: Group[]) {
-  const shared = useContext(Workspace);
-  const local = useSelection(profile, groups);
-  return shared ?? local;
-}
-
 export function useSharedWorkspace() {
   const workspace = useContext(Workspace);
   if (!workspace) throw new Error("WorkspaceProvider is required");

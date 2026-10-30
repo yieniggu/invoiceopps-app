@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   OrganizationRole,
   ResourceOwnerType,
@@ -5,6 +7,14 @@ import {
 } from "./generated/prisma/client.js";
 import { AuthError } from "./auth.js";
 import type { ResourceContext } from "./resource-context.js";
+
+// Legacy business-policy context (no P0 ticket reshapes those routes); not
+// published in OpenAPI because it carries no `id` meta.
+export const ResourceContextSchema = z.object({
+  organizationId: z.string().min(1),
+  ownerType: z.enum(["user", "group"]),
+  ownerId: z.string().min(1),
+});
 
 export type BusinessPolicy = {
   version: string;

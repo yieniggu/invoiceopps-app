@@ -139,6 +139,4 @@ export const LEGACY_ROUTES: ReadonlyArray<LegacyRoute> = [
   },
   // Kept for the policies screen; no P0 ticket reshapes it.
   { method: "GET", path: "/api/v1/groups", owner: LEGACY_NO_P0 },
-  { method: "GET", path: "/api/v1/invoices", owner: "RP0-11" },
-  { method: "GET", path: "/api/v1/invoices/{invoiceId}", owner: "RP0-11" },
 ];

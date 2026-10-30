@@ -23,7 +23,8 @@ const themes = {
  * --color-border (card/sidebar/table dividers) and --color-skeleton.
  * Alpha colors (--color-overlay, --color-scrim) are asserted below as valid
  * colors with alpha > 0: they have no fixed backdrop to measure against.
- * There are no success/warning/error-bg tokens: nothing consumes them.
+ * Status badges pair each --color-status-*-fg with its -bg; the overdue
+ * text reuses the pending foreground on the surfaces rows sit on.
  */
 const pairs: [string, string, number][] = [
   ["--color-text", "--color-bg", 4.5],
@@ -52,6 +53,13 @@ const pairs: [string, string, number][] = [
   ["--focus-ring", "--color-surface-muted", 3],
   ["--focus-ring", "--color-primary-soft", 3],
   ["--focus-ring", "--color-primary-tint", 3],
+  ["--color-status-pending-fg", "--color-status-pending-bg", 4.5],
+  ["--color-status-approved-fg", "--color-status-approved-bg", 4.5],
+  ["--color-status-rejected-fg", "--color-status-rejected-bg", 4.5],
+  ["--color-status-neutral-fg", "--color-status-neutral-bg", 4.5],
+  ["--color-status-pending-fg", "--color-surface", 4.5],
+  ["--color-status-pending-fg", "--color-primary-soft", 4.5],
+  ["--color-text-muted", "--color-primary-soft", 4.5],
 ];
 
 describe("theme token contrast", () => {

@@ -63,6 +63,15 @@ describe("RP0-07 group OpenAPI contract", () => {
     document = (response.status === 200 ? response.body : {}) as Json;
   });
 
+  it("documents who the group list shows, including organization-wide invoice readers", () => {
+    const paths = document.paths as Record<string, Json | undefined>;
+    const operation = paths["/api/v1/organizations/{organizationId}/groups"]
+      ?.get as Json | undefined;
+
+    expect(String(operation?.summary)).toMatch(/readInvoices/);
+    expect(String(operation?.summary)).toMatch(/organization/i);
+  });
+
   it.each(GROUP_OPERATIONS)("documents %s %s", (method, path) => {
     const documented = enumerateOpenApiRoutes(document).map((route) =>
       routeKey(route.method, route.path),

@@ -30,6 +30,7 @@ import {
 import {
   isPlatformAdministrator,
   organizationGroupVisibility,
+  resolveGroupVisibility,
   requireOrganizationAdmin,
 } from "./authority.js";
 import type {
@@ -193,33 +194,40 @@ export function createOrganizationService(
 
   return {
     async listOrganizations(actorUserId, query) {
-      return prisma.$transaction(async (transaction) => {
-        const all = await isPlatformAdministrator(transaction, actorUserId);
-        const where: Prisma.OrganizationWhereInput = {
-          ...(all ? {} : { memberships: { some: { userId: actorUserId } } }),
-          ...(query.search === undefined
-            ? {}
-            : {
-                name: {
-                  contains: escapeLike(query.search),
-                  mode: "insensitive",
-                },
-              }),
-        };
-        const total = await transaction.organization.count({ where });
-        const organizations = await transaction.organization.findMany({
-          where,
-          orderBy: [{ name: "asc" }, { id: "asc" }],
-          ...pageWindow(query),
-          select: ORGANIZATION_SELECT,
-        });
-        return {
-          organizations: organizations.map(toOrganizationDto),
-          page: query.page,
-          pageSize: query.pageSize,
-          total,
-        };
-      }, SNAPSHOT);
+      return runSerializable(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            const all = await isPlatformAdministrator(transaction, actorUserId);
+            const where: Prisma.OrganizationWhereInput = {
+              ...(all
+                ? {}
+                : { memberships: { some: { userId: actorUserId } } }),
+              ...(query.search === undefined
+                ? {}
+                : {
+                    name: {
+                      contains: escapeLike(query.search),
+                      mode: "insensitive",
+                    },
+                  }),
+            };
+            const total = await transaction.organization.count({ where });
+            const organizations = await transaction.organization.findMany({
+              where,
+              orderBy: [{ name: "asc" }, { id: "asc" }],
+              ...pageWindow(query),
+              select: ORGANIZATION_SELECT,
+            });
+            return {
+              organizations: organizations.map(toOrganizationDto),
+              page: query.page,
+              pageSize: query.pageSize,
+              total,
+            };
+          }, SNAPSHOT),
+        undefined,
+        "organization_list",
+      );
     },
 
     async createOrganization(actorUserId, input) {
@@ -288,32 +296,46 @@ export function createOrganizationService(
 
     async getOrganization(actorUserId, organizationId) {
       // Any member or the platform administrator; everybody else gets 404.
-      const visibility = await organizationGroupVisibility(
-        prisma,
-        actorUserId,
-        organizationId,
-      );
-      // One query: both counts come with the organization (no N+1).
-      const organization = await prisma.organization.findUnique({
-        where: { id: organizationId },
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          description: true,
-          _count: {
-            select: {
-              memberships: true,
-              groups:
-                visibility === "all"
-                  ? true
-                  : {
-                      where: { memberships: { some: { userId: actorUserId } } },
+      // One snapshot, and the same visibility rule as GET .../groups, so the
+      // group count always equals the length of that list.
+      const organization = await runSerializable(
+        () =>
+          prisma.$transaction(
+            async (transaction) => {
+              const visibility = await resolveGroupVisibility(
+                transaction,
+                actorUserId,
+                organizationId,
+              );
+              // One query: both counts come with the organization (no N+1).
+              return transaction.organization.findUnique({
+                where: { id: organizationId },
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  description: true,
+                  _count: {
+                    select: {
+                      memberships: true,
+                      groups:
+                        visibility === "all"
+                          ? true
+                          : {
+                              where: {
+                                memberships: { some: { userId: actorUserId } },
+                              },
+                            },
                     },
+                  },
+                },
+              });
             },
-          },
-        },
-      });
+            { isolationLevel: "RepeatableRead" },
+          ),
+        undefined,
+        "organization_get",
+      );
       if (!organization) throw new ApiError(404, "NOT_FOUND", "Not found");
       const { _count, ...basic } = organization;
       return {
@@ -371,115 +393,130 @@ export function createOrganizationService(
     // Reduced view for every caller (no RUT, no disabled flag); the ADMIN and
     // platform view with `disabled` is listMemberships (/memberships).
     async listMembers(actorUserId, organizationId, query) {
-      return prisma.$transaction(async (transaction) => {
-        // Any member or the platform administrator; everybody else gets 404.
-        await organizationGroupVisibility(
-          transaction,
-          actorUserId,
-          organizationId,
-        );
-        const where = { organizationId };
-        const total = await transaction.organizationMembership.count({ where });
-        const rows = await transaction.organizationMembership.findMany({
-          where,
-          orderBy: [{ user: { name: "asc" } }, { userId: "asc" }],
-          ...pageWindow(query),
-          select: {
-            user: {
+      return runSerializable(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            // Any member or the platform administrator; everybody else gets 404.
+            await organizationGroupVisibility(
+              transaction,
+              actorUserId,
+              organizationId,
+            );
+            const where = { organizationId };
+            const total = await transaction.organizationMembership.count({
+              where,
+            });
+            const rows = await transaction.organizationMembership.findMany({
+              where,
+              orderBy: [{ user: { name: "asc" } }, { userId: "asc" }],
+              ...pageWindow(query),
               select: {
-                id: true,
-                name: true,
-                email: true,
-                lastActiveAt: true,
-                disabledAt: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    lastActiveAt: true,
+                    disabledAt: true,
+                  },
+                },
               },
-            },
-          },
-        });
-        return {
-          members: rows.map(({ user }) => ({
-            userId: user.id,
-            name: user.name,
-            email: user.email,
-            recentlyActive: isRecentlyActive(
-              user.lastActiveAt,
-              user.disabledAt,
-            ),
-          })),
-          page: query.page,
-          pageSize: query.pageSize,
-          total,
-        };
-      }, SNAPSHOT);
-    },
-
-    async listMemberships(actorUserId, organizationId, query) {
-      return prisma.$transaction(async (transaction) => {
-        await requireOrganizationAdmin(
-          transaction,
-          actorUserId,
-          organizationId,
-        );
-        const where = {
-          organizationId,
-          ...(query.userIds ? { userId: { in: query.userIds } } : {}),
-        };
-        const total = await transaction.organizationMembership.count({ where });
-        // One query: group names come with the memberships (no N+1).
-        const memberships = await transaction.organizationMembership.findMany({
-          where,
-          orderBy: [
-            { user: { name: "asc" } },
-            { user: { rut: "asc" } },
-            { userId: "asc" },
-          ],
-          ...pageWindow(query),
-          select: {
-            ...MEMBERSHIP_SELECT,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                rut: true,
-                lastActiveAt: true,
-                disabledAt: true,
-              },
-            },
-            groupMemberships: {
-              orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
-              select: {
-                ...PERMISSION_SELECT,
-                group: { select: { id: true, name: true } },
-              },
-            },
-          },
-        });
-        return {
-          memberships: memberships.map(
-            ({ user, groupMemberships, ...membership }) => ({
-              ...toMembershipDto(membership),
-              user: {
-                id: user.id,
+            });
+            return {
+              members: rows.map(({ user }) => ({
+                userId: user.id,
                 name: user.name,
-                rut: user.rut,
-                disabled: user.disabledAt !== null,
+                email: user.email,
                 recentlyActive: isRecentlyActive(
                   user.lastActiveAt,
                   user.disabledAt,
                 ),
-              },
-              groups: groupMemberships.map(({ group, ...flags }) => ({
-                groupId: group.id,
-                name: group.name,
-                permissions: permissionsOf(flags),
               })),
-            }),
-          ),
-          page: query.page,
-          pageSize: query.pageSize,
-          total,
-        };
-      }, SNAPSHOT);
+              page: query.page,
+              pageSize: query.pageSize,
+              total,
+            };
+          }, SNAPSHOT),
+        undefined,
+        "organization_members_list",
+      );
+    },
+
+    async listMemberships(actorUserId, organizationId, query) {
+      return runSerializable(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            await requireOrganizationAdmin(
+              transaction,
+              actorUserId,
+              organizationId,
+            );
+            const where = {
+              organizationId,
+              ...(query.userIds ? { userId: { in: query.userIds } } : {}),
+            };
+            const total = await transaction.organizationMembership.count({
+              where,
+            });
+            // One query: group names come with the memberships (no N+1).
+            const memberships =
+              await transaction.organizationMembership.findMany({
+                where,
+                orderBy: [
+                  { user: { name: "asc" } },
+                  { user: { rut: "asc" } },
+                  { userId: "asc" },
+                ],
+                ...pageWindow(query),
+                select: {
+                  ...MEMBERSHIP_SELECT,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      rut: true,
+                      lastActiveAt: true,
+                      disabledAt: true,
+                    },
+                  },
+                  groupMemberships: {
+                    orderBy: [{ group: { name: "asc" } }, { groupId: "asc" }],
+                    select: {
+                      ...PERMISSION_SELECT,
+                      group: { select: { id: true, name: true } },
+                    },
+                  },
+                },
+              });
+            return {
+              memberships: memberships.map(
+                ({ user, groupMemberships, ...membership }) => ({
+                  ...toMembershipDto(membership),
+                  user: {
+                    id: user.id,
+                    name: user.name,
+                    rut: user.rut,
+                    disabled: user.disabledAt !== null,
+                    recentlyActive: isRecentlyActive(
+                      user.lastActiveAt,
+                      user.disabledAt,
+                    ),
+                  },
+                  groups: groupMemberships.map(({ group, ...flags }) => ({
+                    groupId: group.id,
+                    name: group.name,
+                    permissions: permissionsOf(flags),
+                  })),
+                }),
+              ),
+              page: query.page,
+              pageSize: query.pageSize,
+              total,
+            };
+          }, SNAPSHOT),
+        undefined,
+        "organization_memberships_list",
+      );
     },
 
     async createMembership(actorUserId, organizationId, input) {

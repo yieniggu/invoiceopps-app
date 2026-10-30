@@ -591,8 +591,10 @@ describe("organization directory for the platform administrator (AC-15)", () => 
     await screen.findByRole("heading", { level: 2, name: "Academia Norte" });
     expect(screen.getByText("Página 1 de 3")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Anterior" }).hasAttribute("disabled"),
-    ).toBe(true);
+      screen
+        .getByRole("button", { name: "Anterior" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     await screen.findByText("Página 2 de 3");
     expect(window.location.search).toBe("?page=2");
@@ -604,16 +606,16 @@ describe("organization directory for the platform administrator (AC-15)", () => 
       expect(
         screen
           .getByRole("button", { name: "Siguiente" })
-          .hasAttribute("disabled"),
-      ).toBe(false),
+          .getAttribute("aria-disabled"),
+      ).toBeNull(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     await screen.findByText("Página 3 de 3");
     expect(
       screen
         .getByRole("button", { name: "Siguiente" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
   });
 
   it("searches by term, resets to the first page and keeps the term in the URL", async () => {

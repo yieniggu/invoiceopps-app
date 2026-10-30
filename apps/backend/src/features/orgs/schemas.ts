@@ -214,7 +214,7 @@ export const OrganizationCountsSchema = z
   .meta({
     id: "OrganizationCounts",
     description:
-      "memberCount is every member; groupCount is every group for an ADMIN and the platform administrator, only own groups for a plain member",
+      "memberCount is every member; groupCount is every group for an ADMIN, the platform administrator and a member whose organization-level readInvoices is effective, otherwise only own groups",
   });
 
 export const OrganizationDetailResponseSchema = z

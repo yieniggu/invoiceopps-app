@@ -286,7 +286,7 @@ export async function runIntegrationGate({
         APP10_TEST_NAMESPACE: nonce,
       };
       for (const [label, suite, expected] of [
-        ["organization", suites[0], 26],
+        ["organization", suites[0], 24],
       ]) {
         const output = command(
           "pnpm",
