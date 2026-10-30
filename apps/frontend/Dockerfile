@@ -11,9 +11,10 @@ RUN pnpm install --frozen-lockfile
 COPY apps/frontend apps/frontend
 RUN pnpm --filter @invoiceops/frontend build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30.6-alpine
 
 COPY --from=build /workspace/apps/frontend/dist /usr/share/nginx/html
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/frontend/security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 EXPOSE 80

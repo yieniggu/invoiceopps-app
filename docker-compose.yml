@@ -48,6 +48,10 @@ services:
       # The frontend's nginx is the only proxy in front of the backend: trust
       # exactly one hop so the login limiter keys on the real client address.
       AUTH_TRUST_PROXY_HOPS: "1"
+    networks:
+      default:
+        # nginx proxies to this project-specific name (see nginx.conf).
+        aliases: [invoiceops-backend]
     depends_on:
       db:
         condition: service_healthy

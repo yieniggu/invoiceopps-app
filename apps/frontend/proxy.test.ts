@@ -160,6 +160,11 @@ describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
 
 describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
   const source = readFileSync(new URL("./nginx.conf", import.meta.url), "utf8");
+  const securityHeaders = readFileSync(
+    new URL("./security-headers.conf", import.meta.url),
+    "utf8",
+  );
+  const SNIPPET_PATH = "/etc/nginx/snippets/security-headers.conf";
 
   function block(header: string): string {
     const start = source.indexOf(`location ${header} {`);
@@ -182,31 +187,124 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
     );
   });
 
-  it("declares only /api/, = /api, = /openapi.json and the SPA fallback", () => {
+  it("declares only /api/, /assets/, = /api, = /healthz, = /openapi.json and the SPA fallback", () => {
     const locations = [...source.matchAll(/location\s+([^{]+?)\s*\{/g)].map(
       (match) => match[1],
     );
 
     expect(locations.sort()).toEqual(
-      ["/", "/api/", "= /api", "= /openapi.json"].sort(),
+      [
+        "/",
+        "/api/",
+        "/assets/",
+        "= /api",
+        "= /healthz",
+        "= /openapi.json",
+      ].sort(),
     );
     expect(source).toContain("try_files $uri $uri/ /index.html;");
     expect(source).not.toMatch(/location\s+~/);
   });
 
-  it("forwards the proxied locations to the backend keeping Host and the URI untouched", () => {
+  it("forwards the proxied locations to the project-specific upstream keeping the URI untouched", () => {
     for (const header of ["/api/", "= /openapi.json"]) {
       const body = block(header);
-      expect(body, header).toMatch(/proxy_pass http:\/\/backend:3000;/);
-      expect(body, header).toContain("proxy_set_header Host $http_host;");
-      expect(body, header).toContain(
-        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+      expect(body, header).toMatch(
+        /proxy_pass http:\/\/invoiceops-backend:3000;/,
       );
+      expect(body, header).not.toMatch(/\/\/backend:3000/);
+      expect(body, header).toContain("proxy_set_header Host $http_host;");
       expect(body, header).toContain(
         "proxy_set_header X-Forwarded-Proto $scheme;",
       );
       expect(body, header).not.toMatch(/rewrite|try_files/);
     }
+  });
+
+  it("overwrites X-Forwarded-For with the real client and never forwards CF-Connecting-IP", () => {
+    for (const header of ["/api/", "= /openapi.json"]) {
+      const body = block(header);
+      expect(body, header).toContain(
+        "proxy_set_header X-Forwarded-For $remote_addr;",
+      );
+      expect(body, header).not.toContain("$proxy_add_x_forwarded_for");
+      expect(body, header).toContain('proxy_set_header CF-Connecting-IP "";');
+    }
+  });
+
+  it("derives the client address from CF-Connecting-IP only for private ranges", () => {
+    expect(source).toContain("real_ip_header CF-Connecting-IP;");
+    const trusted = [...source.matchAll(/set_real_ip_from\s+([^;]+);/g)].map(
+      (match) => match[1],
+    );
+    expect(trusted.sort()).toEqual(
+      ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"].sort(),
+    );
+    expect(source).not.toMatch(/set_real_ip_from\s+(0\.0\.0\.0|::)\/0/);
+    expect(source).not.toContain("real_ip_recursive on");
+  });
+
+  it("hides the nginx version and compresses text responses", () => {
+    expect(source).toMatch(/^\s*server_tokens off;/m);
+    expect(source).toMatch(/^\s*gzip on;/m);
+    const types = source.match(/gzip_types\s+([^;]+);/)?.[1].split(/\s+/);
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "text/css",
+        "application/javascript",
+        "application/json",
+        "image/svg+xml",
+      ]),
+    );
+  });
+
+  it("declares the security headers once, with `always`, and no includeSubDomains", () => {
+    const directives = securityHeaders.replace(/^\s*#.*$/gm, "");
+    const headers = [...directives.matchAll(/add_header\s+([^;]+);/g)].map(
+      (match) => match[1],
+    );
+    expect(headers.sort()).toEqual(
+      [
+        'Referrer-Policy "same-origin" always',
+        'Strict-Transport-Security "max-age=31536000" always',
+        'X-Content-Type-Options "nosniff" always',
+        'X-Frame-Options "DENY" always',
+      ].sort(),
+    );
+    expect(securityHeaders).not.toMatch(/includeSubDomains|preload/);
+  });
+
+  it("includes the security headers at server level and in every location that sets add_header", () => {
+    expect(source).toContain(`include ${SNIPPET_PATH};`);
+    const locations = [...source.matchAll(/location\s+([^{]+?)\s*\{/g)].map(
+      (match) => match[1],
+    );
+    for (const header of locations) {
+      const body = block(header);
+      if (/add_header/.test(body))
+        expect(body, header).toContain(`include ${SNIPPET_PATH};`);
+    }
+    // Only these two locations declare their own add_header (Cache-Control).
+    expect(
+      locations.filter((header) => /add_header/.test(block(header))).sort(),
+    ).toEqual(["/", "/assets/"]);
+  });
+
+  it("caches hashed assets forever, revalidates index.html and never falls back to the SPA for a missing asset", () => {
+    const assets = block("/assets/");
+    expect(assets).toContain(
+      'add_header Cache-Control "public, max-age=31536000, immutable";',
+    );
+    expect(assets).toContain("try_files $uri =404;");
+    const spa = block("/");
+    expect(spa).toContain('add_header Cache-Control "no-cache";');
+    expect(spa).not.toContain("immutable");
+  });
+
+  it("serves /healthz from nginx itself", () => {
+    const body = block("= /healthz");
+    expect(body).toContain('return 200 "ok\\n";');
+    expect(body).not.toMatch(/proxy_pass|try_files/);
   });
 });
 
