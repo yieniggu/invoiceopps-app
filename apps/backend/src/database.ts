@@ -8,6 +8,8 @@ export interface DatabaseReadiness {
 
 export interface Database extends DatabaseReadiness {
   prisma: PrismaClient;
+  /** Releases the connection pool; call once after the server stopped. */
+  close(): Promise<void>;
 }
 
 export function createDatabase(databaseUrl: string): Database {
@@ -16,6 +18,9 @@ export function createDatabase(databaseUrl: string): Database {
 
   return {
     prisma,
+    async close() {
+      await prisma.$disconnect();
+    },
     async isReady() {
       try {
         await prisma.$queryRaw`SELECT 1`;

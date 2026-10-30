@@ -145,6 +145,11 @@ export interface AppOptions {
    * Undefined keeps "trust proxy" off.
    */
   trustProxyHops?: number;
+  /**
+   * Browser-facing origin (PUBLIC_ORIGIN). When set, cookie-bearing writes
+   * must send exactly this `Origin`; Host and X-Forwarded-Proto are ignored.
+   */
+  publicOrigin?: string;
 }
 
 export function createApp(
@@ -162,6 +167,7 @@ export function createApp(
     invoiceDeletion,
     businessPolicies,
     trustProxyHops,
+    publicOrigin,
   }: AppOptions = {},
 ) {
   const app = express();
@@ -234,7 +240,7 @@ export function createApp(
       return;
     }
 
-    if (request.headers.origin !== requestOrigin(request)) {
+    if (request.headers.origin !== (publicOrigin ?? requestOrigin(request))) {
       sendError(response, 403, "FORBIDDEN_ORIGIN", "Origin not allowed");
       return;
     }

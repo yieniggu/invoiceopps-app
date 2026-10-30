@@ -7,6 +7,8 @@ import {
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
 import { createGroupCatalogService } from "./features/groups/services.js";
+import { publicOriginFromEnv } from "./http/public-origin.js";
+import { logEvent } from "./http/logging.js";
 import { trustProxyHopsFromEnv } from "./http/trust-proxy.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -34,13 +36,59 @@ if (authRateLimitConfig.disabled) {
 // Behind a reverse proxy request.ip is the proxy; set the hop count so the
 // login limiter keys on the real client (see README, AUTH_TRUST_PROXY_HOPS).
 const trustProxyHops = trustProxyHopsFromEnv(process.env.AUTH_TRUST_PROXY_HOPS);
+// Browser-facing origin used by the cookie-write CSRF check (see README).
+const publicOrigin = publicOriginFromEnv(process.env.PUBLIC_ORIGIN);
 const app = createApp(database, createAuthService(database.prisma), {
   authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
   trustProxyHops,
+  publicOrigin,
   groups: createGroupCatalogService(database.prisma),
   businessPolicies: createBusinessPolicyService(database.prisma),
 });
 
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.info(`InvoiceOps backend listening on ${host}:${port}`);
 });
+
+// Graceful stop (docker stop sends SIGTERM): stop accepting connections, let
+// in-flight requests finish, release the database pool, then exit. A hard
+// deadline keeps a stuck connection from outliving the orchestrator's grace
+// period.
+const SHUTDOWN_DEADLINE_MS = 10_000;
+let shuttingDown = false;
+
+function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const deadline = setTimeout(() => {
+    logEvent("error", "shutdown", { reason: signal, outcome: "timeout" });
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
+  deadline.unref();
+
+  server.close((closeError) => {
+    // Idle keep-alive sockets are dropped by close(); the callback fires once
+    // the in-flight requests are done.
+    database
+      .close()
+      .then(() => (closeError ? Promise.reject(closeError) : undefined))
+      .then(
+        () => {
+          logEvent("info", "shutdown", { reason: signal, outcome: "clean" });
+          process.exit(0);
+        },
+        (error: unknown) => {
+          logEvent("error", "shutdown", {
+            reason: signal,
+            outcome: "failed",
+            errorName: error instanceof Error ? error.name : "UnknownError",
+          });
+          process.exit(1);
+        },
+      );
+  });
+  server.closeIdleConnections();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
