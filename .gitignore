@@ -6,3 +6,18 @@ coverage/
 apps/backend/src/generated/
 .codegraph/
 .DS_Store
+
+# Agent tooling and ticket completion notes: never commit
+.agents/
+.claude/
+.windsurf/
+.cursor/
+.codex/
+.opencode/
+skills-lock.json
+**/APP[0-9]*-*.md
+
+# Local provisioning data (RUTs, names, temporary passwords): never commit
+ops/*.local.json
+ops/alumnos*.json
+*.passwords.json
