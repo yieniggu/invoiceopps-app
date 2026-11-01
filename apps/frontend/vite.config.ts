@@ -3,6 +3,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Tests that build local dates (expiry, DST) must not depend on the machine's
+// zone. Set before any worker starts so the forked workers inherit it; it
+// matches the zone Playwright pins in the e2e suite.
+process.env.TZ = "America/Santiago";
+
 // Non-default local ports avoid clashing with other apps on 3000/5173. The
 // IPv4 loopback target avoids `localhost` resolving to another IPv4/IPv6 server.
 // The port comes from the same PORT variable the backend reads, so
@@ -27,6 +32,8 @@ export default defineConfig({
       // nginx answers for `location = /api`.
       "^/api(?:\\?|$)": sameOriginRule,
       "^/openapi\\.json(?:\\?|$)": sameOriginRule,
+      // Swagger UI served by the backend: /docs, /docs/ and its assets.
+      "^/docs(?:/|\\?|$)": sameOriginRule,
     },
   },
   test: {

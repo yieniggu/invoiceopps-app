@@ -1,4 +1,38 @@
+import { randomUUID } from "node:crypto";
+
 import { expect, type Page } from "@playwright/test";
+
+import type { Api } from "./api.ts";
+
+/**
+ * Creates `count` invoices in the organization scope through the real API (one
+ * request each, with its own idempotency key), numbered `${prefix}-001`….
+ * Enough of them make the inbox span several pages.
+ */
+export async function seedInvoices(
+  api: Api,
+  organizationId: string,
+  count: number,
+  prefix: string,
+) {
+  for (let index = 1; index <= count; index += 1) {
+    await api.call(
+      "post",
+      "/invoices",
+      {
+        organizationId,
+        businessId: `${prefix}-${String(index).padStart(3, "0")}`,
+        supplierName: "Proveedor e2e",
+        amountPesos: 1000 + index,
+        currency: "CLP",
+        issuedOn: "2026-10-01",
+        dueOn: "2026-11-01",
+        businessStatus: "PENDING",
+      },
+      { "Idempotency-Key": randomUUID() },
+    );
+  }
+}
 
 const SCOPE_LABEL = "Ver facturas de";
 

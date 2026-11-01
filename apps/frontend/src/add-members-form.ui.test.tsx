@@ -150,7 +150,9 @@ describe("AddMembersForm pre-check (CR-312/CR-313)", () => {
     await pick(1);
     submit("Agregar 1 persona al grupo");
     const button = await screen.findByRole("button", { name: /Comprobando/ });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    // Inert, but not `disabled`: a focused button must keep its focus.
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
     hold.open();
     await waitFor(() => expect(screen.queryByText(/Comprobando/)).toBeNull());
   });

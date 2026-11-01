@@ -43,7 +43,10 @@ describe("RP0-12 DELETE /api/v1/invoices/{invoiceId} OpenAPI contract", () => {
   it("is a session-protected operation in the Invoices tag", () => {
     expect(Object.keys(operation)).not.toHaveLength(0);
     expect(operation.tags).toEqual(["Invoices"]);
-    expect(operation.security).toEqual([{ sessionCookie: [] }]);
+    expect(operation.security).toEqual([
+      { sessionCookie: [] },
+      { bearerAuth: [] },
+    ]);
   });
 
   it("documents the invoiceId path parameter and the organizationId and groupId query", () => {

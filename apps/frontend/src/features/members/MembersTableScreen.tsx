@@ -107,7 +107,7 @@ export function MembersTableScreen<Member extends Person>({
   const scopeNote = pagination ? " en esta página" : "";
 
   return (
-    <div className="screen-stack">
+    <div className="screen-stack screen-fill">
       <BackLink to={backTo}>{backLabel}</BackLink>
       <PageHeader
         eyebrow={eyebrow}

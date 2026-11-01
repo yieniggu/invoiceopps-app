@@ -55,6 +55,11 @@ export interface Operation {
   tag: string;
   /** Requires the web session cookie. */
   secured: boolean;
+  /**
+   * Also accepts `Authorization: Bearer <API token>` (and then no cookie).
+   * Every other operation rejects an Authorization header with a 401.
+   */
+  bearer?: boolean;
   /** Path parameters; names must match the `{name}` segments of `path`. */
   params?: ZodObject;
   /** Request headers, documented one by one; the handler validates them. */
@@ -62,6 +67,11 @@ export interface Operation {
   /** Query parameters, documented one by one; the handler validates them. */
   query?: ZodObject;
   requestBody?: ZodType;
+  /**
+   * Named request body examples shown by Swagger UI. Every value must parse
+   * through `requestBody` (a contract test enforces it).
+   */
+  requestExamples?: Record<string, { summary: string; value: unknown }>;
   responses: Record<number, OperationResponse>;
   /** Accepts a JSON body up to LARGE_JSON_BODY_LIMIT instead of 16 kB. */
   largeBody?: boolean;
@@ -98,6 +108,24 @@ export function createJsonBodyParser(operations: Operation[]): RequestHandler {
     );
     (isLarge ? large : standard)(request, response, next);
   };
+}
+
+/**
+ * Whether a request targets an operation flagged `bearer`, matched by method
+ * and exact path template like the body limit, so no other route can ever
+ * authenticate with an API token. `path` is the full path (API_PREFIX first).
+ */
+export function createBearerRouteMatcher(operations: Operation[]) {
+  const routes = operations
+    .filter((operation) => operation.bearer)
+    .map((operation) => ({
+      method: operation.method.toUpperCase(),
+      pattern: new RegExp(
+        `^${API_PREFIX}${operation.path.replace(/\{\w+\}/g, "[^/]+")}$`,
+      ),
+    }));
+  return (method: string, path: string) =>
+    routes.some((route) => route.method === method && route.pattern.test(path));
 }
 
 export function mountOperations(router: Router, operations: Operation[]) {

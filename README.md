@@ -48,8 +48,9 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    (`/invoices/:invoiceId?organizationId=…&groupId=…`), que muestra el estado de
    la factura y el estado de procesamiento por separado, y ofrece «Eliminar
    factura» a quien tiene el permiso de eliminación aplicable
-   (`deleteOwnInvoices` o `deleteOthersInvoices`); aún no hay crear desde la
-   interfaz.
+   (`deleteOwnInvoices` o `deleteOthersInvoices`). Quien tiene el permiso
+   `createInvoices` ve «Nueva factura» en la bandeja y crea una en la
+   organización o en un grupo.
 6. **Políticas** (`/policies`) está deshabilitada por ahora: el ítem del menú se
    muestra con la insignia «Próximamente» y la ruta responde «No disponible por
    ahora.». El código de la pantalla de políticas se conserva sin enrutar.
@@ -341,15 +342,77 @@ Desde la raíz de `invoiceops-app`, con Docker local disponible y la imagen
 pnpm test:integration
 ```
 
-The runner creates a new isolated container with a unique role and password, a
-loopback-only ephemeral port, and bounded memory and temporary storage. It does
-not use `.env`, persistent volumes, or the Compose `db-test` service. It applies
-the migrations (`20261026000000_initial_recovery_p0` must be the first one, then
-`20261028000000_user_status_activity`, then `20261029000000_invoice_events`), verifies the `_prisma_migrations` ledger name, checksum and
-status against the files on disk, and runs the 24 organization-persistence
-PostgreSQL cases.
+El runner crea un contenedor aislado nuevo con un rol y una contraseña únicos,
+un puerto efímero solo de loopback y memoria y almacenamiento temporal acotados.
+No usa `.env`, volúmenes persistentes ni el servicio `db-test` de Compose. Aplica
+las migraciones (`20261026000000_initial_recovery_p0` debe ser la primera, luego
+`20261028000000_user_status_activity` y después `20261029000000_invoice_events`),
+verifica el nombre, el checksum y el estado del registro `_prisma_migrations`
+contra los archivos en disco y ejecuta los 24 casos de persistencia de
+organizaciones contra PostgreSQL.
 
 ## Alcance actual
+
+### Tokens de API operacionales (RP0-16)
+
+`POST /api/v1/api-tokens` (solo sesión con cookie y la comprobación de `Origin`
+habitual) emite un token `iop_…` para una organización o un grupo:
+`{name, organizationId, groupId?, scopes[], expiresAt}` con `scopes` entre
+`invoices:read`, `invoices:create`, `invoices:delete-own` e
+`invoices:delete-others`, y `expiresAt` futuro y como máximo a 30 días. La
+respuesta `201` (`Cache-Control: no-store`) devuelve `{token, secret}`: el
+secreto se muestra una sola vez y la base guarda solo su hash SHA-256. Los
+scopes no pueden superar los permisos vigentes de la persona en ese alcance
+(si los superan, `403 FORBIDDEN`). `GET /api/v1/api-tokens?organizationId=…[&groupId=…]`
+lista los tokens propios (también los revocados) y
+`DELETE /api/v1/api-tokens/{tokenId}` revoca uno propio (`204`, repetible).
+
+Límites de emisión: cada persona puede intentar emitir como máximo **20 tokens
+cada 15 minutos** (cada intento cuenta, también los inválidos; el exceso
+responde `429 RATE_LIMITED`, el mismo sobre que el inicio de sesión, y se
+desactiva junto con él con `AUTH_RATE_LIMIT_DISABLED` solo en local) y puede
+tener como máximo **50 tokens activos** (ni revocados ni vencidos) por persona
+y organización; el intento 51 responde `409 TOKEN_LIMIT` hasta que revoque o
+venza alguno.
+
+Un token se usa con `Authorization: Bearer iop_…` **solo** en las cuatro
+operaciones de facturas (`POST`/`GET /api/v1/invoices`, `GET`/`DELETE
+/api/v1/invoices/{invoiceId}`), sin cookie ni `Origin`; en cualquier otra ruta
+responde `401`, y Bearer más cookie responde `400 AMBIGUOUS_AUTH`. El token
+nunca amplía permisos: se aplica el AND de los permisos vigentes de su dueño y
+sus scopes. Un token de grupo opera solo en ese grupo y uno de organización en
+cualquier alcance de su organización; lo que el dueño puede pero el token no,
+responde `403 INSUFFICIENT_SCOPE`. Un token desconocido, vencido o revocado, o
+un dueño desactivado, responde `401` con `WWW-Authenticate: Bearer`; con
+contraseña temporal pendiente, `403 ONBOARDING_REQUIRED`. Cambiar la
+contraseña, desactivar al usuario, restablecer su contraseña o cambiar su RUT
+revoca sus tokens.
+
+### Documentación interactiva (Swagger UI)
+
+`/docs` (público, sin cookie; redirige a `/docs/`) sirve Swagger UI desde los
+archivos locales de `swagger-ui-dist` (sin CDN) sobre el `/openapi.json` del
+mismo origen. Para probar las operaciones de facturas desde el navegador:
+emite un token en **Tokens de API** (se muestra **una sola vez**: cópialo
+entonces), abre `/docs`, pulsa **Authorize**, pega el secreto `iop_…` en
+`bearerAuth`, **Authorize** y **Close**; luego abre `POST /api/v1/invoices`,
+**Try it out**, completa `Idempotency-Key` y el cuerpo (hay un ejemplo de
+alcance organización y otro de grupo) y pulsa **Execute**. La autorización
+vive solo en memoria: al recargar hay que pegar el token otra vez. Desde `/docs`
+nunca se envía la cookie de sesión (aunque estés conectado a la app), así que
+solo funciona lo que acepta Bearer; el resto responde `401`. Todas las
+respuestas de `/docs` llevan `Content-Security-Policy: default-src 'self';
+style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';
+frame-ancestors 'none'` (sin scripts en línea ni orígenes externos).
+
+### Clientes de aula (curl y Python)
+
+La guía [`docs/recovery-local-api.md`](docs/recovery-local-api.md) explica cómo
+crear y leer facturas con un token desde `examples/recovery/create-invoice.sh`
+(bash + curl) y `examples/recovery/create-invoice.py` (Python estándar): alcance
+organización y grupo, idempotencia, revocación y manejo de errores. Solo aceptan
+URLs de loopback y leen el token sin eco. `pnpm test:recovery:clients` ejecuta
+esos mismos archivos contra el backend real y PostgreSQL aislado.
 
 ### Autenticación
 
@@ -375,14 +438,15 @@ tokens ni revoca otras sesiones activas del usuario.
 PASSWORD_REUSE`). En una sola transacción actualiza el hash, quita el cambio
 obligatorio, elimina todas las sesiones del usuario, crea una sesión nueva (cookie
 `Set-Cookie` rotada), revoca sus API tokens y registra auditoría. Login y cambio de
-contraseña se serializan por usuario con un bloqueo de fila (`SELECT … FOR
-UPDATE`), de modo que un login iniciado antes del cambio no deja sesión con la
+contraseña se serializan por usuario con un bloqueo de fila (`SELECT … FOR NO
+KEY UPDATE`, que no choca con la clave foránea de una factura creada con un
+token), de modo que un login iniciado antes del cambio no deja sesión con la
 credencial anterior. Con `mustChangePassword` el perfil, el cambio de contraseña y
 el logout (y el `PATCH /api/v1/profile` heredado) son las únicas rutas
 permitidas; el resto responde `403 ONBOARDING_REQUIRED`. La sesión de un usuario
 con contraseña temporal caduca como máximo cuando caduca la temporal. Una petición
 con `Authorization` y cookie de sesión responde `400 AMBIGUOUS_AUTH`; `Authorization`
-sola responde `401` (los Bearer llegan con RP0-16). El perfil incluye `memberships`: por
+sola responde `401` (un token Bearer solo se acepta en las cuatro operaciones de facturas). El perfil incluye `memberships`: por
 organización, `role`, `permissions` y los grupos de esa organización con sus
 `permissions` y `effective` (presentación; el servidor decide). No existe `contexts`.
 
@@ -450,27 +514,29 @@ usuarios (los `null` no colisionan): si otra persona ya los usa, responde
 `409 USER_CONFLICT` y no cambia nada.
 El `username` es único distinguiendo mayúsculas y minúsculas; el `email` se compara recortado y en minúsculas.
 
-### Organization groups
+### Grupos de la organización
 
-`Group` and `GroupMembership` are organization-scoped. A user can belong to
-multiple groups in the same organization, while the database prevents duplicate
-group-user pairs and enforces that every group member has an
-`OrganizationMembership` in that group organization.
+`Group` y `GroupMembership` pertenecen a una organización. Un usuario puede
+pertenecer a varios grupos de la misma organización; la base de datos impide
+pares grupo-usuario duplicados y exige que todo miembro de un grupo tenga una
+`OrganizationMembership` en la organización de ese grupo.
 
-Authenticated users can call `GET /api/v1/groups` (legacy, undocumented) to list only
-their own groups (`id`, `name`, `description`, `organization`) in deterministic
-organization and group order; it does not include the people in them (member
-listings are for the organization `ADMIN` and the platform administrator). Group
-management is scoped under `/api/v1/organizations/:organizationId/groups`; only a
-current `ADMIN` of that organization (or the platform administrator) can create a group
-and add or remove members. The four invoice permission flags live on
-`OrganizationMembership` and `GroupMembership` (default `false`) and are replaced with
-`PUT .../memberships/:userId/permissions` and
-`PUT .../groups/:groupId/memberships/:userId/permissions`; `Group` has none and
-`PATCH .../groups/:groupId` was removed. Effective permissions in a group are
-organization OR group flags; at organization scope, organization flags only. The server validates the current session and resource
-organization for every request, returning safe authorization responses for
-absent sessions, non-members, and users with the USER role.
+Los usuarios autenticados pueden llamar a `GET /api/v1/groups` (heredado, sin
+documentar) para listar solo sus propios grupos (`id`, `name`, `description`,
+`organization`) en orden determinista por organización y grupo; no incluye a las
+personas del grupo (el listado de miembros es para el `ADMIN` de la organización
+y el administrador de plataforma). La gestión de grupos vive bajo
+`/api/v1/organizations/:organizationId/groups`; solo un `ADMIN` vigente de esa
+organización (o el administrador de plataforma) puede crear un grupo y agregar o
+quitar miembros. Las cuatro banderas de permiso de facturas están en
+`OrganizationMembership` y `GroupMembership` (por defecto `false`) y se reemplazan
+con `PUT .../memberships/:userId/permissions` y
+`PUT .../groups/:groupId/memberships/:userId/permissions`; `Group` no tiene
+ninguna y `PATCH .../groups/:groupId` fue eliminado. Los permisos efectivos en un
+grupo son las banderas de la organización O las del grupo; en el alcance de
+organización, solo las de la organización. El servidor valida la sesión vigente y
+la organización del recurso en cada solicitud, y responde de forma segura ante
+sesiones ausentes, no miembros y usuarios con rol USER.
 
 #### Desactivación de usuarios
 
@@ -568,20 +634,21 @@ repetidos (`400` antes de la autoridad), y responden `{ <items>, page, pageSize,
   estado de onboarding, `disabledAt`, roles ni permisos; un usuario desactivado sigue
   visible con `recentlyActive` falso.
 
-JSON request bodies are limited to 16 kB (`413 PAYLOAD_TOO_LARGE` above it).
-Only the five batch operations accept up to 64 kB, enough for 200 members with
-their own permissions: `POST /api/v1/admin/users`,
+Los cuerpos JSON de las solicitudes están limitados a 16 kB (`413 PAYLOAD_TOO_LARGE`
+por encima). Solo las cinco operaciones por lote aceptan hasta 64 kB, suficiente
+para 200 miembros con sus propios permisos: `POST /api/v1/admin/users`,
 `POST /api/v1/organizations/:organizationId/users`,
-`POST .../groups/:groupId/memberships/bulk` and the two bulk
-`PUT .../memberships/permissions`. `POST /api/v1/admin/users` accepts at most 50
-memberships and **200 group grants in total** across all of them (`400` above
-that; the largest valid body, with UUIDs, all flags and the longest name and
-password, is about 42 kB, so it always fits in 64 kB). Every membership write (user provisioning
-included) runs in a SERIALIZABLE transaction with bounded, jittered retries and
-answers `503 RETRYABLE_CONFLICT` with `Retry-After` when they run out: repeat the
-request. Every membership change is also written to the durable
-`PlatformAdministrativeAuditEvent` table in the same transaction (one row per
-affected member, identifiers and the new flags only).
+`POST .../groups/:groupId/memberships/bulk` y los dos
+`PUT .../memberships/permissions` masivos. `POST /api/v1/admin/users` acepta como
+máximo 50 membresías y **200 asignaciones de grupo en total** entre todas ellas
+(`400` por encima; el cuerpo válido más grande, con UUID, todas las banderas y el
+nombre y la contraseña más largos, ronda los 42 kB, así que siempre cabe en
+64 kB). Toda escritura de membresías (incluido el aprovisionamiento de usuarios)
+corre en una transacción SERIALIZABLE con reintentos acotados y con jitter, y
+responde `503 RETRYABLE_CONFLICT` con `Retry-After` cuando se agotan: repite la
+solicitud. Cada cambio de membresía también se escribe en la tabla durable
+`PlatformAdministrativeAuditEvent` en la misma transacción (una fila por miembro
+afectado, solo con identificadores y las banderas nuevas).
 
 El administrador de plataforma tiene autoridad **administrativa** sobre cualquier
 organización o grupo (miembros, roles, grupos y permisos; `404` solo si la
@@ -605,11 +672,11 @@ pnpm --filter @invoiceops/backend platform-administrator transfer "<userId>" --c
 No expone una ruta HTTP de bootstrap ni incluye secretos o valores
 operacionales en sus argumentos.
 
-Cookie-authenticated mutations use an Origin same-origin check in central
-middleware. Requests carrying the session cookie must include an `Origin` that
-exactly matches the request origin; cross-origin requests receive `403` before
-the mutation handler. Vite and Nginx proxy `/api/` and `/openapi.json` on
-the same browser origin as the application.
+Las mutaciones autenticadas con cookie comprueban el mismo origen (`Origin`) en
+un middleware central. Las solicitudes con la cookie de sesión deben incluir un
+`Origin` idéntico al origen de la solicitud; las de otro origen reciben `403`
+antes de llegar al manejador de la mutación. Vite y Nginx hacen proxy de `/api/`,
+`/openapi.json` y `/docs` en el mismo origen del navegador que la aplicación.
 
 ### Policies de negocio versionadas
 

@@ -259,7 +259,12 @@ describe("POST /api/v1/invoices over HTTP", () => {
       `/api/v1/invoices/${INVOICE.id}?organizationId=${ORG}&groupId=${GROUP}`,
     );
     expect(response.headers["idempotency-replayed"]).toBeUndefined();
-    expect(service.createInvoice).toHaveBeenCalledWith("user-1", BODY, KEY);
+    expect(service.createInvoice).toHaveBeenCalledWith(
+      "user-1",
+      BODY,
+      KEY,
+      null,
+    );
   });
 
   it("omits groupId from the Location of an organization-scoped invoice and passes null (AC-01)", async () => {
@@ -281,6 +286,7 @@ describe("POST /api/v1/invoices over HTTP", () => {
       "user-1",
       { ...BODY, groupId: null },
       KEY,
+      null,
     );
   });
 

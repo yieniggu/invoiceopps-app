@@ -163,13 +163,14 @@ describe("MemberPermissionsEditor, draft mode", () => {
     expect(checked("Leer facturas")).toBe(true);
   });
 
-  it("locks every flag while disabled", () => {
+  it("locks every flag while disabled: aria-disabled and ignored, never `disabled`", () => {
+    const onChange = vi.fn();
     renderWithIdentity(
       <MemberPermissionsEditor
         memberName="Ada"
         level="organization"
         value={NO_PERMISSIONS}
-        onChange={() => {}}
+        onChange={onChange}
         disabled
       />,
     );
@@ -177,8 +178,12 @@ describe("MemberPermissionsEditor, draft mode", () => {
     const controls = within(group).getAllByRole("button");
     // Four toggles plus "Marcar todos" and "Desmarcar todos".
     expect(controls).toHaveLength(6);
-    for (const control of controls)
-      expect(control.matches(":disabled")).toBe(true);
+    for (const control of controls) {
+      expect(control.getAttribute("aria-disabled")).toBe("true");
+      expect(control.matches(":disabled")).toBe(false);
+      fireEvent.click(control);
+    }
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
@@ -225,8 +230,8 @@ describe("MemberPermissionsEditor, saved mode", () => {
     expect(
       screen
         .getByRole("button", { name: "Leer facturas" })
-        .matches(":disabled"),
-    ).toBe(true);
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
     // A second click while pending sends nothing more.
     fireEvent.click(save());
     expect(transport.calls(PUT)).toHaveLength(1);

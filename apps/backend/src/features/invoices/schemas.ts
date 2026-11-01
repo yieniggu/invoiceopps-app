@@ -22,7 +22,12 @@ const businessStatus = z.enum(["PENDING", "APPROVED", "REJECTED", "CANCELLED"]);
 /** Opaque client-generated key of a retryable write (Idempotency-Key header). */
 export const IdempotencyKeySchema = z
   .string()
-  .regex(/^[A-Za-z0-9_-]{16,128}$/, "Expected 16 to 128 of A-Z a-z 0-9 _ -");
+  .regex(/^[A-Za-z0-9_-]{16,128}$/, "Expected 16 to 128 of A-Z a-z 0-9 _ -")
+  .meta({
+    description:
+      "Client-generated key that makes the creation retryable: repeating the request with the same key and body returns the stored response (Idempotency-Replayed: true); the same key with another body is a 409.",
+    examples: ["inv-2026-10-25-0001-abcd"],
+  });
 
 export const IdempotencyKeyHeaderSchema = z.object({
   "Idempotency-Key": IdempotencyKeySchema,
@@ -62,6 +67,37 @@ export const InvoiceCreateRequestSchema = z
       },
     ],
   });
+
+/** Request examples of POST /invoices shown by Swagger UI (amounts in CLP pesos). */
+export const INVOICE_CREATE_EXAMPLES = {
+  organization: {
+    summary: "Organization scope (no groupId)",
+    value: {
+      organizationId: "11111111-1111-4111-8111-111111111111",
+      businessId: "FAC-2026-001",
+      supplierName: "Proveedor local",
+      amountPesos: 12500,
+      currency: "CLP",
+      issuedOn: "2026-10-25",
+      dueOn: "2026-11-25",
+      businessStatus: "PENDING",
+    },
+  },
+  group: {
+    summary: "Group scope (with groupId)",
+    value: {
+      organizationId: "11111111-1111-4111-8111-111111111111",
+      groupId: "22222222-2222-4222-8222-222222222222",
+      businessId: "FAC-2026-002",
+      supplierName: "Servicios Andes SpA",
+      amountPesos: 250000,
+      currency: "CLP",
+      issuedOn: "2026-10-26",
+      dueOn: "2026-11-26",
+      businessStatus: "APPROVED",
+    },
+  },
+} as const;
 
 export const InvoiceSchema = z
   .object({

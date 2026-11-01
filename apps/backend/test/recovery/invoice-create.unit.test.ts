@@ -247,6 +247,7 @@ describe("createInvoice unique-violation retries (CR-326)", () => {
       "44444444-4444-4444-8444-444444444444",
       InvoiceCreateRequestSchema.parse(VALID),
       "a".repeat(16),
+      null,
     );
 
     await expect(outcome).rejects.toMatchObject({

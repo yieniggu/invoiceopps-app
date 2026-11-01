@@ -16,6 +16,7 @@ export async function runRecoveryPostgresTests({
   spawn = spawnSync,
   reset = runRecoveryReset,
   log = console.info,
+  filter = ".postgres.test.ts",
 } = {}) {
   const url = env.RECOVERY_TEST_DATABASE_URL;
   if (!url) {
@@ -58,7 +59,7 @@ export async function runRecoveryPostgresTests({
       "exec",
       "vitest",
       "run",
-      ".postgres.test.ts",
+      filter,
       "--testTimeout",
       "30000",
       // The files share one test database (singleton administrator, truncated

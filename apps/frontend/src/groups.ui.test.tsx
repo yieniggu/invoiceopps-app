@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   screen,
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderApp } from "./test/renderApp";
 import {
+  deferred,
   errorResponse,
   groupMembershipsPage,
   jsonResponse,
@@ -906,6 +908,13 @@ describe("adding members to a group", () => {
       }),
     );
     expect(screen.getByText("2 personas seleccionadas.")).toBeTruthy();
+    // The picked people live in a block that is folded until asked for.
+    expect(screen.queryByRole("region", { name: "Ada Lovelace" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "2 personas seleccionadas · Ajustar permisos",
+      }),
+    );
     // Each chosen person gets a card with a one-line summary and an editor.
     const adaCard = screen.getByRole("region", { name: "Ada Lovelace" });
     fireEvent.click(
@@ -957,6 +966,144 @@ describe("adding members to a group", () => {
         ({ method, path }) => method !== "GET" && !path.endsWith("/bulk"),
       ),
     ).toEqual([]);
+  });
+
+  it("keeps the list first and the pager last above the folded picked-people block and the submit (CR-344)", async () => {
+    mockTransport(routes());
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Ada Lovelace/ }),
+    );
+    const form = screen.getByRole("form", {
+      name: "Personas de la organización",
+    });
+    const pager = within(form).getByRole("group", { name: "Paginación" });
+    const submit = within(form).getByRole("button", {
+      name: "Agregar 1 persona al grupo",
+    });
+    const toggle = within(form).getByRole("button", {
+      name: "1 persona seleccionada · Ajustar permisos",
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const before = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const list = within(form)
+      .getByRole("checkbox", { name: /Ada Lovelace/ })
+      .closest("ul")!;
+    const heading = within(form).getByRole("heading", {
+      level: 2,
+      name: "Personas de la organización",
+    });
+    expect(before(heading, list)).toBe(true);
+    expect(before(list, pager)).toBe(true);
+    expect(before(pager, toggle)).toBe(true);
+    expect(before(toggle, submit)).toBe(true);
+    // Folded: no card and no bulk editor are rendered, and the pager's own
+    // fieldset is the last thing of the list area.
+    expect(within(form).queryByRole("region")).toBeNull();
+    const area = pager.closest("fieldset")!;
+    expect(area.lastElementChild).toBe(pager);
+    // Unfolded: the heading levels stay coherent (h2 > h3).
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      within(form).getByRole("heading", {
+        level: 3,
+        name: "Aplicar los mismos permisos a todos",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(form).getByRole("region", { name: "Ada Lovelace" }),
+    ).toBeTruthy();
+    expect(before(pager, toggle)).toBe(true);
+    const levels = within(form)
+      .getAllByRole("heading")
+      .map((node) => Number(node.tagName.slice(1)));
+    expect(levels[0]).toBe(2);
+    expect(levels).toEqual([2, 2, 3, 3]);
+    // Folding again keeps the people picked.
+    fireEvent.click(toggle);
+    expect(within(form).queryByRole("region")).toBeNull();
+    expect(screen.getByText("1 persona seleccionada.")).toBeTruthy();
+  });
+
+  it("keeps the focused control mounted and focused while the batch is sent, then lands on the alert (CR-348)", async () => {
+    const response = deferred<Response>();
+    mockTransport({ ...routes(), [BULK_POST]: () => response.promise });
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Ada Lovelace/ }),
+    );
+    const submit = screen.getByRole("button", {
+      name: "Agregar 1 persona al grupo",
+    });
+    submit.focus();
+    fireEvent.click(submit);
+    const sending = await screen.findByRole("button", {
+      name: "Agregando...",
+    });
+    // The same button, still focused, inert but not `disabled`.
+    expect(sending).toBe(submit);
+    expect(document.activeElement).toBe(submit);
+    expect(submit.getAttribute("aria-disabled")).toBe("true");
+    expect(submit).toHaveProperty("disabled", false);
+    const form = screen.getByRole("form", {
+      name: "Personas de la organización",
+    });
+    expect(form.querySelector("fieldset[disabled]")).toBeNull();
+    // Picking or unpicking while pending is ignored.
+    const ada = screen.getByRole("checkbox", { name: /Ada Lovelace/ });
+    expect(ada.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(ada);
+    expect(screen.getByText("1 persona seleccionada.")).toBeTruthy();
+    fireEvent.click(submit);
+    await act(async () =>
+      response.resolve(errorResponse(500, "INTERNAL_ERROR")),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("No se agregó a nadie.");
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+  });
+
+  it("ignores permission edits while the batch is sent without disabling their controls (CR-348)", async () => {
+    const response = deferred<Response>();
+    const transport = mockTransport({
+      ...routes(),
+      [BULK_POST]: () => response.promise,
+    });
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Ada Lovelace/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "1 persona seleccionada · Ajustar permisos",
+      }),
+    );
+    const shared = screen.getByRole("region", {
+      name: "Aplicar los mismos permisos a todos",
+    });
+    const apply = within(shared).getByRole("button", {
+      name: "Aplicar a todos los seleccionados",
+    });
+    apply.focus();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Agregar 1 persona al grupo" }),
+    );
+    await screen.findByRole("button", { name: "Agregando..." });
+    expect(apply.getAttribute("aria-disabled")).toBe("true");
+    expect(apply).toHaveProperty("disabled", false);
+    const create = within(shared).getByRole("button", {
+      name: "Crear facturas",
+    });
+    expect(create.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(create);
+    expect(create.getAttribute("aria-pressed")).toBe("false");
+    await act(async () =>
+      response.resolve(jsonResponse({ memberships: [adaInGroup()] }, 201)),
+    );
+    await screen.findByText("1 persona agregada al grupo.");
+    expect(transport.calls(BULK_POST)).toHaveLength(1);
   });
 
   it("explains a rejected batch, says nobody was added and keeps the selection for a retry", async () => {

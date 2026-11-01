@@ -9,6 +9,7 @@ import {
 } from "../../generated/prisma/client.js";
 import { logEvent } from "../../http/logging.js";
 import { formatRut, parseRut } from "../../rut.js";
+import { runSerializable } from "../../transactions.js";
 import {
   PERMISSION_SELECT,
   permissionsOf,
@@ -122,7 +123,7 @@ function parseLogin(input: { rut: unknown; password: unknown }) {
   }
 }
 
-function hashSessionToken(sessionToken: string) {
+export function hashSessionToken(sessionToken: string) {
   return createHash("sha256").update(sessionToken).digest("base64");
 }
 
@@ -181,15 +182,22 @@ export function temporaryPasswordExpired(
 }
 
 /**
- * Locks User rows FOR UPDATE in ascending id order in one statement, so every
- * caller that needs several users takes them in the same global order. See
- * the lock order in features/groups/locks.ts: User rows come first.
+ * Locks User rows FOR NO KEY UPDATE in ascending id order in one statement, so
+ * every caller that needs several users takes them in the same global order.
+ * See the lock order in features/groups/locks.ts: User rows come first.
+ *
+ * NO KEY UPDATE, not UPDATE: it still excludes every other user lock and
+ * every row update, but it does not conflict with the FOR KEY SHARE that a
+ * foreign key to User (an invoice insert, a session or token create) takes.
+ * With FOR UPDATE a credential change deadlocked against a Bearer write that
+ * holds the ApiToken row FOR SHARE and then inserts an invoice. The User id
+ * never changes and no User row is deleted, so the weaker lock loses nothing.
  */
 export async function lockUsers(
   transaction: Prisma.TransactionClient,
   userIds: string[],
 ) {
-  await transaction.$queryRaw`SELECT id FROM "User" WHERE id = ANY(${userIds}::text[]) ORDER BY id FOR UPDATE`;
+  await transaction.$queryRaw`SELECT id FROM "User" WHERE id = ANY(${userIds}::text[]) ORDER BY id FOR NO KEY UPDATE`;
 }
 
 // Serializes every credential change, session creation and deactivation per
@@ -518,65 +526,72 @@ export function createAuthService(
       const newSessionToken = randomBytes(32).toString("base64url");
       const tokenHash = hashSessionToken(sessionToken);
 
-      await prisma.$transaction(async (transaction) => {
-        await lockUser(transaction, session.userId);
-        // Re-verify under the lock: a concurrent change or logout invalidates
-        // this attempt instead of reviving the old credential or session.
-        const user = await transaction.user.findUnique({
-          where: { id: session.userId },
-          select: {
-            passwordHash: true,
-            mustChangePassword: true,
-            temporaryPasswordExpiresAt: true,
-            disabledAt: true,
-          },
-        });
-        const activeSession = await transaction.session.findUnique({
-          where: { tokenHash },
-          select: { expiresAt: true },
-        });
-        const at = now();
-        if (
-          !user ||
-          user.disabledAt ||
-          user.passwordHash !== currentHash ||
-          temporaryPasswordExpired(user, at) ||
-          !activeSession ||
-          activeSession.expiresAt <= at
-        ) {
-          throw new AuthError(401, UNAUTHENTICATED_MESSAGE);
-        }
+      // Retried on a deadlock or lost race: a concurrent Bearer write holds the
+      // ApiToken row share lock that the token revocation below must wait for.
+      await runSerializable(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            await lockUser(transaction, session.userId);
+            // Re-verify under the lock: a concurrent change or logout invalidates
+            // this attempt instead of reviving the old credential or session.
+            const user = await transaction.user.findUnique({
+              where: { id: session.userId },
+              select: {
+                passwordHash: true,
+                mustChangePassword: true,
+                temporaryPasswordExpiresAt: true,
+                disabledAt: true,
+              },
+            });
+            const activeSession = await transaction.session.findUnique({
+              where: { tokenHash },
+              select: { expiresAt: true },
+            });
+            const at = now();
+            if (
+              !user ||
+              user.disabledAt ||
+              user.passwordHash !== currentHash ||
+              temporaryPasswordExpired(user, at) ||
+              !activeSession ||
+              activeSession.expiresAt <= at
+            ) {
+              throw new AuthError(401, UNAUTHENTICATED_MESSAGE);
+            }
 
-        await transaction.user.update({
-          where: { id: session.userId },
-          data: {
-            passwordHash: newHash,
-            mustChangePassword: false,
-            temporaryPasswordExpiresAt: null,
-          },
-        });
-        await transaction.session.deleteMany({
-          where: { userId: session.userId },
-        });
-        await transaction.session.create({
-          data: {
-            tokenHash: hashSessionToken(newSessionToken),
-            userId: session.userId,
-            expiresAt: new Date(at.getTime() + SESSION_LIFETIME_MS),
-          },
-        });
-        await transaction.apiToken.updateMany({
-          where: { userId: session.userId, revokedAt: null },
-          data: { revokedAt: at },
-        });
-        await transaction.platformAdministrativeAuditEvent.create({
-          data: {
-            type: PlatformAdministrativeAuditEventType.PASSWORD_CHANGED,
-            actorUserId: session.userId,
-            targetUserId: session.userId,
-          },
-        });
-      });
+            await transaction.user.update({
+              where: { id: session.userId },
+              data: {
+                passwordHash: newHash,
+                mustChangePassword: false,
+                temporaryPasswordExpiresAt: null,
+              },
+            });
+            await transaction.session.deleteMany({
+              where: { userId: session.userId },
+            });
+            await transaction.session.create({
+              data: {
+                tokenHash: hashSessionToken(newSessionToken),
+                userId: session.userId,
+                expiresAt: new Date(at.getTime() + SESSION_LIFETIME_MS),
+              },
+            });
+            await transaction.apiToken.updateMany({
+              where: { userId: session.userId, revokedAt: null },
+              data: { revokedAt: at },
+            });
+            await transaction.platformAdministrativeAuditEvent.create({
+              data: {
+                type: PlatformAdministrativeAuditEventType.PASSWORD_CHANGED,
+                actorUserId: session.userId,
+                targetUserId: session.userId,
+              },
+            });
+          }),
+        undefined,
+        "auth.changePassword",
+      );
 
       return { sessionToken: newSessionToken };
     },

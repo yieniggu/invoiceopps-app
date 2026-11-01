@@ -24,12 +24,11 @@ describe("createInvoiceReadService transaction failures (CR-328)", () => {
     const { service, transaction } = serviceFailingWith("P2028");
 
     const outcome = await service
-      .listInvoices("user-1", {
-        organizationId: ORG,
-        ungrouped: false,
-        page: 1,
-        pageSize: 20,
-      })
+      .listInvoices(
+        "user-1",
+        { organizationId: ORG, ungrouped: false, page: 1, pageSize: 20 },
+        null,
+      )
       .catch((error: unknown) => error);
 
     expect(outcome).toBeInstanceOf(ApiError);
@@ -42,7 +41,11 @@ describe("createInvoiceReadService transaction failures (CR-328)", () => {
     const { service } = serviceFailingWith("P2028");
 
     const outcome = await service
-      .getInvoice("user-1", { invoiceId: INVOICE_ID, organizationId: ORG })
+      .getInvoice(
+        "user-1",
+        { invoiceId: INVOICE_ID, organizationId: ORG },
+        null,
+      )
       .catch((error: unknown) => error);
 
     expect(outcome).toMatchObject({ status: 503, code: "RETRYABLE_CONFLICT" });
@@ -52,7 +55,11 @@ describe("createInvoiceReadService transaction failures (CR-328)", () => {
     const { service } = serviceFailingWith("P1001");
 
     const outcome = await service
-      .getInvoice("user-1", { invoiceId: INVOICE_ID, organizationId: ORG })
+      .getInvoice(
+        "user-1",
+        { invoiceId: INVOICE_ID, organizationId: ORG },
+        null,
+      )
       .catch((error: unknown) => error);
 
     expect(outcome).not.toBeInstanceOf(ApiError);

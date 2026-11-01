@@ -42,6 +42,7 @@ const SERIALIZABLE_OPERATIONS = [
   ["delete", "/api/v1/admin/users/{userId}/deactivation"],
   ["patch", "/api/v1/admin/users/{userId}"],
   ["post", "/api/v1/admin/users/{userId}/password-reset"],
+  ["post", "/api/v1/auth/change-password"],
 ] as const;
 
 describe("CR-102 RETRYABLE_CONFLICT contract", () => {

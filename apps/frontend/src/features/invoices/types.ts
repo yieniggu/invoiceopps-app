@@ -60,3 +60,23 @@ export interface InvoiceListRequest {
   page: number;
   pageSize: number;
 }
+
+/**
+ * Body of POST /invoices. The server owns the creator, the processing status
+ * and the id, so none of them is here; `groupId` is absent in the organization
+ * scope (never null or empty).
+ */
+export interface InvoiceCreateInput {
+  organizationId: string;
+  groupId?: string;
+  businessId: string;
+  supplierName: string;
+  amountPesos: number;
+  currency: "CLP";
+  issuedOn: string;
+  dueOn: string;
+  businessStatus: BusinessStatus;
+}
+
+/** Invoice as POST /invoices answers it: the stored fields, without `groupName`. */
+export type CreatedInvoice = Omit<Invoice, "groupName">;

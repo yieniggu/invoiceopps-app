@@ -8,6 +8,7 @@ import {
 import { Link, useLocation } from "react-router";
 import {
   Building2,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   ShieldCheck,
@@ -45,6 +46,7 @@ export const primaryDestinations: Destination[] = [
   },
   { label: "Organizaciones", to: paths.organizations, icon: Building2 },
   { label: "Grupos", to: paths.groups, icon: Users },
+  { label: "Tokens de API", to: paths.apiTokens, icon: KeyRound },
 ];
 const adminDestination: Destination = {
   label: "Admin",
@@ -98,6 +100,7 @@ export function AppShell({
   isLoggingOut,
   isPlatformAdministrator = false,
   showInvoices = true,
+  showApiTokens = false,
 }: {
   children: ReactNode;
   /**
@@ -105,6 +108,8 @@ export function AppShell({
    * administrator of an organization is not one.
    */
   showInvoices?: boolean;
+  /** «Tokens de API» is offered to people with an organization membership. */
+  showApiTokens?: boolean;
   /** Shows the Admin entry above the profile and logout items. */
   isPlatformAdministrator?: boolean;
   onLogout: () => void;
@@ -290,7 +295,11 @@ export function AppShell({
           <nav id="app-sidebar-nav" aria-label="Navegación principal">
             <ul className="nav-group">
               {primaryDestinations
-                .filter(({ to }) => showInvoices || to !== paths.invoices)
+                .filter(
+                  ({ to }) =>
+                    (showInvoices || to !== paths.invoices) &&
+                    (showApiTokens || to !== paths.apiTokens),
+                )
                 .map(renderItem)}
             </ul>
             <ul className="nav-group nav-group-bottom">

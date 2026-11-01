@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "install:browsers": "playwright install chromium",
+    "test": "node --test support/global-teardown.test.ts",
     "test:e2e": "playwright test",
+    "test:recovery:swagger": "playwright test tests/swagger.spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

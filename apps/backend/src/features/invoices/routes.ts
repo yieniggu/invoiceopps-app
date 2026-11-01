@@ -1,17 +1,19 @@
 import type { Operation } from "../../http/registry.js";
 import {
+  bearerForbiddenResponse,
+  bearerUnauthenticatedResponse,
   errorResponse,
-  forbiddenResponse,
   notFoundResponse,
   retryableConflictResponse,
   retryableReadConflictResponse,
-  unauthenticatedResponse,
   validationResponse,
 } from "../../http/standard-responses.js";
 import type { AuthService } from "../auth/services.js";
+import type { ApiTokenAuthenticator } from "../api-tokens/bearer.js";
 import { createInvoiceController } from "./controllers.js";
 import {
   IdempotencyKeyHeaderSchema,
+  INVOICE_CREATE_EXAMPLES,
   InvoiceCreateRequestSchema,
   InvoiceTargetQuerySchema,
   InvoiceListQuerySchema,
@@ -33,8 +35,15 @@ export function createInvoiceOperations(
   invoices: InvoiceCreateService | undefined,
   reads: InvoiceReadService | undefined,
   deletion: InvoiceDeleteService | undefined,
+  tokens?: ApiTokenAuthenticator,
 ): Operation[] {
-  const controller = createInvoiceController(auth, invoices, reads, deletion);
+  const controller = createInvoiceController(
+    auth,
+    invoices,
+    reads,
+    deletion,
+    tokens,
+  );
 
   return [
     {
@@ -44,6 +53,7 @@ export function createInvoiceOperations(
         "List the invoices of an organization, of one group or of no group, newest first",
       tag: TAG,
       secured: true,
+      bearer: true,
       query: InvoiceListQuerySchema,
       responses: {
         200: {
@@ -54,8 +64,8 @@ export function createInvoiceOperations(
         400: validationResponse(
           "unknown or repeated query parameter, malformed organizationId or groupId, groupId together with ungrouped=true, unknown businessStatus, impossible or inverted issued dates, q over 120 characters, page outside 1..10000 or pageSize outside 1..100",
         ),
-        401: unauthenticatedResponse,
-        403: forbiddenResponse(
+        401: bearerUnauthenticatedResponse,
+        403: bearerForbiddenResponse(
           "the actor lacks readInvoices in this scope (organization flags for the whole organization or ungrouped invoices; organization OR group flags in a group), or the organization is disabled",
         ),
         404: notFoundResponse(
@@ -71,6 +81,7 @@ export function createInvoiceOperations(
       summary: "Get one invoice by id within its organization context",
       tag: TAG,
       secured: true,
+      bearer: true,
       params: InvoiceParamsSchema,
       query: InvoiceTargetQuerySchema,
       responses: {
@@ -82,8 +93,8 @@ export function createInvoiceOperations(
         400: validationResponse(
           "missing or malformed organizationId, malformed groupId, or an unknown query parameter",
         ),
-        401: unauthenticatedResponse,
-        403: forbiddenResponse(
+        401: bearerUnauthenticatedResponse,
+        403: bearerForbiddenResponse(
           "the actor lacks readInvoices in the invoice scope, or the organization is disabled",
         ),
         404: notFoundResponse(
@@ -100,6 +111,7 @@ export function createInvoiceOperations(
         "Logically delete an invoice by id within its organization context, idempotently",
       tag: TAG,
       secured: true,
+      bearer: true,
       params: InvoiceParamsSchema,
       query: InvoiceTargetQuerySchema,
       responses: {
@@ -110,8 +122,8 @@ export function createInvoiceOperations(
         400: validationResponse(
           "missing or malformed organizationId, malformed groupId, or an unknown query parameter",
         ),
-        401: unauthenticatedResponse,
-        403: forbiddenResponse(
+        401: bearerUnauthenticatedResponse,
+        403: bearerForbiddenResponse(
           "the invoice is in the actor's scope but the actor lacks the applicable delete flag: deleteOwnInvoices for an invoice the actor created, deleteOthersInvoices otherwise (organization flags for an organization invoice; organization OR group flags for a group invoice); readInvoices and createInvoices are not required; or the organization is disabled",
         ),
         404: notFoundResponse(
@@ -128,8 +140,10 @@ export function createInvoiceOperations(
         "Create an invoice in an organization or in one of its groups, idempotently",
       tag: TAG,
       secured: true,
+      bearer: true,
       headers: IdempotencyKeyHeaderSchema,
       requestBody: InvoiceCreateRequestSchema,
+      requestExamples: INVOICE_CREATE_EXAMPLES,
       responses: {
         201: {
           description:
@@ -148,8 +162,8 @@ export function createInvoiceOperations(
         400: validationResponse(
           "missing or malformed Idempotency-Key (16 to 128 of A-Z a-z 0-9 _ -), or an invalid or unknown body field; nothing is persisted",
         ),
-        401: unauthenticatedResponse,
-        403: forbiddenResponse(
+        401: bearerUnauthenticatedResponse,
+        403: bearerForbiddenResponse(
           "the actor lacks createInvoices in this scope (organization flags, or organization OR group flags in a group), or the organization is disabled; checked before any stored response is read",
         ),
         404: notFoundResponse(

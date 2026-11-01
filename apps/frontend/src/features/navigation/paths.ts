@@ -36,6 +36,7 @@ export const paths = {
   /** Inbox with its context, filters and page (`search` without the `?`). */
   invoicesWith: (search: string) =>
     search ? `/invoices?${search}` : "/invoices",
+  newInvoice: "/invoices/new",
   /** Detail; the organization (and the invoice's group) travel in the URL. */
   invoice: (
     invoiceId: string,
@@ -46,6 +47,7 @@ export const paths = {
     return `/invoices/${segment(invoiceId)}?${query}`;
   },
   policies: "/policies",
+  apiTokens: "/api-tokens",
   profile: "/profile",
   changePassword: "/change-password",
   organizations: "/organizations",

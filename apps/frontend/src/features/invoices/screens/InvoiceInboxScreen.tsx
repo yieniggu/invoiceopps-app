@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { EmptyState } from "../../../components/EmptyState";
+import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import { PaginationControls } from "../../../components/PaginationControls";
 import { Toast } from "../../../components/Toast";
@@ -18,6 +19,7 @@ import {
   type FilterChangeOptions,
 } from "../components/InvoiceFilterBar";
 import { InvoiceTable, InvoiceTableSkeleton } from "../components/InvoiceTable";
+import { hasCreateAccess } from "../invoiceCreateScopes";
 import { useInvoiceScopeOptions } from "../hooks/useInvoiceScopeOptions";
 import { useInvoicesQuery } from "../hooks/useInvoices";
 import {
@@ -36,6 +38,11 @@ import {
 } from "../invoiceScopes";
 import type { InvoiceFilters, InvoiceScope } from "../types";
 
+/** Entry to the create form, offered only to someone who can create somewhere. */
+function NewInvoiceLink() {
+  return <LinkButton to={paths.newInvoice}>Nueva factura</LinkButton>;
+}
+
 function listErrorText(error: unknown, forbidden: boolean) {
   if (forbidden)
     return "Ya no tienes permiso para ver estas facturas. Estamos actualizando tus permisos.";
@@ -52,10 +59,12 @@ function InvoiceInbox({
   options,
   selected,
   filters,
+  canCreate,
 }: {
   options: readonly InvoiceScopeOption[];
   selected: InvoiceScopeOption;
   filters: InvoiceFilters;
+  canCreate: boolean;
 }) {
   const navigate = useNavigate();
   const scope = selected.context;
@@ -141,7 +150,11 @@ function InvoiceInbox({
         title="Facturas"
         description={selected.summary}
         action={
-          inverted ? undefined : (
+          inverted ? (
+            canCreate ? (
+              <NewInvoiceLink />
+            ) : undefined
+          ) : (
             <div className="inbox-header-actions">
               <p className="inbox-count" role="status">
                 {countText}
@@ -164,6 +177,7 @@ function InvoiceInbox({
                 />
                 Actualizar
               </button>
+              {canCreate ? <NewInvoiceLink /> : null}
             </div>
           )
         }
@@ -307,6 +321,7 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
     loadingOrganizationIds.includes(requested.organizationId) &&
     !options.some(({ value }) => value === invoiceScopeValue(requested));
   const filters = invoiceFiltersFromSearch(params);
+  const canCreate = hasCreateAccess(profile);
 
   return (
     <div className="screen-stack screen-fill">
@@ -340,7 +355,10 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
         </>
       ) : selected === undefined ? (
         <>
-          <PageHeader title="Facturas" />
+          <PageHeader
+            title="Facturas"
+            action={canCreate ? <NewInvoiceLink /> : undefined}
+          />
           <EmptyState
             compact
             icon={ReceiptText}
@@ -349,7 +367,12 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
           />
         </>
       ) : (
-        <InvoiceInbox options={options} selected={selected} filters={filters} />
+        <InvoiceInbox
+          options={options}
+          selected={selected}
+          filters={filters}
+          canCreate={canCreate}
+        />
       )}
     </div>
   );

@@ -30,10 +30,12 @@ const LEVEL_LABEL: Record<PermissionsLevel, string> = {
 function PermissionToggle({
   label,
   on,
+  locked,
   onToggle,
 }: {
   label: string;
   on: boolean;
+  locked: boolean;
   onToggle: () => void;
 }) {
   const Icon = on ? Minus : Plus;
@@ -42,7 +44,10 @@ function PermissionToggle({
       type="button"
       className={`permission-toggle${on ? " is-on" : ""}`}
       aria-pressed={on}
-      onClick={onToggle}
+      aria-disabled={locked || undefined}
+      onClick={() => {
+        if (!locked) onToggle();
+      }}
     >
       <Icon aria-hidden="true" focusable="false" size={18} />
       <span className="permission-toggle-label">{label}</span>
@@ -55,7 +60,9 @@ function PermissionToggle({
  * mode: no network, the parent owns the value (forms that create things).
  * `SavedMemberPermissionsEditor` adds the save flow for existing members.
  * With `collapsible` the editor folds behind a chevron and shows "n de 4
- * permisos" while folded.
+ * permisos" while folded. `disabled` locks the controls with `aria-disabled`
+ * (and ignores their clicks) instead of the `disabled` attribute: a disabled
+ * control that has focus sends it to the page.
  */
 export function MemberPermissionsEditor({
   memberName,
@@ -90,16 +97,20 @@ export function MemberPermissionsEditor({
         <button
           type="button"
           className="secondary-button"
-          disabled={disabled}
-          onClick={() => onChange({ ...ALL_PERMISSIONS })}
+          aria-disabled={disabled || undefined}
+          onClick={() => {
+            if (!disabled) onChange({ ...ALL_PERMISSIONS });
+          }}
         >
           Marcar todos
         </button>
         <button
           type="button"
           className="secondary-button"
-          disabled={disabled}
-          onClick={() => onChange({ ...NO_PERMISSIONS })}
+          aria-disabled={disabled || undefined}
+          onClick={() => {
+            if (!disabled) onChange({ ...NO_PERMISSIONS });
+          }}
         >
           Desmarcar todos
         </button>
@@ -110,6 +121,7 @@ export function MemberPermissionsEditor({
             key={flag}
             label={label}
             on={value[flag]}
+            locked={disabled}
             onToggle={() => onChange({ ...value, [flag]: !value[flag] })}
           />
         ))}
@@ -118,7 +130,7 @@ export function MemberPermissionsEditor({
   );
 
   return (
-    <fieldset className="permission-grid" disabled={disabled}>
+    <fieldset className="permission-grid">
       <legend>{legend}</legend>
       {collapsible ? (
         <button

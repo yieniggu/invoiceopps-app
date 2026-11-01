@@ -9,6 +9,7 @@ import config from "./vite.config";
 const expectedTarget = `http://127.0.0.1:${process.env.PORT || "4380"}`;
 const API_PREFIX = "/api/";
 const OPENAPI_PATH = "/openapi.json";
+const DOCS_KEY = "^/docs(?:/|\\?|$)";
 
 // Vite matches a "^" key as a RegExp and any other key as a URL prefix.
 function matchingKeys(path: string): string[] {
@@ -82,15 +83,16 @@ async function withProxiedBackend(
 
 const BARE_API_KEY = "^/api(?:\\?|$)";
 
-describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
-  it("declares only the /api/ prefix, the bare /api and the exact OpenAPI document", () => {
+describe("RP0 Vite proxy surface is /api/, bare /api, /openapi.json and /docs", () => {
+  it("declares only the /api/ prefix, the bare /api, the exact OpenAPI document and /docs", () => {
     const keys = Object.keys(config.server?.proxy ?? {});
 
-    expect(keys).toHaveLength(3);
+    expect(keys).toHaveLength(4);
     expect(keys).toContain(API_PREFIX);
     expect(keys).toContain(BARE_API_KEY);
+    expect(keys).toContain(DOCS_KEY);
     const openApiKey = keys.find(
-      (key) => key !== API_PREFIX && key !== BARE_API_KEY,
+      (key) => key !== API_PREFIX && key !== BARE_API_KEY && key !== DOCS_KEY,
     );
     expect(openApiKey?.startsWith("^")).toBe(true);
     const pattern = new RegExp(openApiKey!);
@@ -102,6 +104,19 @@ describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
       "/openapi",
     ])
       expect(pattern.test(path), path).toBe(false);
+  });
+
+  it("proxies /docs, /docs/ and its assets (with or without a query) and nothing like it", () => {
+    for (const path of [
+      "/docs",
+      "/docs?x=1",
+      "/docs/",
+      "/docs/swagger-ui.css",
+      "/docs/swagger-initializer.js",
+    ])
+      expect(matchingKeys(path), path).toEqual([DOCS_KEY]);
+    for (const path of ["/docsx", "/documents", "/x/docs", "/DOCS", "/doc"])
+      expect(matchingKeys(path), path).toEqual([]);
   });
 
   it("shares one same-origin rule that never rewrites Host or the path", () => {
@@ -125,6 +140,7 @@ describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
       "/api/v1/unknown",
       "/openapi.json",
       "/openapi.json?v=1",
+      "/docs/",
     ])
       expect(matchingKeys(path), path).toHaveLength(1);
   });
@@ -158,7 +174,7 @@ describe("RP0 Vite proxy surface is /api/, bare /api and /openapi.json", () => {
   });
 });
 
-describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
+describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => {
   const source = readFileSync(new URL("./nginx.conf", import.meta.url), "utf8");
   const securityHeaders = readFileSync(
     new URL("./security-headers.conf", import.meta.url),
@@ -187,7 +203,7 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
     );
   });
 
-  it("declares only /api/, /assets/, = /api, = /healthz, = /openapi.json and the SPA fallback", () => {
+  it("declares only /api/, /assets/, /docs/, = /docs, = /api, = /healthz, = /openapi.json and the SPA fallback", () => {
     const locations = [...source.matchAll(/location\s+([^{]+?)\s*\{/g)].map(
       (match) => match[1],
     );
@@ -197,7 +213,9 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
         "/",
         "/api/",
         "/assets/",
+        "/docs/",
         "= /api",
+        "= /docs",
         "= /healthz",
         "= /openapi.json",
       ].sort(),
@@ -207,7 +225,7 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
   });
 
   it("forwards the proxied locations to the project-specific upstream keeping the URI untouched", () => {
-    for (const header of ["/api/", "= /openapi.json"]) {
+    for (const header of ["/api/", "= /openapi.json", "= /docs", "/docs/"]) {
       const body = block(header);
       expect(body, header).toMatch(
         /proxy_pass http:\/\/invoiceops-backend:3000;/,
@@ -222,7 +240,7 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
   });
 
   it("overwrites X-Forwarded-For with the real client and never forwards CF-Connecting-IP", () => {
-    for (const header of ["/api/", "= /openapi.json"]) {
+    for (const header of ["/api/", "= /openapi.json", "= /docs", "/docs/"]) {
       const body = block(header);
       expect(body, header).toContain(
         "proxy_set_header X-Forwarded-For $remote_addr;",
@@ -299,6 +317,26 @@ describe("RP0 nginx surface is exactly /api/ and = /openapi.json", () => {
     const spa = block("/");
     expect(spa).toContain('add_header Cache-Control "no-cache";');
     expect(spa).not.toContain("immutable");
+  });
+
+  it("proxies /docs (exact) and /docs/ (prefix) like the OpenAPI document and never to the SPA", () => {
+    for (const header of ["= /docs", "/docs/"]) {
+      const body = block(header);
+      expect(body, header).toContain(
+        "proxy_pass http://invoiceops-backend:3000;",
+      );
+      expect(body, header).not.toMatch(/rewrite|try_files|return/);
+      // Security headers come from the server level include (no add_header here).
+      expect(body, header).not.toContain("add_header");
+      // The backend Content-Security-Policy of the docs must reach the client.
+      expect(body, header).not.toMatch(
+        /proxy_hide_header|proxy_set_header Content-Security/,
+      );
+    }
+    // One policy only: the shared snippet must not add a second CSP that
+    // would intersect with the docs one.
+    expect(securityHeaders).not.toContain("Content-Security-Policy");
+    expect(source).not.toContain("Content-Security-Policy");
   });
 
   it("serves /healthz from nginx itself", () => {
@@ -413,6 +451,35 @@ describe("RP0 real Vite HTTP forwarding", () => {
           expect(response.status, path).toBe(404);
         }
         expect(requests).toEqual([OPENAPI_PATH]);
+      },
+    );
+  });
+});
+
+describe("Swagger UI docs forwarding", () => {
+  it("forwards /docs, /docs/ and its assets untouched and keeps the SPA away from /docsx", async () => {
+    const requests: string[] = [];
+    await withProxiedBackend(
+      (request, response) => {
+        requests.push(request.url ?? "");
+        response.setHeader("Content-Type", "text/plain");
+        response.end("docs");
+      },
+      async ({ origin }) => {
+        const paths = ["/docs", "/docs/", "/docs/swagger-ui.css", "/docs/?a=1"];
+        for (const path of paths) {
+          const response = await fetch(`${origin}${path}`, {
+            redirect: "manual",
+            signal: AbortSignal.timeout(5000),
+          });
+          expect(response.status, path).toBe(200);
+          expect(await response.text(), path).toBe("docs");
+        }
+        expect(requests).toEqual(paths);
+
+        requests.length = 0;
+        await fetch(`${origin}/docsx`, { signal: AbortSignal.timeout(5000) });
+        expect(requests).toEqual([]);
       },
     );
   });

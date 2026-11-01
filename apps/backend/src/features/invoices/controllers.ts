@@ -3,7 +3,8 @@ import type { RequestHandler } from "express";
 import { ApiError, parseWith } from "../../http/errors.js";
 import { logEvent } from "../../http/logging.js";
 import type { AuthService } from "../auth/services.js";
-import { requireSessionProfile } from "../auth/session.js";
+import { requireInvoiceActor } from "../api-tokens/actor.js";
+import type { ApiTokenAuthenticator } from "../api-tokens/bearer.js";
 import {
   IdempotencyKeyHeaderSchema,
   InvoiceCreateRequestSchema,
@@ -41,9 +42,10 @@ export function createInvoiceController(
   invoices: InvoiceCreateService | undefined,
   reads: InvoiceReadService | undefined,
   deletion: InvoiceDeleteService | undefined,
+  tokens?: ApiTokenAuthenticator,
 ) {
   const create: RequestHandler = async (request, response) => {
-    const actor = await requireSessionProfile(auth, request, response);
+    const actor = await requireInvoiceActor(auth, tokens, request, response);
     // Both validations run before any database access.
     const { "Idempotency-Key": idempotencyKey } = parseWith(
       IdempotencyKeyHeaderSchema,
@@ -58,7 +60,12 @@ export function createInvoiceController(
     const service = wired(invoices);
     let result;
     try {
-      result = await service.createInvoice(actor.id, input, idempotencyKey);
+      result = await service.createInvoice(
+        actor.userId,
+        input,
+        idempotencyKey,
+        actor.token,
+      );
     } catch (error) {
       // Conflicts and the 410 are expected outcomes, recorded with the code
       // only. A 503 is logged where it is decided (transaction.conflict), a
@@ -91,17 +98,19 @@ export function createInvoiceController(
   };
 
   const list: RequestHandler = async (request, response) => {
-    const actor = await requireSessionProfile(auth, request, response);
+    const actor = await requireInvoiceActor(auth, tokens, request, response);
     const query = parseWith(
       InvoiceListQuerySchema,
       request.query,
       "Invalid invoice query",
     );
-    response.status(200).json(await wired(reads).listInvoices(actor.id, query));
+    response
+      .status(200)
+      .json(await wired(reads).listInvoices(actor.userId, query, actor.token));
   };
 
   const get: RequestHandler = async (request, response) => {
-    const actor = await requireSessionProfile(auth, request, response);
+    const actor = await requireInvoiceActor(auth, tokens, request, response);
     const { organizationId, groupId } = parseWith(
       InvoiceTargetQuerySchema,
       request.query,
@@ -109,16 +118,20 @@ export function createInvoiceController(
     );
     const invoiceId = parseInvoiceId(request.params);
     response.status(200).json(
-      await wired(reads).getInvoice(actor.id, {
-        invoiceId,
-        organizationId,
-        ...(groupId ? { groupId } : {}),
-      }),
+      await wired(reads).getInvoice(
+        actor.userId,
+        {
+          invoiceId,
+          organizationId,
+          ...(groupId ? { groupId } : {}),
+        },
+        actor.token,
+      ),
     );
   };
 
   const remove: RequestHandler = async (request, response) => {
-    const actor = await requireSessionProfile(auth, request, response);
+    const actor = await requireInvoiceActor(auth, tokens, request, response);
     const { organizationId, groupId } = parseWith(
       InvoiceTargetQuerySchema,
       request.query,
@@ -129,11 +142,15 @@ export function createInvoiceController(
     try {
       // Inside the try so a malformed id is recorded like any other 404.
       invoiceId = parseInvoiceId(request.params);
-      result = await wired(deletion).deleteInvoice(actor.id, {
-        invoiceId,
-        organizationId,
-        ...(groupId ? { groupId } : {}),
-      });
+      result = await wired(deletion).deleteInvoice(
+        actor.userId,
+        {
+          invoiceId,
+          organizationId,
+          ...(groupId ? { groupId } : {}),
+        },
+        actor.token,
+      );
     } catch (error) {
       // Denials are expected outcomes, recorded with the status only. A 503
       // is logged where it is decided (transaction.conflict).
@@ -146,7 +163,7 @@ export function createInvoiceController(
           status: error.status,
           code: error.code,
           organizationId,
-          actorUserId: actor.id,
+          actorUserId: actor.userId,
         });
       }
       throw error;
@@ -161,7 +178,7 @@ export function createInvoiceController(
         organizationId,
         ...(result.groupId ? { groupId: result.groupId } : {}),
         invoiceId,
-        actorUserId: actor.id,
+        actorUserId: actor.userId,
       });
     }
     response.status(204).end();

@@ -209,7 +209,13 @@ describe("adding members to a group scales past one request (CR-298/CR-299)", ()
       await screen.findByRole("checkbox", { name: /Persona 021/ }),
     );
     expect(screen.getByText("2 personas seleccionadas.")).toBeTruthy();
-    // The person of page 1 still has a card, though the page changed.
+    // The person of page 1 still has a card, though the page changed (the
+    // picked people unfold from the one-line summary under the pager).
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "2 personas seleccionadas · Ajustar permisos",
+      }),
+    );
     expect(screen.getByRole("region", { name: "Persona 002" })).toBeTruthy();
 
     // "Select all" applies to the page on screen only.
@@ -335,5 +341,92 @@ describe("adding members to a group scales past one request (CR-298/CR-299)", ()
     renderApp({ route: `${NEW_MEMBERS}?page=99` });
     await screen.findByRole("checkbox", { name: /Persona 241/ });
     expect(window.location.search).toBe("?page=13");
+  });
+});
+
+describe("removing a picked person keeps focus in place (CR-357)", () => {
+  const pickAndOpen = async (numbers: number[]) => {
+    renderApp({ route: NEW_MEMBERS });
+    for (const n of numbers)
+      fireEvent.click(
+        await screen.findByRole("checkbox", {
+          name: new RegExp(`Persona 00${n}`),
+        }),
+      );
+    fireEvent.click(screen.getByRole("button", { name: /Ajustar permisos$/ }));
+  };
+  const quitar = (n: number) =>
+    screen.getByRole("button", {
+      name: `Quitar a Persona 00${n} de la selección`,
+    });
+
+  it("moves to the «Quitar» of the next card", async () => {
+    mockTransport(routes());
+    await pickAndOpen([1, 2, 3]);
+    fireEvent.click(quitar(2));
+    expect(document.activeElement).toBe(quitar(3));
+  });
+
+  it("moves to the previous card when the last one is removed", async () => {
+    mockTransport(routes());
+    await pickAndOpen([1, 2, 3]);
+    fireEvent.click(quitar(3));
+    expect(document.activeElement).toBe(quitar(2));
+  });
+
+  it("moves to the person's checkbox when nobody is left and they are on the page", async () => {
+    mockTransport(routes());
+    await pickAndOpen([2]);
+    fireEvent.click(quitar(2));
+    expect(
+      screen.queryByRole("button", { name: /Ajustar permisos$/ }),
+    ).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("checkbox", { name: /Persona 002/ }),
+    );
+  });
+
+  it("moves to the list's title when nobody is left and they are not on the page", async () => {
+    mockTransport(routes());
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Persona 002/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("checkbox", { name: /Persona 021/ });
+    fireEvent.click(screen.getByRole("button", { name: /Ajustar permisos$/ }));
+    fireEvent.click(quitar(2));
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "Personas de la organización" }),
+    );
+  });
+});
+
+describe("the selection count is shown once (CR-358, CR-359)", () => {
+  it("keeps the visible count in the disclosure and a hidden live region for the status line", async () => {
+    mockTransport(routes());
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Persona 002/ }),
+    );
+    const live = screen.getByText("1 persona seleccionada.");
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.textContent).toBe("1 persona seleccionada.");
+    expect(live.classList.contains("visually-hidden")).toBe(true);
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    expect(
+      screen.getByRole("button", {
+        name: "1 persona seleccionada · Ajustar permisos",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("names the candidate list with a legend", async () => {
+    mockTransport(routes());
+    renderApp({ route: NEW_MEMBERS });
+    await screen.findByRole("checkbox", { name: /Persona 002/ });
+    expect(
+      screen.getByRole("group", { name: "Personas disponibles para agregar" }),
+    ).toBeTruthy();
   });
 });

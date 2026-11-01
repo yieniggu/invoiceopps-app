@@ -3,6 +3,7 @@ import { createAuthService } from "./auth.js";
 import {
   authRateLimitConfigFromEnv,
   createAuthRateLimiterFromConfig,
+  disabledAuthRateLimiter,
 } from "./auth-rate-limit.js";
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
@@ -40,6 +41,10 @@ const trustProxyHops = trustProxyHopsFromEnv(process.env.AUTH_TRUST_PROXY_HOPS);
 const publicOrigin = publicOriginFromEnv(process.env.PUBLIC_ORIGIN);
 const app = createApp(database, createAuthService(database.prisma), {
   authRateLimiter: createAuthRateLimiterFromConfig(authRateLimitConfig),
+  // The same kill switch as the login limiter (local e2e runs only).
+  ...(authRateLimitConfig.disabled
+    ? { apiTokenIssuanceLimiter: disabledAuthRateLimiter }
+    : {}),
   trustProxyHops,
   publicOrigin,
   groups: createGroupCatalogService(database.prisma),

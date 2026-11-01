@@ -49,3 +49,21 @@ export const retryableReadConflictResponse: OperationResponse = {
     "Retry-After": { description: "Seconds to wait before retrying" },
   },
 };
+
+/** 401 of an operation that also accepts an API token (Bearer). */
+export const bearerUnauthenticatedResponse: OperationResponse = {
+  description:
+    "UNAUTHENTICATED: missing, invalid or expired session, or an API token that is malformed, unknown, expired or revoked, or whose owner is disabled; Bearer answers carry WWW-Authenticate: Bearer",
+  schema: ERROR,
+};
+
+/**
+ * 403 of an operation that also accepts an API token: the usual denials plus
+ * INSUFFICIENT_SCOPE, the owner may do it but the token does not allow it.
+ */
+export const bearerForbiddenResponse = (
+  description: string,
+): OperationResponse => ({
+  description: `FORBIDDEN: ${description}; FORBIDDEN_ORIGIN: a write carrying a session cookie came from another origin; ONBOARDING_REQUIRED: a temporary password is still pending; INSUFFICIENT_SCOPE: the request used an API token and the owner is allowed, but the token's scopes or group do not cover this operation (a group token serves only its group; the token never widens its owner's permissions)`,
+  schema: ERROR,
+});

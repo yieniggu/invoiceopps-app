@@ -165,7 +165,7 @@ Con `DATABASE_URL` cargada (paso 1):
 pnpm dev
 ```
 
-- Frontend: http://127.0.0.1:5380 (Vite reenvía `/api/` y `/openapi.json` al backend; `/health/*`
+- Frontend: http://127.0.0.1:5380 (Vite reenvía `/api/`, `/openapi.json` y `/docs` al backend; `/health/*`
   queda solo en el backend).
 - Backend: http://127.0.0.1:4380/health/ready
 
@@ -248,7 +248,44 @@ desde el host.
 | Administración | Como plataforma, abre **Admin** (`/admin`), busca por nombre o RUT y abre una persona | Puedes editarla, restablecer su contraseña (clave temporal una sola vez) y desactivarla o reactivarla |
 | Usuarios       | Como ADMIN, en `/organizations/:id/members/new` crea un usuario                       | Contraseña temporal visible una sola vez (o la definida por ti, no mostrada)                          |
 | Grupos         | En **Grupos** crea un grupo y luego agrega miembros con permisos                      | Grupo y permisos persisten al recargar                                                                |
-| Facturas       | Abre **Facturas**                                                                     | Bandeja vacía: el alta llega en RP0-09/RP0-14                                                         |
+| Facturas       | Abre **Facturas**                                                                     | Bandeja con tus facturas; **Nueva factura** crea una en la organización o en un grupo                 |
+
+### Probar un token de API (Bearer)
+
+Con una sesión iniciada (cookie), `POST /api/v1/api-tokens` emite un token y
+devuelve su `secret` una sola vez. Luego se usa sin cookie, solo en las cuatro
+operaciones de facturas:
+
+```sh
+printf 'header = "Authorization: Bearer %s"\n' "$INVOICEOPS_TOKEN" |
+  curl -fsS --config - "<backend>/api/v1/invoices?organizationId=<uuid>"
+```
+
+La cabecera se entrega a curl por entrada estándar para que el token no quede en
+la lista de procesos. Para crear facturas con curl y Python (idempotencia,
+revocación y errores) sigue [`docs/recovery-local-api.md`](docs/recovery-local-api.md).
+
+Límites de emisión: 20 intentos cada 15 minutos por persona (`429
+RATE_LIMITED`) y 50 tokens activos por persona y organización (`409 TOKEN_LIMIT`; revoca
+alguno para seguir). Detalles y errores (`401`, `403 INSUFFICIENT_SCOPE`) en el
+`README.md` («Tokens de API operacionales»).
+
+### Probar la API desde el navegador (Swagger UI)
+
+1. Emite un token en **Tokens de API** y cópialo: se muestra **una sola vez**.
+2. Abre `http://127.0.0.1:5380/docs`. Desde ahí nunca se envía la cookie de
+   sesión, aunque estés conectado a la app: solo cuenta el token.
+3. **Authorize** → pega el `iop_…` en `bearerAuth` → **Authorize** → **Close**.
+4. Abre una operación de **Invoices**, **Try it out**, completa y **Execute**.
+
+Recargar la página borra la autorización (no se guarda). Los ejemplos del
+`POST /api/v1/invoices` usan pesos CLP enteros. La prueba de navegador es
+`pnpm test:recovery:swagger`.
+
+Al actualizar `swagger-ui-dist` ejecuta `pnpm test:recovery:swagger`: los
+selectores de la prueba E2E apuntan a Swagger UI 5.33.x. El interceptor con
+`credentials: "omit"` (que impide enviar la cookie de sesión) queda cubierto
+por el escenario con sesión iniciada de `swagger.spec.ts`.
 
 ## Tests
 
@@ -256,6 +293,7 @@ desde el host.
 pnpm lint && pnpm typecheck && pnpm test:unit && pnpm build
 env -u DATABASE_URL -u TEST_DATABASE_URL pnpm test:integration   # PostgreSQL efímero propio
 pnpm test:recovery:unit # guardas del reset y arranque sin ML/blockchain
+pnpm test:recovery:clients # ejemplos curl/Python reales (requiere RECOVERY_TEST_DATABASE_URL, curl y python3)
 pnpm test:recovery:ui   # onboarding, organizaciones, grupos, usuarios y membresías (frontend)
 ```
 
@@ -332,16 +370,16 @@ Qué debes saber antes de correrlas:
   **no** se enmascaran las capturas ni los trazos de fallo de Playwright
   (`screenshot: "only-on-failure"` y `trace: "retain-on-failure"` en
   `playwright.config.ts`): no los publiques ni los adjuntes a tickets. Los specs que
-  muestran una contraseña generada por el servidor (`admin-wizard.spec.ts`,
-  `member-creation-secret.spec.ts` y `admin-users.spec.ts`) desactivan la captura y la traza de fallo
+  muestran una contraseña o un token generado por el servidor (`admin-wizard.spec.ts`,
+  `member-creation-secret.spec.ts`, `admin-users.spec.ts`, `api-tokens.spec.ts` y `swagger.spec.ts`) desactivan la captura y la traza de fallo
   (`test.use({ screenshot: "off", trace: "off" })`, que Playwright solo permite a nivel
   de archivo); un fallo ahí deja menos evidencia a cambio de no guardar el secreto.
   Aun con la captura y la traza apagadas, Playwright escribe en cada fallo un
   `test-results/<prueba>/error-context.md` con una instantánea ARIA de la página, que
   puede incluir la contraseña temporal del diálogo abierto. Por eso
   `apps/e2e/support/global-teardown.ts` (`globalTeardown` de `playwright.config.ts`)
-  borra, al terminar la ejecución, los `error-context.md` de las carpetas de esos tres
-  specs (`admin-users-*`, `admin-wizard-*` y `member-creation-secret-*`). El de los
+  borra, al terminar la ejecución, los `error-context.md` de las carpetas de esos
+  specs (`admin-users-*`, `admin-wizard-*`, `member-creation-secret-*`, `api-tokens-*` y `swagger-*`). El de los
   demás specs se conserva y no contiene secretos del servidor. Si interrumpes la
   ejecución con Ctrl+C antes de que termine, el borrado puede no correr: elimina esos
   archivos a mano antes de compartir `test-results/`.

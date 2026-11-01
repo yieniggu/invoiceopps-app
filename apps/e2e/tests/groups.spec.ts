@@ -1,5 +1,8 @@
 import { expect, test } from "../support/test.ts";
-import { expectNoStateWordsInToggles } from "../support/layout.ts";
+import {
+  expectNoStateWordsInToggles,
+  expectSelectionCount,
+} from "../support/layout.ts";
 import { createScenario } from "../support/scenario.ts";
 import { notice } from "../support/notice.ts";
 
@@ -63,12 +66,18 @@ test.describe("groups", () => {
       await page
         .getByRole("checkbox", { name: "Seleccionar todos en esta página" })
         .check();
-      await expect(page.getByText("4 personas seleccionadas.")).toBeVisible();
+      await expectSelectionCount(page, 4);
       await page
         .getByRole("checkbox", { name: new RegExp(s.admin.name) })
         .uncheck();
-      await expect(page.getByText("3 personas seleccionadas.")).toBeVisible();
+      await expectSelectionCount(page, 3);
 
+      // The picked people are folded under the pager until asked for.
+      await page
+        .getByRole("button", {
+          name: "3 personas seleccionadas · Ajustar permisos",
+        })
+        .click();
       const shared = page.getByRole("heading", {
         name: "Aplicar los mismos permisos a todos",
       });

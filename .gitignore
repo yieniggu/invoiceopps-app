@@ -6,6 +6,8 @@ coverage/
 apps/backend/src/generated/
 .codegraph/
 .DS_Store
+__pycache__/
+*.pyc
 
 # Agent tooling and ticket completion notes: never commit
 .agents/

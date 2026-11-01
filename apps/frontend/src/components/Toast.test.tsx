@@ -118,6 +118,47 @@ describe("Toast", () => {
   });
 });
 
+describe("Toast tone and persistence (CR-349)", () => {
+  it("defaults to the success tone", () => {
+    const { container } = render(<Toast message="Listo." />);
+    expect(
+      container.querySelector(".toast")?.classList.contains("is-warning"),
+    ).toBe(false);
+    expect(container.querySelector(".lucide-circle-check")).not.toBeNull();
+  });
+
+  it("shows a warning with its own icon and tone", () => {
+    const { container } = render(<Toast message="Ojo." tone="warning" />);
+    const card = container.querySelector(".toast");
+    expect(card?.classList.contains("is-warning")).toBe(true);
+    expect(container.querySelector(".lucide-triangle-alert")).not.toBeNull();
+    expect(container.querySelector(".lucide-circle-check")).toBeNull();
+  });
+
+  it("stays until dismissed when persistent, and flows in the page instead of floating", () => {
+    vi.useFakeTimers();
+    const { container } = render(
+      <Toast message="Revisa esto." tone="warning" persistent />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(10 * 60_000);
+    });
+    expect(screen.queryByText("Revisa esto.")).not.toBeNull();
+    expect(
+      container.querySelector(".toast-region")?.classList.contains("is-inline"),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar aviso" }));
+    expect(screen.queryByText("Revisa esto.")).toBeNull();
+  });
+
+  it("floats and times out by default", () => {
+    const { container } = render(<Toast message="Listo." />);
+    expect(
+      container.querySelector(".toast-region")?.classList.contains("is-inline"),
+    ).toBe(false);
+  });
+});
+
 describe("useRouteNotice with Toast", () => {
   function Screen() {
     const notice = useRouteNotice();

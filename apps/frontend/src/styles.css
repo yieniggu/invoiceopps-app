@@ -227,13 +227,23 @@ button:focus-visible {
 
 /* Opt-in: the screen fills the main area; the list (or empty state) grows and
    the pagination sits at the bottom. */
-.screen-fill {
+/* `.fill-column` is the same behaviour for a step or panel inside a screen
+   (a form, a fieldset): it takes the free height of its parent column and
+   keeps its `.pagination` at its bottom, below the list and any filler. */
+.screen-fill,
+.fill-column,
+.plain-fieldset.fill-column {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
 }
 
-.screen-fill > .pagination {
+/* Not on `.screen-fill`: its screens keep the gap of `.screen-stack`. */
+.fill-column {
+  gap: 0.75rem;
+}
+
+:is(.screen-fill, .fill-column) > .pagination {
   margin-block-start: auto;
 }
 
@@ -392,10 +402,20 @@ select {
   cursor: pointer;
 }
 
-select:disabled {
+select:disabled,
+select[aria-disabled="true"] {
   background-color: var(--color-surface-muted);
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+/* A control that keeps keyboard focus while a request is out is read-only or
+   aria-disabled (never "disabled", which drops focus to the page). */
+input[readonly]:not([type="checkbox"]):not([type="radio"]),
+input[type="checkbox"][aria-disabled="true"],
+input[type="radio"][aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: wait;
 }
 
 select:focus-visible,
@@ -1021,6 +1041,16 @@ a:focus-visible {
   user-select: all;
 }
 
+/* Forms inside a dialog start below its title. */
+.dialog-panel > form {
+  margin-top: 0.75rem;
+}
+
+input.secret-value {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 /* A fieldset used only to disable its controls in one go: no box, same grid
    and spacing as the form around it. */
 .plain-fieldset {
@@ -1397,6 +1427,19 @@ a:focus-visible {
   flex: none;
 }
 
+/* Picked people of the add-members step: a one-line disclosure under the pager
+   (part of the step's action bar), so unfolding it never moves the list. */
+.selected-people {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.selected-people-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .collapsible-summary {
   margin: 0;
   font-size: 0.9375rem;
@@ -1675,10 +1718,10 @@ a:focus-visible {
   list-style: none;
 }
 
+/* No inner scroll box: the list is one page of a paginated screen, so the page
+   scrolls and the pager sits below the whole list. */
 .checkbox-list {
   display: grid;
-  max-height: 20rem;
-  overflow-y: auto;
 }
 
 .chip-list li {
@@ -1786,6 +1829,30 @@ a:focus-visible {
   padding: 0.25rem;
   background: transparent;
   color: var(--color-text);
+}
+
+/* A warning: the amber status tokens, which already have light and dark
+   values. */
+.toast.is-warning {
+  border-inline-start-color: var(--color-status-pending-fg);
+  background: var(--color-status-pending-bg);
+}
+
+.toast.is-warning .toast-icon,
+.app-shell .toast.is-warning .toast-message,
+.toast.is-warning .toast-close {
+  color: var(--color-status-pending-fg);
+}
+
+/* A persistent notice sits in the page flow (never over the paginator); empty,
+   it leaves the layout but stays in the accessibility tree. */
+.toast-region.is-inline {
+  position: static;
+  width: auto;
+}
+
+.toast-region.is-inline:empty {
+  position: absolute;
 }
 
 @keyframes toast-in {
@@ -2330,4 +2397,35 @@ a:focus-visible {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 0.5rem;
+}
+
+/* ---- Invoices: create form --------------------------------------------- */
+
+.invoice-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 40rem;
+}
+
+.form-field {
+  display: grid;
+  gap: 0.375rem;
+  align-content: start;
+}
+
+/* Two fields side by side where there is room; stacked on a phone. */
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 1rem;
+}
+
+.form-field :where(input, select)[aria-invalid="true"] {
+  border-color: var(--color-error);
+}
+
+.invoice-created {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 40rem;
 }

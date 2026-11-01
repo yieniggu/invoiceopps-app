@@ -2,12 +2,15 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type FormEvent,
   type ReactNode,
 } from "react";
+
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { CollapsibleSection } from "../../../components/CollapsibleSection";
 import { describeError } from "../../auth/api/apiError";
@@ -43,6 +46,16 @@ interface Chosen {
  * page or the search changes, and the counter ("N personas seleccionadas")
  * and the cards below the list always show everybody who will be added. The
  * cap of 200 people per operation applies to that whole selection.
+ *
+ * Layout: the list comes first and its pager is the last block of the list
+ * area. Below it the picked people sit behind a one-line disclosure (closed by
+ * default) that, with the submit button, forms the step's action bar: picking
+ * somebody never moves the row that was clicked, and the pager stays directly
+ * above the action bar however many people are picked.
+ *
+ * While a request runs nothing is `disabled` (a disabled control that has
+ * focus sends it to the page): controls get `aria-disabled`, their handlers
+ * ignore the action, and a failure moves focus to its alert.
  */
 export function AddMembersForm({
   organizationId,
@@ -72,6 +85,8 @@ export function AddMembersForm({
     new Map(),
   );
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [showChosen, setShowChosen] = useState(false);
+  const chosenBodyId = useId();
   const [sharedDraft, setSharedDraft] =
     useState<InvoicePermissions>(NO_PERMISSIONS);
   // True while the whole selection is checked against the server just before
@@ -82,15 +97,29 @@ export function AddMembersForm({
   // person changes the selection.
   const [gone, setGone] = useState<ReadonlyArray<string>>([]);
   const goneAlert = useRef<HTMLParagraphElement>(null);
+  const failureAlert = useRef<HTMLParagraphElement>(null);
   // The check in flight, cancelled when the form goes away: a check that
   // resolves after unmount must not send anything.
   const check = useRef<AbortController | null>(null);
   useEffect(() => () => check.current?.abort(), []);
-  // The submit button is disabled during the check, so after pruning the focus
-  // would fall to the page: land on the message that explains what happened.
+  // After pruning, land on the message that explains what happened.
   useEffect(() => {
     if (gone.length > 0) goneAlert.current?.focus();
   }, [gone]);
+  // A failed request: focus was on the (inert) submit button, so it moves to
+  // the message that says nobody was added.
+  const failed = add.isError;
+  useEffect(() => {
+    if (failed) failureAlert.current?.focus();
+  }, [failed]);
+  // Removing a card must not drop focus to the page: who was removed (and
+  // who sat next to them) waits here until the removal has rendered, then
+  // focus goes to the neighbour's «Quitar» or, with nobody left, to the
+  // person's checkbox in the list or the list's title.
+  const removal = useRef<{ id: string; neighbour: string | null } | null>(null);
+  const orderedIds = useRef<readonly string[]>([]);
+  const form = useRef<HTMLFormElement>(null);
+  const listTitle = useRef<HTMLHeadingElement>(null);
   const clearGone = useCallback(
     () => setGone((current) => (current.length > 0 ? [] : current)),
     [],
@@ -115,6 +144,19 @@ export function AddMembersForm({
       ),
     [selected],
   );
+  useEffect(() => {
+    orderedIds.current = chosen.map(({ user }) => user.id);
+    const done = removal.current;
+    if (done === null || selected.has(done.id)) return;
+    removal.current = null;
+    const find = (selector: string, value: string) =>
+      form.current?.querySelector<HTMLElement>(
+        `[${selector}="${CSS.escape(value)}"]`,
+      );
+    (done.neighbour ? find("data-remove-id", done.neighbour) : null)?.focus();
+    if (document.activeElement?.hasAttribute("data-remove-id")) return;
+    (find("data-person-id", done.id) ?? listTitle.current)?.focus();
+  }, [chosen, selected]);
   const pageCandidates = candidates ?? [];
   const allPageSelected =
     pageCandidates.length > 0 &&
@@ -126,6 +168,7 @@ export function AddMembersForm({
   // person re-renders that row and its card, not the whole list.
   const toggle = useCallback(
     (user: OrganizationUser) => {
+      if (pending) return;
       clearGone();
       setSelected((current) => {
         const next = new Map(current);
@@ -134,9 +177,10 @@ export function AddMembersForm({
         return next;
       });
     },
-    [clearGone],
+    [clearGone, pending],
   );
   const toggleAllOnPage = () => {
+    if (pending) return;
     clearGone();
     setSelected((current) => {
       const next = new Map(current);
@@ -149,16 +193,19 @@ export function AddMembersForm({
     });
   };
   const setPermissions = useCallback(
-    (id: string, permissions: InvoicePermissions) =>
+    (id: string, permissions: InvoicePermissions) => {
+      if (pending) return;
       setSelected((current) => {
         const existing = current.get(id);
         return existing
           ? new Map(current).set(id, { ...existing, permissions })
           : current;
-      }),
-    [],
+      });
+    },
+    [pending],
   );
-  const applyToAll = () =>
+  const applyToAll = () => {
+    if (pending) return;
     setSelected(
       (current) =>
         new Map(
@@ -168,6 +215,7 @@ export function AddMembersForm({
           ]),
         ),
     );
+  };
   const toggleOpen = useCallback(
     (id: string) =>
       setOpen((current) => {
@@ -179,14 +227,22 @@ export function AddMembersForm({
   );
   const removeById = useCallback(
     (id: string) => {
+      if (pending) return;
       clearGone();
+      // Who takes focus is decided from the order on screen at this moment.
+      const ids = orderedIds.current;
+      const index = ids.indexOf(id);
+      removal.current = {
+        id,
+        neighbour: ids[index + 1] ?? ids[index - 1] ?? null,
+      };
       setSelected((current) => {
         const next = new Map(current);
         next.delete(id);
         return next;
       });
     },
-    [clearGone],
+    [clearGone, pending],
   );
 
   const prune = (
@@ -264,12 +320,29 @@ export function AddMembersForm({
     );
   };
 
+  const count =
+    chosen.length === 1
+      ? "1 persona seleccionada"
+      : `${chosen.length} personas seleccionadas`;
+  const ChosenChevron = showChosen ? ChevronDown : ChevronRight;
+
   return (
-    <form onSubmit={submit} noValidate aria-labelledby="add-members-title">
-      <h2 id="add-members-title">Personas de la organización</h2>
-      {/* One fieldset disables the whole picker while the request runs, so no
-          row has to re-render for it. */}
-      <fieldset className="plain-fieldset" disabled={pending}>
+    <form
+      ref={form}
+      onSubmit={submit}
+      noValidate
+      aria-labelledby="add-members-title"
+      className="fill-column"
+    >
+      <h2 id="add-members-title" ref={listTitle} tabIndex={-1}>
+        Personas de la organización
+      </h2>
+      <fieldset className="plain-fieldset fill-column">
+        {/* The list's own name. It differs from the form's (the title above),
+            so a screen reader does not announce the same words twice. */}
+        <legend className="visually-hidden">
+          Personas disponibles para agregar
+        </legend>
         {candidates === undefined ? null : emptyMessage ? (
           <p role="status">{emptyMessage}</p>
         ) : (
@@ -279,6 +352,7 @@ export function AddMembersForm({
                 type="checkbox"
                 checked={allPageSelected}
                 disabled={pageCandidates.length === 0}
+                aria-disabled={pending || undefined}
                 onChange={toggleAllOnPage}
               />
               Seleccionar todos en esta página
@@ -289,57 +363,81 @@ export function AddMembersForm({
                   key={user.id}
                   user={user}
                   checked={selected.has(user.id)}
+                  locked={pending}
                   onToggle={toggle}
                 />
               ))}
             </ul>
           </>
         )}
-        {pager}
-        <p role="status" aria-live="polite" className="muted">
-          {chosen.length === 0
-            ? "Aún no seleccionas a nadie."
-            : chosen.length === 1
-              ? "1 persona seleccionada."
-              : `${chosen.length} personas seleccionadas.`}
+        {/* Heard, not seen: the visible count is the disclosure's summary. */}
+        <p role="status" aria-live="polite" className="visually-hidden">
+          {chosen.length === 0 ? "Aún no seleccionas a nadie." : `${count}.`}
         </p>
+        {pager}
       </fieldset>
+      {/* The step's action bar: a one-line summary that unfolds the picked
+          people, then the submit. It sits under the pager, so the list never
+          moves when somebody is picked. */}
       {chosen.length > 0 ? (
-        <>
-          <section aria-labelledby="apply-all-title">
-            <h3 id="apply-all-title">Aplicar los mismos permisos a todos</h3>
-            <MemberPermissionsEditor
-              memberName="todas las personas seleccionadas"
-              level="group"
-              value={sharedDraft}
-              onChange={setSharedDraft}
-              disabled={pending}
-            />
-            <div className="action-row">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={pending}
-                onClick={applyToAll}
-              >
-                Aplicar a todos los seleccionados
-              </button>
-            </div>
-          </section>
-          <fieldset className="plain-fieldset" disabled={pending}>
-            {chosen.map(({ user, permissions }) => (
-              <SelectedCard
-                key={user.id}
-                user={user}
-                permissions={permissions}
-                open={open.has(user.id)}
-                onToggleOpen={toggleOpen}
-                onRemove={removeById}
-                onPermissions={setPermissions}
-              />
-            ))}
-          </fieldset>
-        </>
+        <div className="selected-people" data-action-bar="">
+          <h2 className="selected-people-title">
+            <button
+              type="button"
+              className="collapse-toggle"
+              aria-expanded={showChosen}
+              aria-controls={chosenBodyId}
+              onClick={() => setShowChosen((current) => !current)}
+            >
+              <ChosenChevron aria-hidden="true" focusable="false" size={18} />
+              <span>{`${count} · Ajustar permisos`}</span>
+            </button>
+          </h2>
+          <div id={chosenBodyId} hidden={!showChosen}>
+            {showChosen ? (
+              <>
+                <section aria-labelledby="apply-all-title">
+                  <h3 id="apply-all-title">
+                    Aplicar los mismos permisos a todos
+                  </h3>
+                  <MemberPermissionsEditor
+                    memberName="todas las personas seleccionadas"
+                    level="group"
+                    value={sharedDraft}
+                    onChange={(next) => {
+                      if (!pending) setSharedDraft(next);
+                    }}
+                    disabled={pending}
+                  />
+                  <div className="action-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      aria-disabled={pending || undefined}
+                      onClick={applyToAll}
+                    >
+                      Aplicar a todos los seleccionados
+                    </button>
+                  </div>
+                </section>
+                <div className="plain-fieldset">
+                  {chosen.map(({ user, permissions }) => (
+                    <SelectedCard
+                      key={user.id}
+                      user={user}
+                      permissions={permissions}
+                      open={open.has(user.id)}
+                      locked={pending}
+                      onToggleOpen={toggleOpen}
+                      onRemove={removeById}
+                      onPermissions={setPermissions}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
       ) : null}
       {tooMany ? (
         <p role="alert">
@@ -347,7 +445,7 @@ export function AddMembersForm({
         </p>
       ) : null}
       {add.isError ? (
-        <p role="alert">
+        <p role="alert" tabIndex={-1} ref={failureAlert}>
           {describeError(
             add.error,
             "No fue posible agregar a las personas. Intenta nuevamente.",
@@ -365,7 +463,9 @@ export function AddMembersForm({
       ) : null}
       <button
         type="submit"
-        disabled={pending || chosen.length === 0 || tooMany}
+        disabled={chosen.length === 0 || tooMany}
+        aria-disabled={pending || undefined}
+        aria-busy={pending}
       >
         {pending
           ? checking
@@ -385,10 +485,12 @@ export function AddMembersForm({
 const CandidateRow = memo(function CandidateRow({
   user,
   checked,
+  locked,
   onToggle,
 }: {
   user: OrganizationUser;
   checked: boolean;
+  locked: boolean;
   onToggle: (user: OrganizationUser) => void;
 }) {
   return (
@@ -396,7 +498,9 @@ const CandidateRow = memo(function CandidateRow({
       <label className="check-row">
         <input
           type="checkbox"
+          data-person-id={user.id}
           checked={checked}
+          aria-disabled={locked || undefined}
           onChange={() => onToggle(user)}
         />
         <span>
@@ -412,13 +516,14 @@ const CandidateRow = memo(function CandidateRow({
  * permission editor once opened. Memoized, with stable callbacks from the
  * form, so changing one person does not re-render the other 199 cards; the
  * editor is only built while the card is open (its value lives in the form).
- * While a request is in flight the form's fieldset disables the controls, so
- * no card has to re-render for that either.
+ * While a request is in flight `locked` turns the controls `aria-disabled`
+ * (the handlers ignore them): two cheap re-renders per submit.
  */
 const SelectedCard = memo(function SelectedCard({
   user,
   permissions,
   open,
+  locked,
   onToggleOpen,
   onRemove,
   onPermissions,
@@ -426,6 +531,7 @@ const SelectedCard = memo(function SelectedCard({
   user: OrganizationUser;
   permissions: InvoicePermissions;
   open: boolean;
+  locked: boolean;
   onToggleOpen: (id: string) => void;
   onRemove: (id: string) => void;
   onPermissions: (id: string, permissions: InvoicePermissions) => void;
@@ -441,7 +547,9 @@ const SelectedCard = memo(function SelectedCard({
         <button
           type="button"
           className="subtle-danger-button"
+          data-remove-id={user.id}
           aria-label={`Quitar a ${user.name} de la selección`}
+          aria-disabled={locked || undefined}
           onClick={() => onRemove(user.id)}
         >
           Quitar
@@ -455,6 +563,7 @@ const SelectedCard = memo(function SelectedCard({
         memberName={user.name}
         level="group"
         value={permissions}
+        disabled={locked}
         onChange={(next) => onPermissions(user.id, next)}
       />
     </CollapsibleSection>

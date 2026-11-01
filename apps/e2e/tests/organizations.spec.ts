@@ -4,7 +4,10 @@ import {
   expectSettled,
   test,
 } from "../support/test.ts";
-import { expectNoStateWordsInToggles } from "../support/layout.ts";
+import {
+  expectNoStateWordsInToggles,
+  expectPagerAtBottom,
+} from "../support/layout.ts";
 import {
   asPlatform,
   createScenario,
@@ -84,15 +87,9 @@ test.describe("organizations", () => {
       await expectSettled(page);
       await expectNoHorizontalOverflow(page);
 
+      await expectPagerAtBottom(page, `${path} at 375px`);
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await expect(pagination).toBeInViewport({ ratio: 1 });
-      // At the bottom of the screen, under the list: not wedged in the middle.
-      const box = await pagination.boundingBox();
-      expect(box, `${path} pagination box`).not.toBeNull();
-      expect(
-        box!.y + box!.height,
-        `${path}: pagination ends in the lower part of the viewport`,
-      ).toBeGreaterThan(viewport.height - 120);
     }
   });
 

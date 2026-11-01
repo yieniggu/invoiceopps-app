@@ -32,7 +32,10 @@ beforeAll(async () => {
 describe("RP0-09/10 POST /api/v1/invoices OpenAPI contract (AC-15)", () => {
   it("is a session-protected operation in the Invoices tag", () => {
     expect(operation.tags).toEqual(["Invoices"]);
-    expect(operation.security).toEqual([{ sessionCookie: [] }]);
+    expect(operation.security).toEqual([
+      { sessionCookie: [] },
+      { bearerAuth: [] },
+    ]);
   });
 
   it("requires the Idempotency-Key header with the 16..128 key alphabet", () => {

@@ -139,12 +139,16 @@ describe("GET /api/v1/invoices over HTTP", () => {
 
     expect(response.status).toBe(200);
     expect(service.listInvoices).toHaveBeenCalledTimes(1);
-    expect(service.listInvoices).toHaveBeenCalledWith("user-1", {
-      organizationId: ORG,
-      ungrouped: false,
-      page: 1,
-      pageSize: 20,
-    });
+    expect(service.listInvoices).toHaveBeenCalledWith(
+      "user-1",
+      {
+        organizationId: ORG,
+        ungrouped: false,
+        page: 1,
+        pageSize: 20,
+      },
+      null,
+    );
   });
 
   it("passes every filter parsed and trimmed", async () => {
@@ -155,17 +159,21 @@ describe("GET /api/v1/invoices over HTTP", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(service.listInvoices).toHaveBeenCalledWith("user-1", {
-      organizationId: ORG,
-      groupId: GROUP,
-      ungrouped: false,
-      businessStatus: "APPROVED",
-      issuedFrom: "2026-01-01",
-      issuedTo: "2026-12-31",
-      q: "acme",
-      page: 2,
-      pageSize: 5,
-    });
+    expect(service.listInvoices).toHaveBeenCalledWith(
+      "user-1",
+      {
+        organizationId: ORG,
+        groupId: GROUP,
+        ungrouped: false,
+        businessStatus: "APPROVED",
+        issuedFrom: "2026-01-01",
+        issuedTo: "2026-12-31",
+        q: "acme",
+        page: 2,
+        pageSize: 5,
+      },
+      null,
+    );
   });
 
   it("passes ungrouped=true as a boolean", async () => {
@@ -173,12 +181,16 @@ describe("GET /api/v1/invoices over HTTP", () => {
     const response = await get(`${LIST}&ungrouped=true`);
 
     expect(response.status).toBe(200);
-    expect(service.listInvoices).toHaveBeenCalledWith("user-1", {
-      organizationId: ORG,
-      ungrouped: true,
-      page: 1,
-      pageSize: 20,
-    });
+    expect(service.listInvoices).toHaveBeenCalledWith(
+      "user-1",
+      {
+        organizationId: ORG,
+        ungrouped: true,
+        page: 1,
+        pageSize: 20,
+      },
+      null,
+    );
   });
 
   it("answers 200 with the { items, page, pageSize, total } envelope", async () => {
@@ -297,10 +309,14 @@ describe("GET /api/v1/invoices/{invoiceId} over HTTP", () => {
     const response = await get(DETAIL);
 
     expect(response.status).toBe(200);
-    expect(service.getInvoice).toHaveBeenCalledWith("user-1", {
-      invoiceId: INVOICE_ID,
-      organizationId: ORG,
-    });
+    expect(service.getInvoice).toHaveBeenCalledWith(
+      "user-1",
+      {
+        invoiceId: INVOICE_ID,
+        organizationId: ORG,
+      },
+      null,
+    );
   });
 
   it("passes the groupId context when given", async () => {
@@ -308,11 +324,15 @@ describe("GET /api/v1/invoices/{invoiceId} over HTTP", () => {
     const response = await get(`${DETAIL}&groupId=${GROUP}`);
 
     expect(response.status).toBe(200);
-    expect(service.getInvoice).toHaveBeenCalledWith("user-1", {
-      invoiceId: INVOICE_ID,
-      organizationId: ORG,
-      groupId: GROUP,
-    });
+    expect(service.getInvoice).toHaveBeenCalledWith(
+      "user-1",
+      {
+        invoiceId: INVOICE_ID,
+        organizationId: ORG,
+        groupId: GROUP,
+      },
+      null,
+    );
   });
 
   it("answers 200 with the { invoice } envelope", async () => {

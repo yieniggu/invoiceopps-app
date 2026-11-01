@@ -20,6 +20,14 @@ import {
   createAdminUserService,
   type AdminUserService,
 } from "./features/admin-users/services.js";
+import { BEARER_SECRET_LOCAL } from "./features/api-tokens/actor.js";
+import { createApiTokenAuthenticator } from "./features/api-tokens/bearer.js";
+import { createApiTokenOperations } from "./features/api-tokens/routes.js";
+import {
+  createApiTokenService,
+  TOKEN_ISSUANCE_MAX_PER_WINDOW,
+  type ApiTokenService,
+} from "./features/api-tokens/services.js";
 import { createGroupOperations } from "./features/groups/routes.js";
 import {
   createGroupService,
@@ -56,9 +64,11 @@ import {
   parseLegacy,
   sendError,
 } from "./http/errors.js";
+import { createDocsRouter } from "./http/docs.js";
 import { buildOpenApiDocument } from "./http/openapi.js";
 import {
   API_PREFIX,
+  createBearerRouteMatcher,
   createJsonBodyParser,
   mountOperations,
 } from "./http/registry.js";
@@ -92,7 +102,13 @@ function parseResourceContext(input: unknown) {
 // (%2F, %5C) or a dot segment decodes into a "different route" that proxies and
 // authorization layers did not see. Free-text parameters such as the policy
 // version are not identifiers and are exempt.
-const IDENTIFIER_PARAMS = ["organizationId", "groupId", "userId", "invoiceId"];
+const IDENTIFIER_PARAMS = [
+  "organizationId",
+  "groupId",
+  "userId",
+  "invoiceId",
+  "tokenId",
+];
 
 function rejectPathLikeIdentifier(
   _request: express.Request,
@@ -110,6 +126,10 @@ function rejectPathLikeIdentifier(
   next();
 }
 
+// Authorization: Bearer <secret> with exactly one non-blank value. Whether the
+// secret is a known token is decided by the authenticator, not here.
+const BEARER_AUTHORIZATION = /^Bearer ([^\s]{1,512})$/i;
+
 // Paths (relative to API_PREFIX) reachable while a temporary password is
 // pending: profile, password change, login and logout. Probes and the OpenAPI
 // document live outside the prefix and are never gated.
@@ -123,6 +143,11 @@ const ONBOARDING_PATHS = new Set([
 
 export interface AppOptions {
   authRateLimiter?: AuthRateLimiter;
+  /**
+   * Per-user limiter of POST /api/v1/api-tokens (20 attempts per 15 minutes by
+   * default). server.ts disables it together with the auth limiter.
+   */
+  apiTokenIssuanceLimiter?: AuthRateLimiter;
   /** Backs the undocumented GET /api/v1/groups. */
   groups?: GroupCatalogService;
   /**
@@ -140,6 +165,8 @@ export interface AppOptions {
   /** Backs the documented DELETE /api/v1/invoices/{invoiceId}. */
   invoiceDeletion?: InvoiceDeleteService;
   businessPolicies?: BusinessPolicyService;
+  /** Backs the documented /api/v1/api-tokens operations. */
+  apiTokens?: ApiTokenService;
   /**
    * Reverse-proxy hops trusted for `request.ip` (AUTH_TRUST_PROXY_HOPS).
    * Undefined keeps "trust proxy" off.
@@ -157,6 +184,9 @@ export function createApp(
   auth?: AuthService,
   {
     authRateLimiter = createAuthRateLimiter(),
+    apiTokenIssuanceLimiter = createAuthRateLimiter({
+      maxAttempts: TOKEN_ISSUANCE_MAX_PER_WINDOW,
+    }),
     groups,
     organizations,
     users,
@@ -166,6 +196,7 @@ export function createApp(
     invoiceReads,
     invoiceDeletion,
     businessPolicies,
+    apiTokens,
     trustProxyHops,
     publicOrigin,
   }: AppOptions = {},
@@ -183,6 +214,7 @@ export function createApp(
   // mounted and documented but answer like a missing session. They are built
   // first because the body parser picks its limit from them.
   const { prisma } = database;
+  const tokenAuthenticator = prisma && createApiTokenAuthenticator(prisma);
   const operations = [
     ...createAuthOperations(auth, authRateLimiter),
     ...createOrganizationOperations(
@@ -206,16 +238,26 @@ export function createApp(
       invoiceCreation ?? (prisma && createInvoiceCreateService(prisma)),
       invoiceReads ?? (prisma && createInvoiceReadService(prisma)),
       invoiceDeletion ?? (prisma && createInvoiceDeleteService(prisma)),
+      tokenAuthenticator,
+    ),
+    ...createApiTokenOperations(
+      auth,
+      apiTokens ?? (prisma && createApiTokenService(prisma)),
+      apiTokenIssuanceLimiter,
     ),
   ];
+  const acceptsBearer = createBearerRouteMatcher(operations);
   app.use(createJsonBodyParser(operations));
 
   // Credentials are never mixed or substituted: Authorization (any scheme)
-  // together with the session cookie is ambiguous, and Authorization alone is
-  // not accepted yet (Bearer tokens arrive with RP0-16), so it never falls
-  // back to a cookie session.
+  // together with the session cookie is ambiguous. Authorization alone is
+  // accepted only as a well-formed Bearer on the operations flagged `bearer`
+  // (the four invoice operations); anywhere else it is a 401 and never falls
+  // back to a cookie session. An accepted secret is left in response.locals
+  // for the operation to authenticate.
   app.use(API_PREFIX, (request, response, next) => {
-    if (request.headers.authorization === undefined) {
+    const authorization = request.headers.authorization;
+    if (authorization === undefined) {
       next();
       return;
     }
@@ -228,11 +270,24 @@ export function createApp(
       );
       return;
     }
-    sendError(response, 401, "UNAUTHENTICATED", "Unauthenticated");
+    if (!acceptsBearer(request.method, `${request.baseUrl}${request.path}`)) {
+      sendError(response, 401, "UNAUTHENTICATED", "Unauthenticated");
+      return;
+    }
+    const secret = BEARER_AUTHORIZATION.exec(authorization)?.[1];
+    if (secret === undefined) {
+      response.set("WWW-Authenticate", "Bearer");
+      sendError(response, 401, "UNAUTHENTICATED", "Unauthenticated");
+      return;
+    }
+    response.locals[BEARER_SECRET_LOCAL] = secret;
+    next();
   });
 
   app.use((request, response, next) => {
+    // A Bearer request carries no session, so there is nothing to forge.
     if (
+      response.locals[BEARER_SECRET_LOCAL] !== undefined ||
       !request.headers.cookie ||
       !["POST", "PATCH", "PUT", "DELETE"].includes(request.method)
     ) {
@@ -253,6 +308,7 @@ export function createApp(
   // response.locals so the handler does not query it again.
   app.use(API_PREFIX, async (request, response, next) => {
     if (
+      response.locals[BEARER_SECRET_LOCAL] !== undefined ||
       ONBOARDING_PATHS.has(request.path) ||
       !request.headers.cookie ||
       !auth
@@ -312,6 +368,10 @@ export function createApp(
   app.get("/openapi.json", (_request, response) => {
     response.status(200).json(openApiDocument);
   });
+
+  // Swagger UI over the document above: public like /openapi.json and outside
+  // API_PREFIX, so the Authorization guard never sees these requests.
+  app.use(createDocsRouter());
 
   // Session profile for the legacy routes, from the gate's cache when present.
   async function currentProfile(

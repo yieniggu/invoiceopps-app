@@ -202,7 +202,7 @@ function BasicMembersView({
   );
 
   return (
-    <div className="screen-stack">
+    <div className="screen-stack screen-fill">
       <BackLink to={paths.organization(organization.id)}>
         {organization.name}
       </BackLink>

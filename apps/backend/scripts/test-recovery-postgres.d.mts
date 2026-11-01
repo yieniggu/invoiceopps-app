@@ -7,6 +7,8 @@ export interface RecoveryPostgresDependencies {
   ) => { status: number | null };
   reset?: (dependencies: object) => Promise<unknown>;
   log?: (message: string) => void;
+  /** Vitest file filter; defaults to the PostgreSQL suites. */
+  filter?: string;
 }
 
 export function runRecoveryPostgresTests(

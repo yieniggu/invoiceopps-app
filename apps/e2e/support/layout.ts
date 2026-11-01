@@ -57,3 +57,120 @@ export async function expectNoStateWordsInToggles(page: Page) {
 /** The primary navigation (sidebar or drawer). */
 export const sidebarNav = (page: Page) =>
   page.getByRole("navigation", { name: "Navegación principal" });
+
+/**
+ * The paginator of the screen is the last visible block of its fill container
+ * and sits flush with the bottom of it, however little the list has.
+ *
+ * - Nothing visible follows it inside the container (`.screen-fill` for a
+ *   screen, `.fill-column` for a step), so no panel hangs below the pager.
+ * - Its bottom edge is the container's bottom edge.
+ * - The screen fills the content area (its bottom is the bottom of `main`),
+ *   and when the page is shorter than the viewport, `main` reaches the
+ *   viewport bottom: a short list does not leave the pager under the header.
+ * - For a step with an action bar (`actionBar`), the only visible things between
+ *   the step and the end of the screen are the submit button and, when there is
+ *   one, a block marked `data-action-bar` (the add-members summary of the
+ *   picked people) right before it. Both are the bar, right below the pager.
+ *
+ * Reading the geometry (not "ends near the viewport bottom") keeps the check
+ * meaningful for tall pages too: there it fails as soon as anything is
+ * rendered under the pager.
+ */
+export async function expectPagerAtBottom(
+  page: Page,
+  label: string,
+  { actionBar = false }: { actionBar?: boolean } = {},
+) {
+  const pager = page.getByRole("group", { name: "Paginación" });
+  await expect(pager, `${label}: pager`).toBeVisible();
+  const report = await pager.evaluate((element) => {
+    const inFlow = (node: Element) => {
+      const style = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        style.position !== "fixed" &&
+        style.position !== "absolute" &&
+        box.width > 0 &&
+        box.height > 0
+      );
+    };
+    const describe = (node: Element) =>
+      `${node.tagName.toLowerCase()}${node.getAttribute("type") ? `[${node.getAttribute("type")}]` : ""}${node.hasAttribute("data-action-bar") ? "[action-bar]" : ""}`;
+    const followers = (from: Element, until: Element) => {
+      const found: string[] = [];
+      for (let node: Element = from; node !== until; node = node.parentElement!)
+        for (
+          let next = node.nextElementSibling;
+          next;
+          next = next.nextElementSibling
+        )
+          if (inFlow(next)) found.push(describe(next));
+      return found;
+    };
+    const container = element.closest(".screen-fill, .fill-column");
+    const screen = element.closest(".screen-fill");
+    const main = element.closest("main");
+    if (!container || !screen || !main) return null;
+    const px = (value: string) => Number.parseFloat(value) || 0;
+    const containerStyle = getComputedStyle(container);
+    const mainStyle = getComputedStyle(main);
+    const pagerBottom = element.getBoundingClientRect().bottom;
+    const root = document.scrollingElement ?? document.documentElement;
+    return {
+      inContainer: followers(element, container),
+      afterContainer: followers(container, screen),
+      gapToContainer:
+        container.getBoundingClientRect().bottom -
+        px(containerStyle.paddingBottom) -
+        px(containerStyle.borderBottomWidth) -
+        pagerBottom,
+      screenToMain:
+        main.getBoundingClientRect().bottom -
+        px(mainStyle.paddingBottom) -
+        screen.getBoundingClientRect().bottom,
+      mainShortOfViewport:
+        root.scrollHeight <= window.innerHeight
+          ? window.innerHeight - main.getBoundingClientRect().bottom
+          : 0,
+    };
+  });
+  expect(report, `${label}: pager lives in a fill container`).not.toBeNull();
+  expect(report!.inContainer, `${label}: content under the pager`).toEqual([]);
+  expect(
+    report!.afterContainer.filter(
+      (name) => name !== "div[action-bar]" || !actionBar,
+    ),
+    `${label}: only the action bar may follow the step`,
+  ).toEqual(actionBar ? ["button[submit]"] : []);
+  expect(
+    Math.abs(report!.gapToContainer),
+    `${label}: pager is flush with the bottom of its container`,
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(report!.screenToMain),
+    `${label}: the screen fills the content area`,
+  ).toBeLessThanOrEqual(1);
+  expect(
+    report!.mainShortOfViewport,
+    `${label}: a short page still reaches the viewport bottom`,
+  ).toBeLessThanOrEqual(1);
+}
+
+/**
+ * The add-members selection count is shown once, in the disclosure summary
+ * («N personas seleccionadas · Ajustar permisos»); the status line above the
+ * pager is a visually hidden live region that repeats it for screen readers.
+ */
+export async function expectSelectionCount(page: Page, count: number) {
+  const text =
+    count === 1 ? "1 persona seleccionada" : `${count} personas seleccionadas`;
+  await expect(
+    page.getByRole("button", { name: `${text} · Ajustar permisos` }),
+  ).toBeVisible();
+  const live = page.getByText(`${text}.`, { exact: true });
+  await expect(live).toHaveAttribute("role", "status");
+  await expect(live).toHaveClass(/visually-hidden/);
+}

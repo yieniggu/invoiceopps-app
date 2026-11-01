@@ -197,3 +197,16 @@ export const invoiceKey = (
   organizationId: string,
   invoiceId: string,
 ) => [...orgScope(identityId, organizationId), "invoice", invoiceId] as const;
+
+/**
+ * The person's own API tokens. Without params it is the prefix of every page
+ * of every organization; only metadata is ever cached under it (the secret of
+ * a new token never is).
+ */
+export const apiTokensKey = (
+  identityId: string,
+  params?: PageParams & { organizationId: string },
+) =>
+  params === undefined
+    ? ([...identity(identityId), "api-tokens"] as const)
+    : ([...identity(identityId), "api-tokens", params] as const);

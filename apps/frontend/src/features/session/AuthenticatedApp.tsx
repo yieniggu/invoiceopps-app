@@ -24,6 +24,7 @@ export function AuthenticatedApp({ profile }: { profile: Profile }) {
       isLoggingOut={isLoggingOut}
       isPlatformAdministrator={profile.isPlatformAdministrator}
       showInvoices={hasInvoiceAccess(profile)}
+      showApiTokens={profile.memberships.length > 0}
     >
       {/* A stale 401 from a retired partition is ignored because `end`
           compares clients. Políticas is disabled, so its mutation ledger is

@@ -223,10 +223,14 @@ describe("DELETE /api/v1/invoices/{invoiceId} over HTTP", () => {
 
     expect(response.status).toBe(204);
     expect(service.deleteInvoice).toHaveBeenCalledTimes(1);
-    expect(service.deleteInvoice).toHaveBeenCalledWith("user-1", {
-      invoiceId: INVOICE_ID,
-      organizationId: ORG,
-    });
+    expect(service.deleteInvoice).toHaveBeenCalledWith(
+      "user-1",
+      {
+        invoiceId: INVOICE_ID,
+        organizationId: ORG,
+      },
+      null,
+    );
   });
 
   it("passes the groupId context when given", async () => {
@@ -234,11 +238,15 @@ describe("DELETE /api/v1/invoices/{invoiceId} over HTTP", () => {
     const response = await del(`${DELETE_URL}&groupId=${GROUP}`);
 
     expect(response.status).toBe(204);
-    expect(service.deleteInvoice).toHaveBeenCalledWith("user-1", {
-      invoiceId: INVOICE_ID,
-      organizationId: ORG,
-      groupId: GROUP,
-    });
+    expect(service.deleteInvoice).toHaveBeenCalledWith(
+      "user-1",
+      {
+        invoiceId: INVOICE_ID,
+        organizationId: ORG,
+        groupId: GROUP,
+      },
+      null,
+    );
   });
 
   it("answers 204 with an empty body and no content type", async () => {

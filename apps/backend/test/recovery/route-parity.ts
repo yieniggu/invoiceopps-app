@@ -32,6 +32,13 @@ export const DEFAULT_PARITY_EXCLUSIONS: readonly string[] = [
   "/health/live",
   "/health/ready",
   "/openapi.json",
+  // Swagger UI (public, outside the API): the page and its local assets.
+  "/docs",
+  "/docs/swagger-initializer.js",
+  "/docs/swagger-ui.css",
+  "/docs/swagger-ui-bundle.js",
+  "/docs/favicon-16x16.png",
+  "/docs/favicon-32x32.png",
 ];
 
 const IGNORED_METHODS = new Set(["HEAD", "OPTIONS", "_ALL"]);

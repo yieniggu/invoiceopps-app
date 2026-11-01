@@ -5,6 +5,8 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
+  /** Extra request headers (for example `Idempotency-Key`). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -14,18 +16,23 @@ interface RequestOptions {
  */
 export async function apiRequest<T>(
   path: string,
-  { method = "GET", body, signal }: RequestOptions = {},
+  { method = "GET", body, signal, headers }: RequestOptions = {},
 ): Promise<T> {
   const response = await protectedFetch(path, {
     method,
     credentials: "same-origin",
     signal,
-    ...(body === undefined
+    ...(body === undefined && headers === undefined
       ? {}
       : {
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          headers: {
+            ...(body === undefined
+              ? {}
+              : { "Content-Type": "application/json" }),
+            ...headers,
+          },
         }),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) throw await readApiError(response);
   if (response.status === 204) return undefined as T;

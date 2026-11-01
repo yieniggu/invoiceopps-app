@@ -8,6 +8,9 @@ import {
   runSerializable,
   SERIALIZABLE,
 } from "../../transactions.js";
+import { assertTokenAllows } from "../api-tokens/authorization.js";
+import { requireLiveApiToken } from "../api-tokens/bearer.js";
+import type { ApiTokenContext } from "../api-tokens/types.js";
 import {
   canDeleteInvoice,
   loadEffectivePermissions,
@@ -47,14 +50,20 @@ export interface InvoiceCreateService {
     actorUserId: string,
     request: InvoiceCreateRequest,
     idempotencyKey: string,
+    token: ApiTokenContext | null,
   ): Promise<InvoiceCreateResult>;
 }
 
 export interface InvoiceReadService {
-  listInvoices(userId: string, query: InvoiceListQuery): Promise<InvoicePage>;
+  listInvoices(
+    userId: string,
+    query: InvoiceListQuery,
+    token: ApiTokenContext | null,
+  ): Promise<InvoicePage>;
   getInvoice(
     userId: string,
     target: { invoiceId: string; organizationId: string; groupId?: string },
+    token: ApiTokenContext | null,
   ): Promise<{ invoice: InvoiceView }>;
 }
 
@@ -68,6 +77,7 @@ export interface InvoiceDeleteService {
   deleteInvoice(
     userId: string,
     target: { invoiceId: string; organizationId: string; groupId?: string },
+    token: ApiTokenContext | null,
   ): Promise<{ deleted: boolean; groupId: string | null }>;
 }
 
@@ -172,6 +182,17 @@ function notFound() {
   return new ApiError(404, "NOT_FOUND", "Not found");
 }
 
+/**
+ * A token only sees its own organization: any other organization is invisible
+ * to it, exactly like an organization the owner does not belong to.
+ */
+function requireTokenOrganization(
+  token: ApiTokenContext | null,
+  organizationId: string,
+) {
+  if (token && token.organizationId !== organizationId) throw notFound();
+}
+
 export function createInvoiceCreateService(
   prisma: PrismaClient,
 ): InvoiceCreateService {
@@ -192,8 +213,17 @@ export function createInvoiceCreateService(
     request: InvoiceCreateRequest,
     idempotencyKey: string,
     afterUniqueViolation: boolean,
+    token: ApiTokenContext | null,
   ): Promise<InvoiceCreateResult> {
     const { organizationId, groupId } = request;
+    // Bearer: the token row is held FOR SHARE before any membership lock, so
+    // a revocation serializes with this write (see api-tokens/bearer.ts).
+    if (token) {
+      await requireLiveApiToken(transaction, actorUserId, token, {
+        lock: true,
+      });
+      requireTokenOrganization(token, organizationId);
+    }
     const { organizationMembership } = await lockMembershipsForInvoiceWrite(
       transaction,
       { userId: actorUserId, organizationId, groupId },
@@ -220,6 +250,12 @@ export function createInvoiceCreateService(
         "Creating invoices in this scope is not allowed",
       );
     }
+    assertTokenAllows(
+      token,
+      groupId,
+      permissions,
+      (allowed) => allowed.createInvoices,
+    );
 
     const scopeKey = groupId ?? ORGANIZATION_SCOPE_KEY;
     const fingerprint = fingerprintInvoiceCreate(request);
@@ -315,7 +351,7 @@ export function createInvoiceCreateService(
   }
 
   return {
-    async createInvoice(actorUserId, request, idempotencyKey) {
+    async createInvoice(actorUserId, request, idempotencyKey, token) {
       // A unique violation aborts its PostgreSQL transaction, so it is never
       // continued: the next attempt is a new transaction that re-authorizes
       // and re-reads, finding either the winner's record (replay) or the
@@ -333,6 +369,7 @@ export function createInvoiceCreateService(
                     request,
                     idempotencyKey,
                     race > 0,
+                    token,
                   ),
                 SERIALIZABLE,
               ),
@@ -445,35 +482,62 @@ export function createInvoiceReadService(
       transaction,
       { userId, organizationId, groupId },
     );
-    if (organization.readInvoices) return;
+    if (organization.readInvoices) return effective;
     const member = await transaction.groupMembership.findFirst({
       where: { userId, organizationId, groupId },
       select: { userId: true },
     });
     if (!member) throw notFound();
     if (!effective.readInvoices) throw forbidden();
+    return effective;
+  }
+
+  /** Bearer reads re-check the token in their snapshot; no lock is held. */
+  async function checkToken(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    organizationId: string,
+    token: ApiTokenContext | null,
+  ) {
+    if (!token) return;
+    await requireLiveApiToken(transaction, userId, token, { lock: false });
+    requireTokenOrganization(token, organizationId);
   }
 
   return {
-    async listInvoices(userId, query) {
+    async listInvoices(userId, query, token) {
       const { organizationId, groupId } = query;
       return readSnapshot("invoice_list", async (transaction) => {
+        await checkToken(transaction, userId, organizationId, token);
         await requireOrganizationMember(transaction, userId, organizationId);
+        let effective: InvoicePermissions;
         if (groupId !== undefined) {
           const group = await transaction.group.findFirst({
             where: { id: groupId, organizationId },
             select: { id: true },
           });
           if (!group) throw notFound();
-          await requireGroupRead(transaction, userId, organizationId, groupId);
+          effective = await requireGroupRead(
+            transaction,
+            userId,
+            organizationId,
+            groupId,
+          );
         } else {
-          const permissions = await loadEffectivePermissions(transaction, {
+          effective = await loadEffectivePermissions(transaction, {
             userId,
             organizationId,
             groupId: null,
           });
-          if (!permissions.readInvoices) throw forbidden();
+          if (!effective.readInvoices) throw forbidden();
         }
+        // Without a groupId the list spans the organization scope.
+        assertTokenAllows(
+          token,
+          groupId ?? null,
+          effective,
+          (allowed) => allowed.readInvoices,
+        );
         const where = listWhere(query);
         // Sequential: the transaction owns one connection and both reads see
         // the same snapshot.
@@ -493,8 +557,9 @@ export function createInvoiceReadService(
       });
     },
 
-    async getInvoice(userId, { invoiceId, organizationId, groupId }) {
+    async getInvoice(userId, { invoiceId, organizationId, groupId }, token) {
       return readSnapshot("invoice_get", async (transaction) => {
+        await checkToken(transaction, userId, organizationId, token);
         await requireOrganizationMember(transaction, userId, organizationId);
         const row = await transaction.invoice.findFirst({
           where: { id: invoiceId, organizationId, deletedAt: null },
@@ -503,21 +568,28 @@ export function createInvoiceReadService(
         if (!row) throw notFound();
         // The context in the URL must match the invoice's real scope.
         if (groupId !== undefined && groupId !== row.groupId) throw notFound();
+        let effective: InvoicePermissions;
         if (row.groupId === null) {
-          const permissions = await loadEffectivePermissions(transaction, {
+          effective = await loadEffectivePermissions(transaction, {
             userId,
             organizationId,
             groupId: null,
           });
-          if (!permissions.readInvoices) throw forbidden();
+          if (!effective.readInvoices) throw forbidden();
         } else {
-          await requireGroupRead(
+          effective = await requireGroupRead(
             transaction,
             userId,
             organizationId,
             row.groupId,
           );
         }
+        assertTokenAllows(
+          token,
+          row.groupId,
+          effective,
+          (allowed) => allowed.readInvoices,
+        );
         return { invoice: toInvoiceViewDto(row) };
       });
     },
@@ -584,8 +656,16 @@ export function createInvoiceDeleteService(
     transaction: Prisma.TransactionClient,
     actorUserId: string,
     target: { invoiceId: string; organizationId: string; groupId?: string },
+    token: ApiTokenContext | null,
   ) {
     const { invoiceId, organizationId } = target;
+    // Bearer: the token row is held FOR SHARE before any membership lock.
+    if (token) {
+      await requireLiveApiToken(transaction, actorUserId, token, {
+        lock: true,
+      });
+      requireTokenOrganization(token, organizationId);
+    }
     // Read before the lock on purpose: the lock rows depend on the invoice's
     // group. This is safe because an invoice's organizationId, groupId and
     // scopeKey are immutable (the database trigger Invoice_scope_immutable
@@ -631,6 +711,9 @@ export function createInvoiceDeleteService(
         "Deleting this invoice is not allowed",
       );
     }
+    assertTokenAllows(token, invoice.groupId, effectivePermissions, (allowed) =>
+      canDeleteInvoice(allowed, invoice.createdByUserId, actorUserId),
+    );
     // Authorized repeat: nothing changes and no second event is written.
     if (invoice.deletedAt) return { deleted: false, groupId: invoice.groupId };
 
@@ -655,7 +738,7 @@ export function createInvoiceDeleteService(
   }
 
   return {
-    async deleteInvoice(actorUserId, target) {
+    async deleteInvoice(actorUserId, target, token) {
       // Serialization failures, deadlocks and transaction timeouts are
       // handled by runSerializable (bounded retries, then the retryable 503).
       // The event insert is guarded by the updateMany count, so a unique
@@ -665,7 +748,7 @@ export function createInvoiceDeleteService(
         return await runSerializable(
           () =>
             prisma.$transaction(
-              (transaction) => attempt(transaction, actorUserId, target),
+              (transaction) => attempt(transaction, actorUserId, target, token),
               SERIALIZABLE,
             ),
           undefined,

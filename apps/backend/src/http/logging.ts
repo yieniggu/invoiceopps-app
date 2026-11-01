@@ -22,6 +22,7 @@ export interface LogFields {
   actorUserId?: string;
   targetUserId?: string;
   invoiceId?: string;
+  tokenId?: string;
   /** Transaction conflicts: fixed operation label, attempt and outcome (plus `reason`). */
   operation?: string;
   attempt?: number;

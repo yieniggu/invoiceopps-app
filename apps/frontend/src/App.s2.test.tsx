@@ -582,7 +582,14 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
               name: "Quitar a Ada del grupo",
             })
           : control;
-      await waitFor(() => expect(guard).toHaveProperty("disabled", true));
+      // Locked either way: `disabled`, or (add members, CR-348) `aria-disabled`
+      // so a focused button keeps its focus while the request is out.
+      await waitFor(() =>
+        expect(
+          guard.matches(":disabled") ||
+            guard.getAttribute("aria-disabled") === "true",
+        ).toBe(true),
+      );
       fireEvent.click(guard);
       expect(api.mutation).toHaveBeenCalledTimes(1);
       const request = api.fetchMock.mock.calls.find(

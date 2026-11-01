@@ -30,9 +30,10 @@ import type {
 } from "./types.js";
 
 /**
- * Credentials issued before a RUT or password change must stop working. No
- * endpoint creates ApiTokens yet; the Bearer middleware that will accept them
- * must check both `revokedAt` and `user.disabledAt`.
+ * Credentials issued before a RUT or password change must stop working: the
+ * sessions are deleted and every live ApiToken is revoked. A Bearer token is
+ * accepted only on the four invoice operations, which check both `revokedAt`
+ * and `user.disabledAt` on every request.
  */
 async function revokeCredentials(
   transaction: Prisma.TransactionClient,
@@ -78,6 +79,13 @@ export function updateUser(
           return { result: { user: toDetailUser(target) }, changed: false };
         }
 
+        // Revoke first: the RUT is a unique key, so changing it takes a row lock
+        // that conflicts with the FOR KEY SHARE of a concurrent Bearer invoice
+        // write. That write holds its ApiToken row FOR SHARE, which the
+        // revocation waits for; taking the token first keeps one lock order.
+        if (rutChanged) {
+          await revokeCredentials(transaction, targetUserId, new Date());
+        }
         let updated;
         try {
           updated = await transaction.user.update({
@@ -93,9 +101,6 @@ export function updateUser(
             throw new ApiError(409, "USER_CONFLICT", "User already exists");
           }
           throw error;
-        }
-        if (rutChanged) {
-          await revokeCredentials(transaction, targetUserId, new Date());
         }
         await transaction.platformAdministrativeAuditEvent.create({
           data: {

@@ -109,7 +109,7 @@ function AddMembersView({ organization, group }: GroupContext) {
           : "La organización no tiene personas para agregar.";
 
   return (
-    <div className="screen-stack">
+    <div className="screen-stack screen-fill">
       <BackLink to={paths.groupMembers(organization.id, group.id)}>
         Miembros del grupo
       </BackLink>

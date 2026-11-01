@@ -1,5 +1,4 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { readFileSync } from "node:fs";
 import { FileText } from "lucide-react";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -30,26 +29,5 @@ describe("EmptyState", () => {
       screen.getByRole("heading", { level: 3, name: "Elige un propietario" }),
     ).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
-  });
-});
-
-// jsdom does no layout, so the layout contract is read from the stylesheet: the
-// main area is always a flex column, and a `.screen-fill` child simply grows,
-// with no `:has()` rule that depends on what else the screen renders.
-describe("screen-fill layout", () => {
-  const styles = readFileSync("src/styles.css", "utf8");
-
-  it("makes main a flex column and lets .screen-fill grow without :has()", () => {
-    expect(styles).toMatch(
-      /\.app-shell main\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/,
-    );
-    expect(styles).toMatch(/\.screen-fill\s*\{[^}]*flex:\s*1 1 auto/);
-    expect(styles).not.toMatch(/main:has\(/);
-  });
-
-  it("keeps the pagination at the bottom of a filled screen", () => {
-    expect(styles).toMatch(
-      /\.screen-fill > \.pagination\s*\{[^}]*margin-block-start:\s*auto/,
-    );
   });
 });

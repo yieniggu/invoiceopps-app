@@ -1,4 +1,4 @@
-import { CircleCheck, X } from "lucide-react";
+import { CircleCheck, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState, type HTMLAttributes } from "react";
 
 import { useAnnouncer } from "./NoticeRegion";
@@ -20,8 +20,8 @@ function restoreFocus() {
 }
 
 /**
- * Floating success notice (bottom right; full width at the bottom on narrow
- * screens). Inside the app shell the text is announced through the shell's
+ * Floating notice (bottom right; full width at the bottom on narrow screens),
+ * success by default or `warning` for something to act on. Inside the app shell the text is announced through the shell's
  * persistent live region (see `NoticeRegionProvider`) and the card itself is
  * not live, so nothing is announced twice. Without a shell (a bare render) the
  * wrapper is its own polite region, always mounted with only its content
@@ -35,9 +35,19 @@ function restoreFocus() {
 export function Toast({
   message,
   noticeId,
+  tone = "success",
+  persistent = false,
 }: {
   message: string | undefined;
   noticeId?: string;
+  /** `warning` is for something the person should act on, not just a result. */
+  tone?: "success" | "warning";
+  /**
+   * Stays until dismissed instead of timing out. A persistent notice flows in
+   * the page (where it is rendered) rather than floating over it, so it can
+   * never cover what is at the bottom of the screen, such as the paginator.
+   */
+  persistent?: boolean;
 }) {
   const instance = noticeId ?? message;
   const announcer = useAnnouncer();
@@ -58,7 +68,7 @@ export function Toast({
   };
 
   useEffect(() => {
-    if (!visible || paused || message === undefined) return;
+    if (!visible || paused || persistent || message === undefined) return;
     const timer = window.setTimeout(
       () => dismiss(false),
       toastDuration(message),
@@ -66,7 +76,7 @@ export function Toast({
     return () => window.clearTimeout(timer);
     // `dismiss` only reads the refs and `instance`, which `message` and
     // `noticeId` already cover.
-  }, [visible, paused, message, instance]);
+  }, [visible, paused, persistent, message, instance]);
 
   // Written after mount, into a region that already exists (empty).
   useEffect(() => {
@@ -75,13 +85,14 @@ export function Toast({
     return () => announcer.clear(instance ?? message);
   }, [announcer, visible, message, instance]);
 
+  const Icon = tone === "warning" ? TriangleAlert : CircleCheck;
   const ownRegion: HTMLAttributes<HTMLDivElement> = announcer
     ? {}
     : { role: "status", "aria-live": "polite", "aria-atomic": true };
 
   return (
     <div
-      className="toast-region"
+      className={persistent ? "toast-region is-inline" : "toast-region"}
       {...ownRegion}
       onMouseEnter={() => {
         hovered.current = true;
@@ -101,8 +112,8 @@ export function Toast({
       }}
     >
       {visible ? (
-        <div className="toast">
-          <CircleCheck
+        <div className={tone === "warning" ? "toast is-warning" : "toast"}>
+          <Icon
             className="toast-icon"
             aria-hidden="true"
             focusable="false"

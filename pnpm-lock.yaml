@@ -40,6 +40,9 @@ importers:
       pg:
         specifier: ^8.16.3
         version: 8.23.0
+      swagger-ui-dist:
+        specifier: 5.33.3
+        version: 5.33.3
       zod:
         specifier: 4.6.6
         version: 4.6.6
@@ -1155,6 +1158,12 @@ packages:
     resolution:
       {
         integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==,
+      }
+
+  "@scarf/scarf@1.4.0":
+    resolution:
+      {
+        integrity: sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==,
       }
 
   "@seriousme/openapi-schema-validator@2.11.0":
@@ -3841,6 +3850,12 @@ packages:
       }
     engines: { node: ">=8" }
 
+  swagger-ui-dist@5.33.3:
+    resolution:
+      {
+        integrity: sha512-7xJKxAjf+/ajlW/V/dMfbiY+NC5BWtbvzzdI/AsX5UzMtOMudmFz/tjuKN0jN7QVe5drKKnx01CdYEJvTFvQlw==,
+      }
+
   symbol-tree@3.2.4:
     resolution:
       {
@@ -4773,6 +4788,8 @@ snapshots:
   "@rolldown/pluginutils@1.0.0-rc.3": {}
 
   "@rolldown/pluginutils@1.0.1": {}
+
+  "@scarf/scarf@1.4.0": {}
 
   "@seriousme/openapi-schema-validator@2.11.0":
     dependencies:
@@ -6375,6 +6392,10 @@ snapshots:
   supports-color@7.2.0:
     dependencies:
       has-flag: 4.0.0
+
+  swagger-ui-dist@5.33.3:
+    dependencies:
+      "@scarf/scarf": 1.4.0
 
   symbol-tree@3.2.4: {}
 

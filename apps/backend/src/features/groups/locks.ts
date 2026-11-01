@@ -3,9 +3,23 @@ import type { Prisma } from "../../generated/prisma/client.js";
 // Global lock order: User row(s) -> OrganizationMembership -> GroupMemberships
 // by id ascending. Every transaction takes the rows it needs in that order
 // only, and a transaction that locks a membership never locks a User row
-// afterwards. User rows are locked only by login and password change (one
-// user) and by user deactivation (the target and the other administrators of
-// its organizations, together, in ascending id order in one statement).
+// afterwards. User rows are locked (lockUser/lockUsers, FOR NO KEY UPDATE, in
+// ascending id order) by: login and password change (auth/services.ts, one
+// user), API token creation (api-tokens/services.ts, one user), administrator
+// deactivation (the target and the other administrators of its organizations,
+// together, in one statement) and reactivation (admin-users/services.ts), and
+// administrator user update and password reset (admin-users/maintenance.ts,
+// one user).
+//
+// FOR NO KEY UPDATE excludes every other user lock and every row update, but
+// does not conflict with the FOR KEY SHARE that a foreign key to User (invoice,
+// session, API token or audit insert) takes, so those inserts never wait on a
+// user lock. The one exception is a RUT change: RUT is a unique key, so
+// updating it upgrades the row lock to a key lock that does conflict with that
+// KEY SHARE. updateUser therefore revokes sessions and API tokens BEFORE it
+// updates the User row, so it already waits for the ApiToken rows a concurrent
+// Bearer write holds before it needs the key lock.
+//
 // Deactivation reads memberships without locking them and relies on
 // SERIALIZABLE (retried by runSerializable) against concurrent role changes.
 //

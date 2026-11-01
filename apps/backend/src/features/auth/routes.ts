@@ -1,6 +1,7 @@
 import type { AuthRateLimiter } from "../../auth-rate-limit.js";
 import { ErrorResponseSchema } from "../../http/errors.js";
 import type { Operation } from "../../http/registry.js";
+import { retryableConflictResponse } from "../../http/standard-responses.js";
 import { createAuthController } from "./controllers.js";
 import {
   LoginRequestSchema,
@@ -30,11 +31,11 @@ export function createAuthOperations(
   authRateLimiter: AuthRateLimiter,
 ): Operation[] {
   const controller = createAuthController(auth, authRateLimiter);
-  // A future Bearer middleware must reject a token whose `revokedAt` is set
-  // or whose user has `disabledAt` set (and creation must refuse disabled users).
+  // `features/api-tokens/bearer.ts` (`requireLiveApiToken`) rejects revoked or
+  // expired tokens and disabled users; token issuance refuses disabled users.
   const unauthenticated = {
     description:
-      "UNAUTHENTICATED: missing, invalid or expired session (Bearer is not accepted yet)",
+      "UNAUTHENTICATED: missing, invalid or expired session (a Bearer token is accepted only on the four invoice operations)",
     schema: ERROR,
   };
   const forbiddenOrigin = {
@@ -133,6 +134,7 @@ export function createAuthOperations(
         },
         401: unauthenticated,
         403: forbiddenOrigin,
+        503: retryableConflictResponse,
       },
       handler: controller.changePassword,
     },

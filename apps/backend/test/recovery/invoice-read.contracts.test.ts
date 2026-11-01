@@ -56,7 +56,7 @@ describe("RP0-11 GET /api/v1/invoices OpenAPI contract", () => {
   it("is a session-protected operation in the Invoices tag", () => {
     expect(Object.keys(list)).not.toHaveLength(0);
     expect(list.tags).toEqual(["Invoices"]);
-    expect(list.security).toEqual([{ sessionCookie: [] }]);
+    expect(list.security).toEqual([{ sessionCookie: [] }, { bearerAuth: [] }]);
   });
 
   it("documents exactly the new query parameters and none of the legacy ones", () => {
@@ -155,7 +155,10 @@ describe("RP0-11 GET /api/v1/invoices/{invoiceId} OpenAPI contract", () => {
   it("is a session-protected operation in the Invoices tag", () => {
     expect(Object.keys(detail)).not.toHaveLength(0);
     expect(detail.tags).toEqual(["Invoices"]);
-    expect(detail.security).toEqual([{ sessionCookie: [] }]);
+    expect(detail.security).toEqual([
+      { sessionCookie: [] },
+      { bearerAuth: [] },
+    ]);
   });
 
   it("documents the invoiceId path parameter and the organizationId and groupId query", () => {

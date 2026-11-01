@@ -29,7 +29,7 @@ describe("createInvoiceDeleteService conflict handling (CR-330)", () => {
     const transaction = vi.fn().mockRejectedValue(uniqueViolation());
 
     const outcome = await serviceWith(transaction)
-      .deleteInvoice("user-1", TARGET)
+      .deleteInvoice("user-1", TARGET, null)
       .catch((error: unknown) => error);
 
     expect(outcome).toBeInstanceOf(ApiError);
@@ -45,7 +45,7 @@ describe("createInvoiceDeleteService conflict handling (CR-330)", () => {
       .mockResolvedValueOnce({ deleted: true, groupId: null });
 
     await expect(
-      serviceWith(transaction).deleteInvoice("user-1", TARGET),
+      serviceWith(transaction).deleteInvoice("user-1", TARGET, null),
     ).resolves.toEqual({ deleted: true, groupId: null });
     expect(transaction).toHaveBeenCalledTimes(2);
   });
@@ -55,7 +55,7 @@ describe("createInvoiceDeleteService conflict handling (CR-330)", () => {
     const transaction = vi.fn().mockRejectedValue(serializationFailure());
 
     const outcome = await serviceWith(transaction)
-      .deleteInvoice("user-1", TARGET)
+      .deleteInvoice("user-1", TARGET, null)
       .catch((error: unknown) => error);
 
     expect(outcome).toMatchObject({ status: 503, code: "RETRYABLE_CONFLICT" });
@@ -71,7 +71,7 @@ describe("createInvoiceDeleteService conflict handling (CR-330)", () => {
       );
 
     const outcome = await serviceWith(transaction)
-      .deleteInvoice("user-1", TARGET)
+      .deleteInvoice("user-1", TARGET, null)
       .catch((error: unknown) => error);
 
     expect(outcome).toMatchObject({ status: 503, code: "RETRYABLE_CONFLICT" });

@@ -5,6 +5,7 @@ import type { Profile } from "../auth/types";
 import { AdminUserScreen } from "../admin/screens/AdminUserScreen";
 import { AdminUsersScreen } from "../admin/screens/AdminUsersScreen";
 import { CreateUserScreen } from "../admin/screens/CreateUserScreen";
+import { ApiTokensScreen } from "../api-tokens/screens/ApiTokensScreen";
 import { DashboardScreen } from "../dashboard/DashboardScreen";
 import { AddGroupMembersScreen } from "../groups/screens/AddGroupMembersScreen";
 import { BulkGroupPermissionsScreen } from "../groups/screens/BulkGroupPermissionsScreen";
@@ -14,6 +15,7 @@ import { GroupMemberScreen } from "../groups/screens/GroupMemberScreen";
 import { GroupMembersScreen } from "../groups/screens/GroupMembersScreen";
 import { MyGroupsScreen } from "../groups/screens/MyGroupsScreen";
 import { OrganizationGroupsScreen } from "../groups/screens/OrganizationGroupsScreen";
+import { CreateInvoiceScreen } from "../invoices/screens/CreateInvoiceScreen";
 import { InvoiceDetailScreen } from "../invoices/screens/InvoiceDetailScreen";
 import { InvoiceInboxScreen } from "../invoices/screens/InvoiceInboxScreen";
 import { NotFoundScreen } from "../navigation/NotFoundScreen";
@@ -66,10 +68,18 @@ export function AppRoutes({
         element={<InvoiceInboxScreen profile={profile} />}
       />
       <Route
+        path="invoices/new"
+        element={<CreateInvoiceScreen profile={profile} />}
+      />
+      <Route
         path="invoices/:invoiceId"
         element={<InvoiceDetailScreen profile={profile} />}
       />
       <Route path="policies" element={<PoliciesUnavailableScreen />} />
+      <Route
+        path="api-tokens"
+        element={<ApiTokensScreen profile={profile} />}
+      />
       <Route
         path="profile"
         element={
