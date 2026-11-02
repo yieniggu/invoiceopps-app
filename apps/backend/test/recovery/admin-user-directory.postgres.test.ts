@@ -868,7 +868,11 @@ describe("AC-04 POST /api/v1/admin/users/{userId}/password-reset", () => {
     const lifetime = Date.parse(response.body.expiresAt) - Date.now();
     expect(lifetime).toBeGreaterThan(24 * 3_600_000 - 60_000);
     expect(lifetime).toBeLessThanOrEqual(24 * 3_600_000);
-    expect(stored.passwordHash).not.toContain(temporary);
+    // Booleans only: a failure must not echo the temporary password.
+    expect(
+      stored.passwordHash.includes(temporary),
+      "stored hash carries the temporary password",
+    ).toBe(false);
 
     // Old credentials are dead.
     expect(await sessionCount(user.id)).toBe(0);

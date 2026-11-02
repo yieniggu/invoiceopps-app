@@ -143,7 +143,12 @@ describe("RP0-16 POST /api/v1/api-tokens emission (AC-06)", () => {
       'SELECT row_to_json(t)::text AS body FROM "ApiToken" t WHERE id = $1',
       [token.id],
     );
-    expect(dump.rows[0].body).not.toContain(secret);
+    // Booleans only: a failure must not echo the secret into the log.
+    expect(dump.rows).toHaveLength(1);
+    expect(
+      String(dump.rows[0].body).includes(secret),
+      "stored row carries the secret",
+    ).toBe(false);
   });
 
   it("returns a different secret for every emission", async () => {
@@ -398,8 +403,11 @@ describe("RP0-16 GET /api/v1/api-tokens (AC-11, SUP-3)", () => {
     }
     const serialized = JSON.stringify(response.body);
     for (const secret of [mine.secret, grouped.secret, others.secret]) {
-      expect(serialized).not.toContain(secret);
-      expect(serialized).not.toContain(sha256Hex(secret));
+      expect(serialized.includes(secret), "list carries a secret").toBe(false);
+      expect(
+        serialized.includes(sha256Hex(secret)),
+        "list carries a secret hash",
+      ).toBe(false);
     }
     expect(serialized).not.toContain("tokenHash");
   });

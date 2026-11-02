@@ -173,7 +173,11 @@ const invoiceIdOf = (output: string, step: string) =>
   new RegExp(`\\[${step}\\] HTTP \\d+ id=([0-9a-f-]{36})`).exec(output)?.[1];
 
 function expectNoSecret(secret: string, ...outputs: string[]) {
-  for (const output of outputs) expect(output).not.toContain(secret);
+  // Booleans only: a failure must not echo the bearer secret into the log.
+  for (const output of outputs)
+    expect(output.includes(secret), "client output carries the secret").toBe(
+      false,
+    );
 }
 
 describe.each(CLIENTS)("RP0-19 example client: $name", ({ command }) => {
