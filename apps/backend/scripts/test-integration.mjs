@@ -54,6 +54,31 @@ function docker(args, env, stage, spawn) {
   return command("docker", args, { env, stage }, spawn);
 }
 
+const portAttempts = 20;
+const portRetryMilliseconds = 250;
+
+/**
+ * The host binding of the container's 5432/tcp. Under load `docker inspect`
+ * can run before Docker publishes the port of a container it just started
+ * (RV-106), so a missing mapping is asked again for at most about five
+ * seconds. A mapping that exists is returned at once, whatever its address:
+ * the caller rejects a non-loopback one without waiting.
+ */
+async function publishedPort(id, env, spawn, sleep) {
+  for (let attempt = 1; ; attempt += 1) {
+    const binding = JSON.parse(
+      docker(
+        ["inspect", id, "--format", "{{json .NetworkSettings.Ports}}"],
+        env,
+        "port inspection",
+        spawn,
+      ),
+    )?.["5432/tcp"]?.[0];
+    if (binding || attempt >= portAttempts) return binding;
+    await sleep(portRetryMilliseconds);
+  }
+}
+
 function ownedId(name, nonce, env, spawn) {
   const result = spawn("docker", ["inspect", name, "--format", "{{json .}}"], {
     encoding: "utf8",
@@ -143,6 +168,7 @@ export async function runIntegrationGate({
   spawn = spawnSync,
   Client = pg.Client,
   log = console.info,
+  sleep = delay,
 } = {}) {
   if (
     argv.length !== 2 ||
@@ -237,14 +263,7 @@ export async function runIntegrationGate({
     log("stage: isolated-start");
     docker(["start", id], dockerEnv, "isolated start", spawn);
     log("stage: loopback-port-verification");
-    const port = JSON.parse(
-      docker(
-        ["inspect", id, "--format", "{{json .NetworkSettings.Ports}}"],
-        dockerEnv,
-        "port inspection",
-        spawn,
-      ),
-    )["5432/tcp"]?.[0];
+    const port = await publishedPort(id, dockerEnv, spawn, sleep);
     if (port?.HostIp !== "127.0.0.1" || !/^\d+$/.test(port.HostPort))
       throw new Error("Loopback port verification failed");
     const url = `postgresql://${role}:${password}@127.0.0.1:${port.HostPort}/invoiceops_test`;

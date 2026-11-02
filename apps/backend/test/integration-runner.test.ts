@@ -204,11 +204,21 @@ describe("integration migration ledger", () => {
   });
 });
 
+const loopbackPort = {
+  "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "55001" }],
+};
+
 function fixture({
   failure,
+  ports = [],
 }: {
   failure?: "checksum" | "suite" | "unowned" | "cleanup" | "organization-count";
+  // Successive answers of the port inspection (RV-106); once exhausted, the
+  // last one repeats, and with none the mapping is loopback from the start.
+  ports?: object[];
 } = {}) {
+  let portInspections = 0;
+  const sleeps: number[] = [];
   const calls: Array<{
     binary: string;
     args: readonly string[];
@@ -253,12 +263,13 @@ function fixture({
         case "inspect":
           if (!created)
             return { status: 1, stdout: "", stderr: "No such object" };
-          if (args[1] === id)
-            return success(
-              JSON.stringify({
-                "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "55001" }],
-              }),
-            );
+          if (args[1] === id) {
+            const answer =
+              ports[Math.min(portInspections, ports.length - 1)] ??
+              loopbackPort;
+            portInspections += 1;
+            return success(JSON.stringify(answer));
+          }
           return success(
             JSON.stringify({
               Id: id,
@@ -299,15 +310,63 @@ function fixture({
     calls,
     queries,
     logs,
+    sleeps,
+    portInspections: () => portInspections,
     dependencies: {
       argv: ["node", runner],
       env: { PATH: "/nonexistent", HOME: "/nonexistent" },
       spawn,
       Client,
       log: (message: string) => logs.push(message),
+      sleep: async (milliseconds: number) => {
+        sleeps.push(milliseconds);
+      },
     } satisfies GateDependencies,
   };
 }
+
+// RV-106: under load `docker inspect` can run before Docker publishes the port
+// of a container it just started. The gate waits a bounded time for the
+// mapping, but a mapping that exists and is not loopback fails at once.
+describe("loopback port verification", () => {
+  it("waits for a port mapping that appears late", async () => {
+    const { dependencies, portInspections, sleeps, calls } = fixture({
+      ports: [{}, { "5432/tcp": null }, loopbackPort],
+    });
+    await runIntegrationGate(dependencies);
+    expect(portInspections()).toBe(3);
+    expect(sleeps).toHaveLength(2);
+    expect(calls.some(({ args }) => args.includes("vitest"))).toBe(true);
+  });
+
+  it("gives up after a bounded wait and still removes the owned container", async () => {
+    const { dependencies, portInspections, sleeps, calls } = fixture({
+      ports: [{}],
+    });
+    await expect(runIntegrationGate(dependencies)).rejects.toThrow(
+      "Loopback port verification failed",
+    );
+    expect(portInspections()).toBeGreaterThan(1);
+    expect(portInspections()).toBeLessThanOrEqual(20);
+    // About five seconds at most in total.
+    expect(
+      sleeps.reduce((total, value) => total + value, 0),
+    ).toBeLessThanOrEqual(5_000);
+    expect(calls.some(({ args }) => args[0] === "rm")).toBe(true);
+    expect(calls.some(({ args }) => args.includes("vitest"))).toBe(false);
+  });
+
+  it("fails at once when the port is published on a non-loopback address", async () => {
+    const { dependencies, portInspections, sleeps } = fixture({
+      ports: [{ "5432/tcp": [{ HostIp: "0.0.0.0", HostPort: "55001" }] }],
+    });
+    await expect(runIntegrationGate(dependencies)).rejects.toThrow(
+      "Loopback port verification failed",
+    );
+    expect(portInspections()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+});
 
 describe("integration runner orchestration without external processes", () => {
   it("imports without executing and rejects unsafe input before spawning or allocating resources", async () => {

@@ -37,6 +37,8 @@ export interface GateDependencies {
     query(sql: string, values?: unknown[]): Promise<{ rows: object[] }>;
   };
   log?: (message: string) => void;
+  /** Waits between port inspections (RV-106); a timer by default. */
+  sleep?: (milliseconds: number) => Promise<unknown>;
 }
 
 export function runIntegrationGate(
