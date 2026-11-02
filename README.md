@@ -239,7 +239,8 @@ esquema consolidado no soporta. En su lugar, crea una base limpia
 `invoiceops`, la única base local de desarrollo (solo loopback, con confirmación
 explícita; nunca se imprimen credenciales). El reset recrea `invoiceops` y
 destruye sus datos. `invoiceops_recovery_test` se usa solo en
-`pnpm test:recovery:postgres`.
+`pnpm test:recovery:postgres` (y los clientes) e `invoiceops_recovery_e2e` solo en las
+pruebas E2E del navegador.
 
 > Borra todos los datos de `invoiceops`; no lo ejecutes si quieres conservarlos.
 > Precondición: `DATABASE_URL` debe apuntar a `127.0.0.1:$LOCAL_APP_DB_PORT/invoiceops`
@@ -265,7 +266,7 @@ Consulta [`LOCAL_RUN.md`](LOCAL_RUN.md) para el procedimiento local completo y l
 comandos `pnpm test:recovery:unit` / `pnpm test:recovery:postgres`. Las pruebas de la
 interfaz de recuperación (onboarding, organizaciones, grupos, usuarios y membresías)
 se ejecutan con `pnpm test:recovery:ui`.
-Las pruebas E2E del navegador (Playwright, pila real contra la base de pruebas aislada) se ejecutan con `pnpm test:e2e`; ver «Pruebas E2E del navegador» en [`LOCAL_RUN.md`](LOCAL_RUN.md).
+Las pruebas E2E del navegador (Playwright, pila real contra la base dedicada `invoiceops_recovery_e2e`) se ejecutan con `pnpm test:e2e`; ver «Pruebas E2E del navegador» en [`LOCAL_RUN.md`](LOCAL_RUN.md). La certificación P0 es `pnpm test:recovery:e2e` (recorrido RP0-20); la matriz G01–G20 está en [`docs/recovery-acceptance.md`](docs/recovery-acceptance.md).
 
 Crea `.env`, levanta PostgreSQL y el backend/frontend siguiendo
 [`LOCAL_RUN.md`](LOCAL_RUN.md). No se duplican aquí los pasos ni la tabla de

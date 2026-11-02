@@ -1,58 +1,26 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { Locator, Page } from "@playwright/test";
-
 import { expect, signInApi, test } from "../support/test.ts";
 import { Api } from "../support/api.ts";
 import { expectSecretAbsent } from "../support/secrets.ts";
 import { ALL_FLAGS, createScenario, unique } from "../support/scenario.ts";
+import { auditLoopbackOnly } from "../support/network.ts";
+import {
+  authorizeBearer,
+  execute,
+  liveBody,
+  liveJson,
+  liveStatus,
+  openOperation,
+  operation,
+} from "../support/swagger.ts";
 
 // This spec types a bearer secret into Swagger UI. Playwright's failure
 // screenshot and trace (DOM snapshots and the network log) are not masked, so
 // a failure here would keep that secret in `test-results/`: both are off for
 // this file, and the global teardown drops the ARIA snapshot of a failure.
 test.use({ screenshot: "off", trace: "off" });
-
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-
-/** The Swagger UI operation block of `method` and the exact `path`. */
-function operation(page: Page, method: string, path: string): Locator {
-  return page.locator(`.opblock-${method}`).filter({
-    has: page.locator(`.opblock-summary-path[data-path="${path}"]`),
-  });
-}
-
-async function openOperation(block: Locator) {
-  if (!(await block.evaluate((node) => node.classList.contains("is-open"))))
-    await block.locator(".opblock-summary-control").click();
-  await block.getByRole("button", { name: "Try it out" }).click();
-}
-
-/** Clears any earlier response so a new one cannot be mistaken for it. */
-async function execute(block: Locator) {
-  const clear = block.getByRole("button", { name: "Clear" });
-  if (await clear.count()) await clear.click();
-  await expect(block.locator(".live-responses-table")).toHaveCount(0);
-  await block.getByRole("button", { name: "Execute" }).click();
-}
-
-function liveStatus(block: Locator) {
-  return block
-    .locator(".live-responses-table tr.response .response-col_status")
-    .first();
-}
-
-function liveBody(block: Locator) {
-  return block.locator(
-    ".live-responses-table tr.response .response-col_description pre",
-  );
-}
-
-async function liveJson<T>(block: Locator): Promise<T> {
-  await expect(liveBody(block).first()).toBeVisible();
-  return JSON.parse((await liveBody(block).first().innerText()).trim()) as T;
-}
 
 test("Swagger UI authorizes with a bearer token and exercises the invoice API from the browser", async ({
   page,
@@ -79,13 +47,7 @@ test("Swagger UI authorizes with a bearer token and exercises the invoice API fr
     // Fresh browser context: no cookie, and nothing may leave the machine
     // (the UI must not need a CDN, fonts or the online validator).
     expect(await context.cookies()).toEqual([]);
-    const blocked: string[] = [];
-    await context.route("**/*", (route) => {
-      const url = new URL(route.request().url());
-      if (LOOPBACK_HOSTS.has(url.hostname)) return route.continue();
-      blocked.push(url.href);
-      return route.abort();
-    });
+    const blocked = await auditLoopbackOnly(context);
 
     await page.goto("/docs");
     await expect(page).toHaveURL(/\/docs\/$/);
@@ -97,18 +59,7 @@ test("Swagger UI authorizes with a bearer token and exercises the invoice API fr
     ).toBeVisible();
 
     // Authorize with the bearer scheme only.
-    const authorize = page.getByRole("button", { name: "Authorize" });
-    await authorize.click();
-    const dialog = page.locator(".dialog-ux .modal-ux");
-    const bearer = dialog.locator(".auth-container", { hasText: "bearerAuth" });
-    await bearer.locator("input[type=text]").fill(secret);
-    await bearer.getByRole("button", { name: "Apply credentials" }).click();
-    await expect(bearer.getByText("Authorized")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close" }).first().click();
-    await expect(dialog).toBeHidden();
-    await expect(
-      page.locator(".scheme-container .btn.authorize.locked"),
-    ).toBeVisible();
+    await authorizeBearer(page, secret);
 
     // POST /api/v1/invoices, organization scope.
     const create = operation(page, "post", "/api/v1/invoices");
@@ -275,13 +226,7 @@ test("Swagger UI never sends the app session cookie, even in a logged-in browser
     await execute(list);
     await expect(liveStatus(list)).toHaveText("401");
 
-    await page.getByRole("button", { name: "Authorize" }).click();
-    const dialog = page.locator(".dialog-ux .modal-ux");
-    const bearer = dialog.locator(".auth-container", { hasText: "bearerAuth" });
-    await bearer.locator("input[type=text]").fill(secret);
-    await bearer.getByRole("button", { name: "Apply credentials" }).click();
-    await expect(bearer.getByText("Authorized")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close" }).first().click();
+    await authorizeBearer(page, secret);
 
     // Bearer plus the (unsent) cookie: 201, not 400 AMBIGUOUS_AUTH.
     const create = operation(page, "post", "/api/v1/invoices");

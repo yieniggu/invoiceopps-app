@@ -6,6 +6,7 @@ import {
   assertRecoveryTarget,
   expectedDatabasePort,
   parseResetArguments,
+  recoveryDatabaseNames,
   safeDecode,
   sanitizeTarget,
 } from "../../scripts/recovery-db-guards.mjs";
@@ -450,5 +451,65 @@ describe("recovery reset statements", () => {
       { sql: 'DROP DATABASE IF EXISTS "invoiceops" WITH (FORCE)' },
       { sql: 'CREATE DATABASE "invoiceops"' },
     ]);
+  });
+});
+
+// CR-262 / RP0-20: the browser E2E suite gets its own database so it never
+// shares (or force-drops the connections of) invoiceops_recovery_test while
+// `test:recovery:postgres` runs. Same guards; each launcher allows only its own.
+describe("dedicated E2E database target", () => {
+  const e2e = "invoiceops_recovery_e2e";
+
+  it("is one of the recovery database names", () => {
+    expect(recoveryDatabaseNames).toEqual(
+      expect.arrayContaining([dev, test, e2e]),
+    );
+  });
+
+  it("accepts the E2E database on loopback with its own confirmation", () => {
+    const target = assertRecoveryTarget(local(e2e), {
+      confirmReset: e2e,
+      allowedNames: [e2e],
+      expectedPort: "5545",
+    });
+    expect(target.databaseName).toBe(e2e);
+    expect(target.sanitized).toBe(`127.0.0.1:5545/${e2e}`);
+  });
+
+  it("keeps the E2E and recovery test targets apart", () => {
+    // The E2E launcher allows only its database...
+    for (const name of [dev, test]) {
+      expect(() =>
+        assertRecoveryTarget(local(name), {
+          confirmReset: name,
+          allowedNames: [e2e],
+        }),
+      ).toThrow(/database name must be exactly invoiceops_recovery_e2e/);
+    }
+    // ...and the PostgreSQL runner never resets the E2E one.
+    expect(() =>
+      assertRecoveryTarget(local(e2e), {
+        confirmReset: e2e,
+        allowedNames: [test],
+      }),
+    ).toThrow(/database name must be exactly invoiceops_recovery_test/);
+  });
+
+  it("requires the confirmation to name the E2E database itself", () => {
+    expect(() =>
+      assertRecoveryTarget(local(e2e), {
+        confirmReset: test,
+        allowedNames: [e2e],
+      }),
+    ).toThrow(/--confirm-reset=invoiceops_recovery_e2e/);
+  });
+
+  it("still refuses a non-loopback host for the E2E database", () => {
+    expect(() =>
+      assertRecoveryTarget(local(e2e, "db.example.com:5432"), {
+        confirmReset: e2e,
+        allowedNames: [e2e],
+      }),
+    ).toThrow(/host must be/);
   });
 });

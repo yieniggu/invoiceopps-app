@@ -1,6 +1,6 @@
 # Levantar InvoiceOps App en local
 
-> Hay un único entorno local y una única base de datos: `invoiceops`, en el proyecto Compose `invoiceops-dev`. `invoiceops_recovery_test` existe solo para `pnpm test:recovery:postgres`.
+> Hay un único entorno local y una única base de datos: `invoiceops`, en el proyecto Compose `invoiceops-dev`. `invoiceops_recovery_test` existe solo para `pnpm test:recovery:postgres` y `pnpm test:recovery:clients`; `invoiceops_recovery_e2e`, solo para las pruebas E2E del navegador.
 
 Guía vigente para el estado de recuperación P0 (slice S0: sin MLflow, Model API,
 blockchain ni evidencia). La app solo necesita PostgreSQL. Todos los comandos se
@@ -63,7 +63,8 @@ export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.
 
 Hay una sola base de desarrollo: `invoiceops` (la misma `POSTGRES_DB` del
 servidor, también en la ruta B). `invoiceops_recovery_test` existe solo para
-`pnpm test:recovery:postgres` y nunca se usa para desarrollar.
+`pnpm test:recovery:postgres` y `invoiceops_recovery_e2e` solo para las pruebas E2E;
+ninguna se usa para desarrollar.
 
 Repite este bloque en cada terminal nueva que use la base.
 
@@ -123,7 +124,7 @@ pnpm recovery:local:reset -- --confirm-reset=invoiceops
 El reset **destruye y recrea** la base de desarrollo `invoiceops` (se pierden
 sus datos) y aplica las migraciones. Antes de conectarse exige: protocolo `postgres`/`postgresql`, host
 `localhost`, `127.0.0.1`, `::1` o socket unix, nombre de base exactamente
-`invoiceops` o `invoiceops_recovery_test` y la confirmación
+`invoiceops`, `invoiceops_recovery_test` o `invoiceops_recovery_e2e` y la confirmación
 `--confirm-reset=<nombre>`. Imprime solo `host:puerto/base`, nunca credenciales.
 Si falla una guarda termina con código distinto de cero sin tocar la base.
 
@@ -294,6 +295,7 @@ pnpm lint && pnpm typecheck && pnpm test:unit && pnpm build
 env -u DATABASE_URL -u TEST_DATABASE_URL pnpm test:integration   # PostgreSQL efímero propio
 pnpm test:recovery:unit # guardas del reset y arranque sin ML/blockchain
 pnpm test:recovery:clients # ejemplos curl/Python reales (requiere RECOVERY_TEST_DATABASE_URL, curl y python3)
+pnpm test:recovery:e2e     # recorrido RP0-20 en el navegador (ver «Pruebas E2E del navegador»)
 pnpm test:recovery:ui   # onboarding, organizaciones, grupos, usuarios y membresías (frontend)
 ```
 
@@ -311,15 +313,16 @@ pnpm test:recovery:postgres
 
 ### Pruebas E2E del navegador (Playwright)
 
-El paquete `apps/e2e` levanta la pila real (backend + Vite) contra la base aislada
-`invoiceops_recovery_test`, que **recrea, migra y siembra en cada ejecución**
-(personas, organizaciones, grupos y facturas deterministas). Nunca toca `invoiceops`.
+El paquete `apps/e2e` levanta la pila real (backend + Vite) contra su base dedicada
+`invoiceops_recovery_e2e`, que **recrea, migra y siembra en cada ejecución**
+(personas, organizaciones, grupos y facturas deterministas). Nunca toca `invoiceops`
+ni `invoiceops_recovery_test`.
 Usa los puertos 4391 (backend) y 5391 (frontend), distintos de los de desarrollo.
 `E2E_BACKEND_PORT` y `E2E_FRONTEND_PORT` pueden cambiarse, pero la suite **se niega
 a arrancar** con un puerto de desarrollo: 4380, 5380, los de Docker (3000, 5173,
 5300, 5174) o cualquiera que tu `.env`/shell configure (`PORT`, `BACKEND_PORT`,
 `FRONTEND_PORT`, `LOCAL_BACKEND_PORT`, `LOCAL_FRONTEND_PORT`). Si `LOCAL_APP_DB_PORT`
-está definido, la URL de la base de pruebas debe usar ese puerto. Antes de
+está definido, la URL de la base E2E debe usar ese puerto. Antes de
 cualquier prueba, `globalSetup` comprueba que lo que responde en esos puertos es la
 pila de la suite: el administrador de plataforma sembrado debe iniciar sesión con la
 contraseña de las pruebas y ver las organizaciones sembradas (así falla con un
@@ -332,21 +335,31 @@ Antes de la primera ejecución:
 pnpm install                                     # dependencias de todos los paquetes, incluido @invoiceops/e2e
 pnpm --filter @invoiceops/e2e install:browsers   # una sola vez (solo chromium)
 # Linux (CI o máquina nueva): agrega las librerías del sistema que necesita chromium
-pnpm --filter @invoiceops/e2e install:browsers -- --with-deps
+pnpm --filter @invoiceops/e2e install:browsers --with-deps
 ```
 
 ```sh
-set -a; . ./.env; set +a   # POSTGRES_* y LOCAL_APP_DB_PORT; o define RECOVERY_TEST_DATABASE_URL
+set -a; . ./.env; set +a   # POSTGRES_* y LOCAL_APP_DB_PORT; o define RECOVERY_E2E_DATABASE_URL
+pnpm test:recovery:e2e     # recorrido RP0-20: compuerta de certificación P0 (escritorio claro y oscuro, ~20 s)
 pnpm test:e2e              # escritorio 1440x900, móvil 375x812 y escritorio oscuro
 ```
 
+`pnpm test:recovery:e2e` es la **compuerta de certificación P0** (CR-247): ejecuta
+solo el recorrido integrado `tests/recovery-journey.spec.ts`. En él, React, Swagger
+(sin cookie) y los clientes curl y Python actúan sobre las mismas facturas, y
+ninguna petición del navegador sale de loopback. Requiere además `curl` y `python3`.
+`pnpm test:e2e` es la regresión completa de la interfaz e incluye el recorrido
+(salvo en el proyecto móvil). La matriz G01–G20 y su evidencia están en
+[`docs/recovery-acceptance.md`](docs/recovery-acceptance.md). En CI ambas corren en
+el job `e2e`, que se lanza a mano (`workflow_dispatch`).
+
 Qué debes saber antes de correrlas:
 
-- **No las ejecutes a la vez que `pnpm test:recovery:postgres`**: ambas
-  **recrean la misma base** `invoiceops_recovery_test`; una borraría los datos de
-  la otra a mitad de la ejecución y fallaría de forma aparentemente aleatoria.
-  Corre una, espera a que termine y luego la otra.
-- **Tardan unos 2 minutos** (120 pruebas, 40 por proyecto; medido en esta máquina): recrean y siembran la base, arrancan dos servidores y
+- **Pueden correr a la vez que `pnpm test:recovery:postgres`**: cada suite
+  recrea su propia base (`invoiceops_recovery_e2e` y `invoiceops_recovery_test`),
+  así que ninguna borra los datos ni corta las conexiones de la otra. Lo que sí
+  comparten es el servidor PostgreSQL y la CPU, y en paralelo tardan más.
+- **Tardan unos 3 minutos** (158 pruebas en los tres proyectos; el recorrido RP0-20 corre solo en los dos de escritorio; medido en esta máquina): recrean y siembran la base, arrancan dos servidores y
   corren todos los specs en los tres proyectos (escritorio, móvil y escritorio
   oscuro) con 3 trabajadores (`E2E_WORKERS`). Reintentos: ninguno (un fallo es un
   fallo).

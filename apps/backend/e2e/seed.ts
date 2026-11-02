@@ -1,10 +1,10 @@
-// Seeds the isolated recovery test database for the browser E2E suite. It only
+// Seeds the dedicated E2E database for the browser E2E suite. It only
 // runs through scripts/e2e-backend.mjs, which has already recreated the
 // database; it refuses any other target.
 
 import {
   assertRecoveryTarget,
-  testDatabaseName,
+  e2eDatabaseName,
 } from "../scripts/recovery-db-guards.mjs";
 import { createDatabase } from "../src/database.js";
 import { hashPassword } from "../src/features/auth/services.js";
@@ -20,10 +20,10 @@ import {
 } from "./fixtures.js";
 
 // Same guard as the reset and the PostgreSQL suites: loopback host and the
-// exact recovery test database name (a look-alike path never passes).
+// exact E2E database name (a look-alike path never passes).
 const target = assertRecoveryTarget(process.env.DATABASE_URL, {
-  confirmReset: testDatabaseName,
-  allowedNames: [testDatabaseName],
+  confirmReset: e2eDatabaseName,
+  allowedNames: [e2eDatabaseName],
 });
 
 const database = createDatabase(target.url);

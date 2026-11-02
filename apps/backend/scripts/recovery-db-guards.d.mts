@@ -27,6 +27,7 @@ export function parseResetArguments(
 
 export const devDatabaseName: string;
 export const testDatabaseName: string;
+export const e2eDatabaseName: string;
 export const recoveryDatabaseNames: string[];
 
 export function safeDecode(value: string, fallback?: string | null): string;

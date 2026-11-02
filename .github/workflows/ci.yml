@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual runs add the browser E2E job (see the e2e job below).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -99,3 +101,76 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:recovery:postgres
       - run: pnpm test:recovery:clients
+
+  # The repository-owned integration gate: it starts its own throwaway
+  # postgres:17-alpine container through the runner's Docker socket, publishes
+  # it only on loopback, applies the migrations, runs the organization
+  # persistence suite and removes exactly the container it created.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.17.0
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      # The runner never pulls: its preflight requires the image to be local.
+      - run: docker pull postgres:17-alpine
+      - run: pnpm test:integration
+
+  # Browser E2E (CR-220), manual only: the RP0-20 journey (`test:recovery:e2e`,
+  # the P0 certification gate) and the full UI regression suite (`test:e2e`).
+  # The suite recreates its own invoiceops_recovery_e2e database, separate from
+  # the recovery test database, and refuses any non-loopback host.
+  e2e:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RECOVERY_E2E_DATABASE_URL: postgresql://e2e:e2e@127.0.0.1:5432/invoiceops_recovery_e2e?schema=public
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.17.0
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm generate
+      - run: pnpm --filter @invoiceops/e2e install:browsers --with-deps
+      - run: pnpm test:recovery:e2e
+      # The rest of the UI regression suite; the journey already ran above.
+      - run: pnpm test:e2e --grep-invert "RP0-20"
+      # Only on failure. The global teardown already dropped the page snapshots
+      # of the specs that show a password or a token, and those specs keep
+      # screenshots and traces off; what remains holds the throwaway
+      # credentials of this disposable database only.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: apps/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

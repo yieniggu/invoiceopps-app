@@ -1,10 +1,18 @@
-// Pure guards for the local reset targets: the single dev database and the
-// dedicated recovery test database. Nothing in this module opens a connection
-// or reads the environment implicitly.
+// Pure guards for the local reset targets: the single dev database, the
+// dedicated recovery test database (PostgreSQL suites and example clients) and
+// the dedicated browser E2E database. The two test databases are separate so a
+// reset of one (which terminates its connections and force-drops it) never
+// interrupts a run against the other. Nothing in this module opens a
+// connection or reads the environment implicitly.
 
 export const devDatabaseName = "invoiceops";
 export const testDatabaseName = "invoiceops_recovery_test";
-export const recoveryDatabaseNames = [devDatabaseName, testDatabaseName];
+export const e2eDatabaseName = "invoiceops_recovery_e2e";
+export const recoveryDatabaseNames = [
+  devDatabaseName,
+  testDatabaseName,
+  e2eDatabaseName,
+];
 
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const confirmPrefix = "--confirm-reset=";

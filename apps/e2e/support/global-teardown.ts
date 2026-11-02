@@ -16,6 +16,7 @@ export const SECRET_SPECS = [
   "member-creation-secret",
   "api-tokens",
   "swagger",
+  "recovery-journey",
 ] as const;
 
 export function removeSecretErrorContexts(resultsDir: string) {
