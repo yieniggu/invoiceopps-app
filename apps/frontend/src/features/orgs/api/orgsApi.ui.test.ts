@@ -76,30 +76,35 @@ describe("paginated organization API (B3c S3)", () => {
       pageSize: 10,
     });
     expect(transport.requests[0]?.search).toBe("?page=3&pageSize=10");
-    expect(page.total).toBe(1);
-    expect(page.memberships[0]?.user).toEqual({
+    expect(page.body.total).toBe(1);
+    expect(page.body.memberships[0]?.user).toEqual({
       id: "00000000-0000-4000-8000-000000000001",
       name: "Ada",
       rut: "123456785",
       disabled: false,
       recentlyActive: false,
+      lastActiveAt: null,
     });
   });
 
   it("lists the reduced members of an organization", async () => {
     // A raw spy, not the mock transport: the id is not a UUID on purpose, to
     // pin that the client encodes what it puts in the path.
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        jsonResponse(
-          pageEnvelope("members", [
-            { userId: "u", name: "Ada", email: null, recentlyActive: true },
-          ]),
-        ),
-      );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(
+        pageEnvelope("members", [
+          {
+            userId: "u",
+            name: "Ada",
+            email: null,
+            recentlyActive: true,
+            lastActiveAt: null,
+          },
+        ]),
+      ),
+    );
     const page = await listOrganizationMembers("org/1");
-    expect(page.members).toHaveLength(1);
+    expect(page.body.members).toHaveLength(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "/api/v1/organizations/org%2F1/members?page=1&pageSize=100",
     );
@@ -114,16 +119,51 @@ describe("paginated organization API (B3c S3)", () => {
             name: "Grace",
             email: null,
             recentlyActive: false,
+            lastActiveAt: null,
           },
           sharedOrganizations: [
             { id: "00000000-0000-4000-9000-000000000001", name: "Norte" },
           ],
         }),
     });
+    const before = Date.now();
     const result = await getUserBasic("00000000-0000-4000-8000-000000000002");
-    expect(result.sharedOrganizations).toEqual([
+    expect(result.body.sharedOrganizations).toEqual([
       { id: "00000000-0000-4000-9000-000000000001", name: "Norte" },
     ]);
+    // The DTO is exactly what the server sent: the clock lives beside it.
+    expect(result.body).not.toHaveProperty("serverNow");
+    // No Date header: the local clock stands in for the server's.
+    expect(result.serverNow).toBeGreaterThanOrEqual(before);
+    expect(result.serverNow).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("stamps activity reads with the server clock from the Date header", async () => {
+    const serverDate = "Wed, 04 Nov 2026 12:00:00 GMT";
+    const answer = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json", Date: serverDate },
+      });
+    mockTransport({
+      "GET /api/v1/users/00000000-0000-4000-8000-000000000002": () =>
+        answer({ user: { id: "u" }, sharedOrganizations: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/members":
+        () => answer(pageEnvelope("members", [])),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/memberships":
+        () => answer(orgMembershipsPage([])),
+    });
+    const expected = Date.parse(serverDate);
+    expect(
+      (await getUserBasic("00000000-0000-4000-8000-000000000002")).serverNow,
+    ).toBe(expected);
+    expect(
+      (await listOrganizationMembers("00000000-0000-4000-9000-000000000001"))
+        .serverNow,
+    ).toBe(expected);
+    expect(
+      (await listMemberships("00000000-0000-4000-9000-000000000001")).serverNow,
+    ).toBe(expected);
   });
 
   it("patches an organization with only the sent fields and returns it", async () => {

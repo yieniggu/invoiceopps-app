@@ -16,7 +16,8 @@ export interface AdminUserListItem {
   rut: string;
   /** ISO date when the account was disabled, null while enabled. */
   disabledAt: string | null;
-  recentlyActive: boolean;
+  /** ISO instant of the last activity, null when never active. */
+  lastActiveAt: string | null;
 }
 
 export interface AdminUserPage extends Page {
@@ -30,7 +31,7 @@ export interface AdminUser {
   email: string | null;
   disabledAt: string | null;
   mustChangePassword: boolean;
-  recentlyActive: boolean;
+  lastActiveAt: string | null;
   isPlatformAdministrator: boolean;
 }
 

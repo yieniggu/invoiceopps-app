@@ -32,6 +32,8 @@ import type {
   PageRequest,
 } from "../types";
 import { useConflictRefresh } from "../../permissions/hooks/useConflictRefresh";
+import { unwrapServerTimed } from "../../auth/api/serverTimedQuery";
+import { ACTIVITY_REFETCH } from "../../users/activity";
 import { useInvalidateOrganizationSummary } from "./useOrganizations";
 
 /**
@@ -61,11 +63,15 @@ export function useOrgMembershipsPageQuery(
   request: PageRequest,
 ) {
   const identityId = useIdentityId();
-  return useQuery({
-    queryKey: orgMembershipsKey(identityId, organizationId, request),
-    queryFn: ({ signal }) => listMemberships(organizationId, request, signal),
-    placeholderData: keepPreviousData,
-  });
+  return unwrapServerTimed(
+    useQuery({
+      queryKey: orgMembershipsKey(identityId, organizationId, request),
+      queryFn: ({ signal }) => listMemberships(organizationId, request, signal),
+      placeholderData: keepPreviousData,
+      // «Activo hace …» keeps up with time while the screen stays open.
+      ...ACTIVITY_REFETCH,
+    }),
+  );
 }
 
 /** One page of the reduced list every member of the organization may read. */
@@ -74,12 +80,16 @@ export function useOrgBasicMembersPageQuery(
   request: PageRequest,
 ) {
   const identityId = useIdentityId();
-  return useQuery({
-    queryKey: orgMembersKey(identityId, organizationId, request),
-    queryFn: ({ signal }) =>
-      listOrganizationMembers(organizationId, request, signal),
-    placeholderData: keepPreviousData,
-  });
+  return unwrapServerTimed(
+    useQuery({
+      queryKey: orgMembersKey(identityId, organizationId, request),
+      queryFn: ({ signal }) =>
+        listOrganizationMembers(organizationId, request, signal),
+      placeholderData: keepPreviousData,
+      // «Activo hace …» keeps up with time while the screen stays open.
+      ...ACTIVITY_REFETCH,
+    }),
+  );
 }
 
 /**

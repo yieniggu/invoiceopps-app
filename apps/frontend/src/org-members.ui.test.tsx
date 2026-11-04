@@ -143,12 +143,16 @@ function routes(profile: unknown) {
               name: "Ada Lovelace",
               email: "ada@example.test",
               recentlyActive: true,
+              lastActiveAt: new Date(
+                Date.now() - 3.5 * 60 * 60 * 1000,
+              ).toISOString(),
             },
             {
               userId: "00000000-0000-4000-8000-000000000003",
               name: "Carla Soto",
               email: null,
               recentlyActive: false,
+              lastActiveAt: null,
             },
           ]),
         ),
@@ -229,8 +233,8 @@ describe("organization members with permissions (v2)", () => {
     ).toBe("/users/00000000-0000-4000-8000-000000000001");
     expect(within(table).getByText("ada@example.test")).toBeTruthy();
     expect(within(table).getByText("Sin correo")).toBeTruthy();
-    expect(within(table).getByText("Activo")).toBeTruthy();
-    expect(within(table).getByText("Inactivo")).toBeTruthy();
+    expect(within(table).getByText("Activo hace 3 h")).toBeTruthy();
+    expect(within(table).getByText("Nunca")).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Editar permisos en bloque" }),
@@ -603,6 +607,7 @@ describe("paginated management table (AC-18, AC-23)", () => {
       rut: "190347907",
       disabled: false,
       recentlyActive: true,
+      lastActiveAt: new Date(Date.now() - 30.5 * 60 * 1000).toISOString(),
       ...extra,
     },
   });
@@ -619,7 +624,9 @@ describe("paginated management table (AC-18, AC-23)", () => {
           const all = Array.from({ length: total }, (_unused, index) =>
             person(
               index + 1,
-              index === 1 ? { disabled: true, recentlyActive: false } : {},
+              index === 1
+                ? { disabled: true, recentlyActive: false, lastActiveAt: null }
+                : {},
             ),
           );
           return jsonResponse({
@@ -658,14 +665,14 @@ describe("paginated management table (AC-18, AC-23)", () => {
         .closest("tr") as HTMLElement,
     );
     expect(second.getByText("Desactivado")).toBeTruthy();
-    expect(second.getByText("Inactivo")).toBeTruthy();
+    expect(second.getByText("Nunca")).toBeTruthy();
     const first = within(
       screen
         .getByRole("link", { name: "Persona 1" })
         .closest("tr") as HTMLElement,
     );
     expect(first.getByText("Habilitado")).toBeTruthy();
-    expect(first.getByText("Activo")).toBeTruthy();
+    expect(first.getByText("Activo hace 30 min")).toBeTruthy();
 
     expect(screen.getByText("Página 1 de 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
@@ -818,6 +825,7 @@ describe("paginated management table (AC-18, AC-23)", () => {
                 name: `Persona ${page}`,
                 email: null,
                 recentlyActive: true,
+                lastActiveAt: null,
               },
             ],
             page,

@@ -40,8 +40,15 @@ interface Person {
   rut: string;
   disabledAt: string | null;
   recentlyActive: boolean;
+  lastActiveAt: string | null;
   mustChangePassword: boolean;
 }
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+/** An instant `ms` before now, as the API returns lastActiveAt. */
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 
 /** A small mutable "database" behind the admin endpoints. */
 function makeDb() {
@@ -52,6 +59,7 @@ function makeDb() {
       rut: "123456785",
       disabledAt: null,
       recentlyActive: true,
+      lastActiveAt: ago(10 * MINUTE),
       mustChangePassword: false,
     },
     {
@@ -60,6 +68,7 @@ function makeDb() {
       rut: "111111111",
       disabledAt: null,
       recentlyActive: true,
+      lastActiveAt: ago(3.5 * HOUR),
       mustChangePassword: false,
     },
     {
@@ -68,6 +77,7 @@ function makeDb() {
       rut: "190347907",
       disabledAt: "2026-10-01T00:00:00.000Z",
       recentlyActive: false,
+      lastActiveAt: ago(10.5 * DAY),
       mustChangePassword: false,
     },
   ];
@@ -133,12 +143,13 @@ function adminRoutes(
       );
       return jsonResponse({
         users: matching.map(
-          ({ id, name, rut, disabledAt, recentlyActive }) => ({
+          ({ id, name, rut, disabledAt, recentlyActive, lastActiveAt }) => ({
             id,
             name,
             rut,
             disabledAt,
             recentlyActive,
+            lastActiveAt,
           }),
         ),
         page: Number(query.get("page")),
@@ -178,10 +189,13 @@ describe("admin users directory (AC-13)", () => {
     const bruno = within(row("Bruno Díaz"));
     expect(bruno.getByText("11.111.111-1")).toBeTruthy();
     expect(bruno.getByText("Habilitado")).toBeTruthy();
-    expect(bruno.getByText("Activo")).toBeTruthy();
+    expect(bruno.getByText("Activo hace 3 h")).toBeTruthy();
     const carla = within(row("Carla Soto"));
     expect(carla.getByText("Desactivado")).toBeTruthy();
-    expect(carla.getByText("Inactivo")).toBeTruthy();
+    expect(carla.getByText("Activo hace 10 d")).toBeTruthy();
+    expect(
+      within(row("Ada Admin")).getByText("Activo hace 10 min"),
+    ).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Bruno Díaz" }).getAttribute("href"),
     ).toBe("/admin/users/00000000-0000-4000-8000-000000000002");
@@ -203,6 +217,7 @@ describe("admin users directory (AC-13)", () => {
                 rut: "111111111",
                 disabledAt: null,
                 recentlyActive: true,
+                lastActiveAt: null,
               },
             ],
             page: Number(query.get("page")),
@@ -347,7 +362,7 @@ describe("admin user profile (AC-13)", () => {
     expect(data.textContent).toContain("RUT11.111.111-1");
     expect(data.textContent).toContain("Correobruno@example.test");
     expect(data.textContent).toContain("EstadoHabilitado");
-    expect(data.textContent).toContain("ActividadActivo");
+    expect(data.textContent).toContain("ActividadActivo hace 3 h");
     expect(data.textContent).toContain("Cambio de contraseña pendienteSí");
     const table = screen.getByRole("table", {
       name: "Organizaciones de la persona",

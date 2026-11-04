@@ -5,6 +5,7 @@ import {
   test,
 } from "../support/test.ts";
 import {
+  expectActivityInsideCells,
   expectNoStateWordsInToggles,
   expectPagerAtBottom,
 } from "../support/layout.ts";
@@ -106,6 +107,16 @@ test.describe("organizations", () => {
       );
       await expect(h1(page, "Miembros")).toBeVisible();
       await expect(page.getByRole("link", { name: a.name })).toBeVisible();
+      // The widest table of the app: every member just signed in, so each
+      // «Actividad» cell carries the longest label and must still fit.
+      const table = page.getByRole("table");
+      await expect(
+        table
+          .getByRole("row")
+          .filter({ hasText: a.name })
+          .locator(".activity-indicator"),
+      ).toContainText(/^Activo hace (menos de 1|\d+) min/);
+      await expectActivityInsideCells(table);
 
       const bulk = page.getByRole("button", {
         name: "Editar permisos en bloque",

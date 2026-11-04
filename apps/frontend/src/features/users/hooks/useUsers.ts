@@ -23,6 +23,8 @@ import {
   listOrganizationUsersPage,
   provisionUser,
 } from "../api/usersApi";
+import { unwrapServerTimed } from "../../auth/api/serverTimedQuery";
+import { ACTIVITY_REFETCH } from "../activity";
 import type { PageRequest } from "../../orgs/types";
 import type {
   CreateUserInput,
@@ -53,11 +55,15 @@ export function useOrgUsersPageQuery(
 /** Basic view of one person who shares an organization with me. */
 export function useUserBasicQuery(userId: string, enabled = true) {
   const identityId = useIdentityId();
-  return useQuery({
-    queryKey: userBasicKey(identityId, userId),
-    queryFn: ({ signal }) => getUserBasic(userId, signal),
-    enabled,
-  });
+  return unwrapServerTimed(
+    useQuery({
+      queryKey: userBasicKey(identityId, userId),
+      queryFn: ({ signal }) => getUserBasic(userId, signal),
+      enabled,
+      // «Activo hace …» keeps up with time while the screen stays open.
+      ...ACTIVITY_REFETCH,
+    }),
+  );
 }
 
 interface AffectedOrganization {

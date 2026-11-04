@@ -16,7 +16,8 @@ import { paths } from "../../navigation/paths";
 import { memberRoleLabel } from "../../orgs/types/roles";
 import { permissionRatio } from "../../permissions/types";
 import { usePresentIssuedCredential } from "../../users/components/IssuedCredentialProvider";
-import { accountStatusLabel, activityLabel } from "../../users/presentation";
+import { ActivityIndicator } from "../../users/components/ActivityIndicator";
+import { accountStatusLabel } from "../../users/presentation";
 import { EditAdminUserDialog } from "../components/EditAdminUserDialog";
 import {
   useAdminUserQuery,
@@ -75,6 +76,7 @@ function AdminUserLoader({ userId }: { userId: string }) {
         user={query.data.user}
         memberships={query.data.memberships}
         query={query}
+        serverNow={query.serverNow ?? query.dataUpdatedAt}
       />
     </div>
   );
@@ -114,10 +116,13 @@ function AdminUserView({
   user,
   memberships,
   query,
+  serverNow,
 }: {
   user: AdminUser;
   memberships: AdminUserMembership[];
   query: Parameters<typeof QueryFeedback>[0]["query"];
+  /** The server's clock for this read: «Activo hace …» is relative to it. */
+  serverNow: number;
 }) {
   const identityId = useIdentityId();
   const isSelf = user.id === identityId;
@@ -175,7 +180,13 @@ function AdminUserView({
           </div>
           <div>
             <dt>Actividad</dt>
-            <dd>{activityLabel(user.recentlyActive)}</dd>
+            <dd>
+              <ActivityIndicator
+                lastActiveAt={user.lastActiveAt}
+                now={serverNow}
+                detailed
+              />
+            </dd>
           </div>
           <div>
             <dt>Cambio de contraseña pendiente</dt>

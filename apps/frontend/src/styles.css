@@ -29,6 +29,11 @@
   --color-status-rejected-fg: #8a1c1c;
   --color-status-neutral-bg: #e8edf5;
   --color-status-neutral-fg: #36445c;
+  /* Activity dot: at least 3:1 against the surface (non-text contrast). */
+  --color-activity-day: #15803d;
+  --color-activity-week: #a16207;
+  --color-activity-stale: #b91c1c;
+  --color-activity-never: #7589a8;
   --color-overlay: rgb(22 36 58 / 0.5);
   --color-scrim: rgb(15 23 42 / 0.55);
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234a5a72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
@@ -73,6 +78,10 @@
   --color-status-rejected-fg: #fca5a5;
   --color-status-neutral-bg: #26334f;
   --color-status-neutral-fg: #c7d2e6;
+  --color-activity-day: #4ade80;
+  --color-activity-week: #facc15;
+  --color-activity-stale: #f87171;
+  --color-activity-never: #8a9bb8;
   --color-overlay: rgb(0 0 0 / 0.6);
   --color-scrim: rgb(0 0 0 / 0.65);
 }
@@ -2272,6 +2281,49 @@ input.secret-value {
 .status-badge.is-neutral {
   background: var(--color-status-neutral-bg);
   color: var(--color-status-neutral-fg);
+}
+
+/* Last activity: a colored dot next to «Activo hace …» (the text carries the
+   state; the dot only reinforces it). */
+.activity-indicator {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 100%;
+}
+
+/* Centered on the first line of text, so a label that wraps inside a narrow
+   cell keeps the dot next to its first words. */
+.activity-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  /* Fallback for browsers without the lh unit (about one line of body text). */
+  margin-top: 0.5em;
+  margin-top: calc((1lh - 0.5rem) / 2);
+  border-radius: 50%;
+  background: var(--activity-color);
+}
+
+.activity-indicator.is-day {
+  --activity-color: var(--color-activity-day);
+}
+
+.activity-indicator.is-week {
+  --activity-color: var(--color-activity-week);
+}
+
+.activity-indicator.is-stale {
+  --activity-color: var(--color-activity-stale);
+}
+
+.activity-indicator.is-never {
+  --activity-color: var(--color-activity-never);
+}
+
+/* The exact instant next to the label on profile screens. */
+.activity-instant {
+  color: var(--color-text-muted);
 }
 
 .due-overdue {

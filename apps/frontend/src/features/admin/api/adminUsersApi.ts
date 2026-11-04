@@ -1,4 +1,4 @@
-import { apiRequest } from "../../auth/api/apiRequest";
+import { apiRequest, apiRequestServerTimed } from "../../auth/api/apiRequest";
 import type { IssuedCredential } from "../../users/types";
 import type {
   AdminUserDetail,
@@ -21,11 +21,13 @@ export const listAdminUsers = (
     pageSize: String(pageSize),
   });
   if (search) query.set("search", search);
-  return apiRequest<AdminUserPage>(`/api/v1/admin/users?${query}`, { signal });
+  return apiRequestServerTimed<AdminUserPage>(`/api/v1/admin/users?${query}`, {
+    signal,
+  });
 };
 
 export const getAdminUser = (userId: string, signal?: AbortSignal) =>
-  apiRequest<AdminUserDetail>(base(userId), { signal });
+  apiRequestServerTimed<AdminUserDetail>(base(userId), { signal });
 
 export const updateAdminUser = (userId: string, input: UpdateAdminUserInput) =>
   apiRequest<{ user: { id: string; name: string } }>(base(userId), {

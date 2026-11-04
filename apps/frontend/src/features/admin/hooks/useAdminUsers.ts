@@ -24,6 +24,9 @@ import {
   setAdminUserDeactivation,
   updateAdminUser,
 } from "../api/adminUsersApi";
+import type { ServerTimed } from "../../auth/api/apiRequest";
+import { unwrapServerTimed } from "../../auth/api/serverTimedQuery";
+import { ACTIVITY_REFETCH } from "../../users/activity";
 import type {
   AdminUserDetail,
   AdminUsersRequest,
@@ -32,21 +35,29 @@ import type {
 
 export function useAdminUsersQuery(request: AdminUsersRequest) {
   const identityId = useIdentityId();
-  return useQuery({
-    queryKey: adminUsersKey(identityId, request),
-    queryFn: ({ signal }) => listAdminUsers(request, signal),
-    // Paging keeps the rows on screen until the next page arrives.
-    placeholderData: keepPreviousData,
-  });
+  return unwrapServerTimed(
+    useQuery({
+      queryKey: adminUsersKey(identityId, request),
+      queryFn: ({ signal }) => listAdminUsers(request, signal),
+      // Paging keeps the rows on screen until the next page arrives.
+      placeholderData: keepPreviousData,
+      // «Activo hace …» keeps up with time while the screen stays open.
+      ...ACTIVITY_REFETCH,
+    }),
+  );
 }
 
 export function useAdminUserQuery(userId: string, enabled = true) {
   const identityId = useIdentityId();
-  return useQuery({
-    queryKey: adminUserKey(identityId, userId),
-    queryFn: ({ signal }) => getAdminUser(userId, signal),
-    enabled,
-  });
+  return unwrapServerTimed(
+    useQuery({
+      queryKey: adminUserKey(identityId, userId),
+      queryFn: ({ signal }) => getAdminUser(userId, signal),
+      enabled,
+      // «Activo hace …» keeps up with time while the screen stays open.
+      ...ACTIVITY_REFETCH,
+    }),
+  );
 }
 
 /**
@@ -62,9 +73,9 @@ function useInvalidateAdminUser(userId: string) {
   const client = useQueryClient();
   const identityId = useIdentityId();
   return (): Promise<unknown> => {
-    const detail = client.getQueryData<AdminUserDetail>(
+    const detail = client.getQueryData<ServerTimed<AdminUserDetail>>(
       adminUserKey(identityId, userId),
-    );
+    )?.body;
     // Not awaited: the profile feeds the shell, not the screen being edited.
     if (userId === identityId)
       void client.invalidateQueries({ queryKey: profileKey(identityId) });

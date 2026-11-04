@@ -20,7 +20,8 @@ import {
   useOutOfRangeRedirect,
 } from "../../navigation/useListParams";
 import { permissionRatio } from "../../permissions/types";
-import { accountStatusLabel, activityLabel } from "../../users/presentation";
+import { ActivityIndicator } from "../../users/components/ActivityIndicator";
+import { accountStatusLabel } from "../../users/presentation";
 import { OrganizationGate } from "../components/OrganizationGate";
 import {
   useOrgBasicMembersPageQuery,
@@ -85,7 +86,12 @@ function ManagementView({
     },
     {
       header: "Actividad",
-      cell: ({ user }) => activityLabel(user.recentlyActive),
+      cell: ({ user }) => (
+        <ActivityIndicator
+          lastActiveAt={user.lastActiveAt}
+          now={memberships.serverNow ?? memberships.dataUpdatedAt}
+        />
+      ),
     },
     {
       header: "Grupos",
@@ -163,7 +169,8 @@ function ManagementView({
 
 type BasicRow = OrganizationMemberBasic & { id: string };
 
-const BASIC_COLUMNS: DataColumn<BasicRow>[] = [
+/** `now` is the server's clock for the page: «Activo hace …» is relative to it. */
+const basicColumns = (now: number): DataColumn<BasicRow>[] => [
   {
     header: "Nombre",
     cell: ({ userId, name }) => <Link to={paths.user(userId)}>{name}</Link>,
@@ -171,7 +178,9 @@ const BASIC_COLUMNS: DataColumn<BasicRow>[] = [
   { header: "Correo", cell: ({ email }) => email ?? "Sin correo" },
   {
     header: "Actividad",
-    cell: ({ recentlyActive }) => activityLabel(recentlyActive),
+    cell: ({ lastActiveAt }) => (
+      <ActivityIndicator lastActiveAt={lastActiveAt} now={now} />
+    ),
   },
 ];
 
@@ -225,7 +234,7 @@ function BasicMembersView({
         <DataTable
           label="Miembros de la organización"
           rows={rows}
-          columns={BASIC_COLUMNS}
+          columns={basicColumns(members.serverNow ?? members.dataUpdatedAt)}
         />
       ) : null}
       {members.data ? (

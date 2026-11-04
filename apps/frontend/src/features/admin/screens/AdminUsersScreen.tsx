@@ -15,7 +15,8 @@ import {
   parsePage,
   useOutOfRangeRedirect,
 } from "../../navigation/useListParams";
-import { accountStatusLabel, activityLabel } from "../../users/presentation";
+import { ActivityIndicator } from "../../users/components/ActivityIndicator";
+import { accountStatusLabel } from "../../users/presentation";
 import { useAdminUsersQuery } from "../hooks/useAdminUsers";
 import type { AdminUserListItem, AdminUserStatus } from "../types";
 
@@ -30,7 +31,8 @@ const STATUS_OPTIONS: ReadonlyArray<readonly [AdminUserStatus, string]> = [
 const parseStatus = (value: string | null): AdminUserStatus =>
   value === "active" || value === "disabled" ? value : "all";
 
-const COLUMNS: DataColumn<AdminUserListItem>[] = [
+/** `now` is the server's clock for the page: «Activo hace …» is relative to it. */
+const columns = (now: number): DataColumn<AdminUserListItem>[] => [
   {
     header: "Nombre",
     cell: ({ id, name }) => <Link to={paths.adminUser(id)}>{name}</Link>,
@@ -42,7 +44,9 @@ const COLUMNS: DataColumn<AdminUserListItem>[] = [
   },
   {
     header: "Actividad",
-    cell: ({ recentlyActive }) => activityLabel(recentlyActive),
+    cell: ({ lastActiveAt }) => (
+      <ActivityIndicator lastActiveAt={lastActiveAt} now={now} />
+    ),
   },
 ];
 
@@ -122,7 +126,7 @@ export function AdminUsersScreen() {
         <DataTable
           label="Usuarios de la plataforma"
           rows={users.data.users}
-          columns={COLUMNS}
+          columns={columns(users.serverNow ?? users.dataUpdatedAt)}
         />
       ) : null}
       {users.data && users.data.total > 0 ? (

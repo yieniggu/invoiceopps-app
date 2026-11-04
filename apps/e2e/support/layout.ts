@@ -174,3 +174,52 @@ export async function expectSelectionCount(page: Page, count: number) {
   await expect(live).toHaveAttribute("role", "status");
   await expect(live).toHaveClass(/visually-hidden/);
 }
+
+/**
+ * Every «Actividad» indicator of `table` stays inside its own cell: neither
+ * its box nor its visible text reaches past the cell, so a long label wraps
+ * instead of spilling over the next column, and the dot sits on the first
+ * line of text. The visually hidden instant is clipped, so it is left out.
+ */
+export async function expectActivityInsideCells(table: Locator) {
+  const indicators = table.locator(".activity-indicator");
+  expect(await indicators.count()).toBeGreaterThan(0);
+  const problems = await indicators.evaluateAll((elements) =>
+    elements.flatMap((element) => {
+      const label = element.textContent ?? "";
+      const cell = element.closest("td, th");
+      if (!cell) return [`${label}: not inside a table cell`];
+      const limit = cell.getBoundingClientRect().right + 0.5;
+      const rects: DOMRect[] = [element.getBoundingClientRect()];
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest(".visually-hidden")) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rects.push(...range.getClientRects());
+      }
+      const right = Math.max(...rects.map((rect) => rect.right));
+      const issues =
+        right > limit ? [`${label}: ends at ${right}, cell at ${limit}`] : [];
+      const dot = element
+        .querySelector(".activity-dot")
+        ?.getBoundingClientRect();
+      const first = rects
+        .slice(1)
+        .filter((rect) => rect.width > 1)
+        .reduce<DOMRect | undefined>(
+          (top, rect) => (!top || rect.top < top.top ? rect : top),
+          undefined,
+        );
+      if (dot && first) {
+        const center = dot.top + dot.height / 2;
+        if (center < first.top || center > first.bottom)
+          issues.push(`${label}: dot is not on the first line of text`);
+      }
+      return issues;
+    }),
+  );
+  expect(problems, "activity indicators spilling out of their cells").toEqual(
+    [],
+  );
+}

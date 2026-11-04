@@ -111,7 +111,12 @@ export function orgMembershipsPage<T extends { user: object }>(items: T[]) {
     "memberships",
     items.map((item) => ({
       ...item,
-      user: { disabled: false, recentlyActive: false, ...item.user },
+      user: {
+        disabled: false,
+        recentlyActive: false,
+        lastActiveAt: null,
+        ...item.user,
+      },
     })),
   );
 }

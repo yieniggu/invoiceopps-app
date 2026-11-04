@@ -1,5 +1,14 @@
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { formatInstant } from "./lib/datetime";
 
 import { renderApp } from "./test/renderApp";
 import {
@@ -12,6 +21,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -39,6 +49,7 @@ const routes = (
         name: "Carla Soto",
         email: null,
         recentlyActive: false,
+        lastActiveAt: null,
         ...user,
       },
       sharedOrganizations: shared,
@@ -48,13 +59,19 @@ const routes = (
 describe("basic user profile at /users/:userId (AC-17)", () => {
   it("shows name, email, activity and the shared organizations as links to any authenticated user", async () => {
     mockTransport(
-      routes({ email: "carla@example.test", recentlyActive: true }),
+      routes({
+        email: "carla@example.test",
+        recentlyActive: false,
+        lastActiveAt: new Date(
+          Date.now() - 2.5 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+      }),
     );
     renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const data = screen.getByRole("region", { name: "Datos" });
     expect(data.textContent).toContain("Correocarla@example.test");
-    expect(data.textContent).toContain("ActividadActivo");
+    expect(data.textContent).toContain("ActividadActivo hace 2 d");
     expect(
       screen.getByRole("link", { name: "Academia Norte" }).getAttribute("href"),
     ).toBe("/organizations/00000000-0000-4000-9000-000000000001");
@@ -63,13 +80,13 @@ describe("basic user profile at /users/:userId (AC-17)", () => {
     expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
   });
 
-  it("says «Sin correo» and «Inactivo» when there is no email and no recent activity", async () => {
+  it("says «Sin correo» and «Nunca» when there is no email and no activity ever", async () => {
     mockTransport(routes({}));
     renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
     await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
     const data = screen.getByRole("region", { name: "Datos" });
     expect(data.textContent).toContain("CorreoSin correo");
-    expect(data.textContent).toContain("ActividadInactivo");
+    expect(data.textContent).toContain("ActividadNunca");
   });
 
   it("answers 404 with the not-found screen", async () => {
@@ -99,6 +116,7 @@ describe("basic user profile at /users/:userId (AC-17)", () => {
                 name: "Carla Soto",
                 email: null,
                 recentlyActive: false,
+                lastActiveAt: null,
               },
               sharedOrganizations: [],
             });
@@ -126,6 +144,7 @@ describe("basic user profile at /users/:userId (AC-17)", () => {
                 name: "Carla Soto",
                 email: null,
                 recentlyActive: false,
+                lastActiveAt: null,
               },
             ],
             page: 1,
@@ -208,5 +227,119 @@ describe("platform administrator on /users/:userId (CR-290)", () => {
     expect(
       screen.getByText("No compartes organizaciones con esta persona."),
     ).toBeTruthy();
+  });
+});
+
+describe("activity of the basic profile (last-active indicator)", () => {
+  const USER = "/api/v1/users/00000000-0000-4000-8000-000000000003";
+  const LAST_ACTIVE = "2026-11-04T09:00:00.000Z";
+
+  /** The profile answer, stamped with the server clock `serverDate`. */
+  const answer = (serverDate: string, lastActiveAt = LAST_ACTIVE) =>
+    new Response(
+      JSON.stringify({
+        user: {
+          id: "00000000-0000-4000-8000-000000000003",
+          name: "Carla Soto",
+          email: null,
+          recentlyActive: false,
+          lastActiveAt,
+        },
+        sharedOrganizations: [],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json", Date: serverDate },
+      },
+    );
+
+  const activity = () =>
+    (
+      screen
+        .getByRole("region", { name: "Datos" })
+        .querySelector(".activity-indicator") as HTMLElement
+    ).textContent;
+
+  it("measures the age against the server clock and shows the exact instant", async () => {
+    mockTransport({
+      ...routes({}),
+      [`GET ${USER}`]: () => answer("Wed, 04 Nov 2026 12:00:00 GMT"),
+    });
+    renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
+    await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
+    // Three server hours, whatever the clock of this device says.
+    expect(activity()).toBe(`Activo hace 3 h (${formatInstant(LAST_ACTIVE)})`);
+    const indicator = screen
+      .getByRole("region", { name: "Datos" })
+      .querySelector(".activity-indicator");
+    expect(indicator?.classList.contains("is-day")).toBe(true);
+    // The exact instant is visible text on the profile, not only a tooltip.
+    expect(screen.getByText(`(${formatInstant(LAST_ACTIVE)})`).className).toBe(
+      "activity-instant",
+    );
+  });
+
+  const refocus = () =>
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+
+  it("recomputes the label and the color when the profile refetches on focus", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let serverDate = "Wed, 04 Nov 2026 12:00:00 GMT";
+    const transport = mockTransport({
+      ...routes({}),
+      [`GET ${USER}`]: () => answer(serverDate),
+    });
+    renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
+    await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
+    expect(activity()).toContain("Activo hace 3 h");
+
+    // Data older than a minute (and younger than the 5-minute interval).
+    serverDate = "Wed, 11 Nov 2026 12:00:00 GMT";
+    await act(() => vi.advanceTimersByTimeAsync(61_000));
+    refocus();
+    await waitFor(() => expect(activity()).toContain("Activo hace 7 d"));
+    expect(transport.calls(`GET ${USER}`)).toHaveLength(2);
+    expect(
+      screen
+        .getByRole("region", { name: "Datos" })
+        .querySelector(".activity-indicator")
+        ?.classList.contains("is-stale"),
+    ).toBe(true);
+  });
+
+  it("does not refetch on focus while the data is less than a minute old", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const transport = mockTransport({
+      ...routes({}),
+      [`GET ${USER}`]: () => answer("Wed, 04 Nov 2026 12:00:00 GMT"),
+    });
+    renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
+    await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
+
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    refocus();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(transport.calls(`GET ${USER}`)).toHaveLength(1);
+    expect(activity()).toContain("Activo hace 3 h");
+  });
+
+  it("refetches every five minutes while the profile stays open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let serverDate = "Wed, 04 Nov 2026 12:00:00 GMT";
+    const transport = mockTransport({
+      ...routes({}),
+      [`GET ${USER}`]: () => answer(serverDate),
+    });
+    renderApp({ route: "/users/00000000-0000-4000-8000-000000000003" });
+    await screen.findByRole("heading", { level: 1, name: "Carla Soto" });
+    expect(activity()).toContain("Activo hace 3 h");
+
+    serverDate = "Wed, 05 Nov 2026 12:00:00 GMT";
+    await act(() => vi.advanceTimersByTimeAsync(5 * 60_000));
+    await waitFor(() => expect(activity()).toContain("Activo hace 1 d"));
+    expect(transport.calls(`GET ${USER}`).length).toBeGreaterThanOrEqual(2);
   });
 });

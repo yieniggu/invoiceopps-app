@@ -1,4 +1,4 @@
-import { apiRequest } from "../../auth/api/apiRequest";
+import { apiRequest, apiRequestServerTimed } from "../../auth/api/apiRequest";
 import {
   inChunks,
   mapWithConcurrency,
@@ -49,15 +49,16 @@ export const listOrganizationMembers = (
   params: PageRequest = FIRST_PAGE,
   signal?: AbortSignal,
 ) =>
-  apiRequest<MemberBasicPage>(
+  apiRequestServerTimed<MemberBasicPage>(
     withQuery(`${base(organizationId)}/members`, params),
     { signal },
   );
 
 export const getUserBasic = (userId: string, signal?: AbortSignal) =>
-  apiRequest<UserBasic>(`/api/v1/users/${encodeURIComponent(userId)}`, {
-    signal,
-  });
+  apiRequestServerTimed<UserBasic>(
+    `/api/v1/users/${encodeURIComponent(userId)}`,
+    { signal },
+  );
 
 export const createOrganization = (input: CreateOrganizationInput) =>
   apiRequest<{ organization: Organization }>("/api/v1/organizations", {
@@ -73,7 +74,7 @@ export const listMemberships = (
   params: PageRequest & { userIds?: readonly string[] } = FIRST_PAGE,
   signal?: AbortSignal,
 ) =>
-  apiRequest<MembershipPage>(
+  apiRequestServerTimed<MembershipPage>(
     withQuery(`${base(organizationId)}/memberships`, params),
     { signal },
   );
@@ -104,7 +105,7 @@ export async function listMembershipsByIds(
       ),
   );
   const byUser = new Map(
-    pages.flatMap((page) => page.memberships).map((m) => [m.userId, m]),
+    pages.flatMap((page) => page.body.memberships).map((m) => [m.userId, m]),
   );
   return [...byUser.values()];
 }

@@ -9,7 +9,7 @@ import type { Profile } from "../../auth/types";
 import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
 import { useUserBasicQuery } from "../hooks/useUsers";
-import { activityLabel } from "../presentation";
+import { ActivityIndicator } from "../components/ActivityIndicator";
 
 /**
  * Basic profile of a person I share an organization with: name, contact and
@@ -84,7 +84,13 @@ function UserProfileView({
               </div>
               <div>
                 <dt>Actividad</dt>
-                <dd>{activityLabel(detail.user.recentlyActive)}</dd>
+                <dd>
+                  <ActivityIndicator
+                    lastActiveAt={detail.user.lastActiveAt}
+                    now={query.serverNow ?? query.dataUpdatedAt}
+                    detailed
+                  />
+                </dd>
               </div>
             </dl>
           </section>

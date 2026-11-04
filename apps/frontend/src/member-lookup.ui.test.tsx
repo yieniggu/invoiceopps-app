@@ -39,7 +39,12 @@ const orgMember = (index: number) => ({
   role: "USER",
   permissions: NO_PERMISSIONS,
   groups: [],
-  user: { ...person(index), disabled: false, recentlyActive: false },
+  user: {
+    ...person(index),
+    disabled: false,
+    recentlyActive: false,
+    lastActiveAt: null,
+  },
 });
 const MEMBERS = Array.from({ length: 150 }, (_unused, index) =>
   orgMember(index),

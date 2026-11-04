@@ -29,7 +29,8 @@ export interface OrganizationMember {
     name: string;
     rut: string;
     disabled: boolean;
-    recentlyActive: boolean;
+    /** ISO instant of the last activity, null when never active. */
+    lastActiveAt: string | null;
   };
 }
 
@@ -56,7 +57,7 @@ export interface OrganizationMemberBasic {
   userId: string;
   name: string;
   email: string | null;
-  recentlyActive: boolean;
+  lastActiveAt: string | null;
 }
 
 export interface MemberBasicPage extends Page {
@@ -81,7 +82,7 @@ export interface UserBasic {
     id: string;
     name: string;
     email: string | null;
-    recentlyActive: boolean;
+    lastActiveAt: string | null;
   };
   sharedOrganizations: Array<{ id: string; name: string }>;
 }

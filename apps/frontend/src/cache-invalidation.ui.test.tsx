@@ -265,7 +265,11 @@ describe("an admin edit of a person refreshes what shows that person (CR-300)", 
         },
       ],
     };
-    client.setQueryData(adminUserKey(ME, CARLA), detail);
+    // The detail is cached next to the server clock of its read.
+    client.setQueryData(adminUserKey(ME, CARLA), {
+      body: detail,
+      serverNow: Date.now(),
+    });
     const page = { page: 1, pageSize: 20 };
     const seeded = {
       users1: orgUsersKey(ME, "00000000-0000-4000-9000-000000000001", page),
