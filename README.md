@@ -553,6 +553,11 @@ sesiones y tokens de API activos, no puede iniciar sesión (mismo `401 Invalid
 credentials` que una contraseña errónea) y sus cookies previas devuelven `401`;
 al reactivarlo debe iniciar sesión de nuevo. El servidor registra `lastActiveAt`
 en cada login exitoso y, como máximo cada 5 minutos, en solicitudes autenticadas.
+Las vistas de usuarios exponen `lastActiveAt` (instante ISO 8601 de la última
+actividad, `null` si nunca la hubo) a quien ya puede ver `recentlyActive`; la UI
+muestra «Activo hace …» con un punto de color (menos de 1 día verde, menos de 7
+días amarillo, 7 días o más rojo, nunca gris). Un usuario desactivado conserva su
+`lastActiveAt` real con `recentlyActive` falso.
 
 #### Directorio y mantenimiento de usuarios
 
@@ -561,12 +566,13 @@ resto; los cuerpos y parámetros inválidos responden `400` antes del `403`):
 
 - `GET /api/v1/admin/users?search&status&page&pageSize` lista usuarios
   (incluidos el administrador y los desactivados) como
-  `{ users: [{ id, name, rut, disabledAt, recentlyActive }], page, pageSize, total }`,
+  `{ users: [{ id, name, rut, disabledAt, recentlyActive, lastActiveAt }], page, pageSize, total }`,
   ordenados por nombre. `search` busca por nombre (sin distinguir mayúsculas) o por
   fragmento de RUT escrito con o sin puntos y guion; `status` es
   `all|active|disabled` (por defecto `all`); `pageSize` va de 1 a 100 (por defecto
   20). No acepta parámetros desconocidos. `recentlyActive` indica actividad en los
-  últimos 15 minutos; `lastActiveAt` nunca se expone.
+  últimos 15 minutos; `lastActiveAt` es el instante de la última actividad
+  (refrescado como máximo cada 5 minutos) o `null` si nunca la hubo.
 - `GET /api/v1/admin/users/{userId}` devuelve el usuario y sus membresías de
   organización y grupo con sus permisos de facturas (`404 NOT_FOUND` si no existe).
 - `PATCH /api/v1/admin/users/{userId}` cambia `name` y/o `rut` (al menos uno). Un
@@ -598,7 +604,8 @@ repetidos (`400` antes de la autoridad), y responden `{ <items>, page, pageSize,
   era `{ organizations }`).
 - `GET /api/v1/organizations/{organizationId}/memberships?page&pageSize&userIds` (solo
   ADMIN o plataforma) responde `{ memberships, page, pageSize, total }`; el `user` de
-  cada elemento suma `disabled` y `recentlyActive` (falso si está desactivado).
+  cada elemento suma `disabled`, `recentlyActive` (falso si está desactivado) y
+  `lastActiveAt` (`null` si nunca hubo actividad).
   `userIds` (opcional) son de 1 a 200 UUID distintos separados por coma: la página
   contiene solo esos miembros (mismo orden y forma; los ids que no son miembros
   simplemente no aparecen y `total` cuenta solo los coincidentes). Es lo que usan
@@ -617,8 +624,8 @@ repetidos (`400` antes de la autoridad), y responden `{ <items>, page, pageSize,
 - `GET /api/v1/organizations/{organizationId}/members?page&pageSize` (nuevo; cualquier
   miembro con cualquier rol, o plataforma; otro caso `404` indistinguible de una
   organización inexistente) responde la vista reducida
-  `{ members: [{ userId, name, email, recentlyActive }], page, pageSize, total }`,
-  ordenada por nombre. Nunca expone RUT, rol, permisos, `disabledAt` ni `lastActiveAt`.
+  `{ members: [{ userId, name, email, recentlyActive, lastActiveAt }], page, pageSize, total }`,
+  ordenada por nombre. Nunca expone RUT, rol, permisos ni `disabledAt`.
 - `PATCH /api/v1/organizations/{organizationId}` cambia `name` y/o `description` (al
   menos uno; una descripción vacía o `null` la borra). El `slug` es inmutable: enviarlo
   o cualquier otro campo responde `400`. Solo ADMIN de la organización o plataforma
@@ -630,10 +637,10 @@ repetidos (`400` antes de la autoridad), y responden `{ <items>, page, pageSize,
   autenticado con onboarding completo cuando el objetivo comparte una organización
   con quien consulta, es él mismo o quien consulta es el administrador de plataforma;
   en otro caso `404 NOT_FOUND` indistinguible de un usuario inexistente. Responde
-  `{ user: { id, name, email, recentlyActive }, sharedOrganizations: [{ id, name }] }`
+  `{ user: { id, name, email, recentlyActive, lastActiveAt }, sharedOrganizations: [{ id, name }] }`
   (para plataforma, las organizaciones del objetivo). Nunca expone RUT, credenciales,
   estado de onboarding, `disabledAt`, roles ni permisos; un usuario desactivado sigue
-  visible con `recentlyActive` falso.
+  visible con `recentlyActive` falso y su `lastActiveAt` real.
 
 Los cuerpos JSON de las solicitudes están limitados a 16 kB (`413 PAYLOAD_TOO_LARGE`
 por encima). Solo las cinco operaciones por lote aceptan hasta 64 kB, suficiente

@@ -43,7 +43,7 @@ export function createAdminUserOperations(
       responses: {
         200: {
           description:
-            "One page of users ordered by name; total counts every match. recentlyActive tells whether the user was active in the last 15 minutes; the exact time is never returned",
+            "One page of users ordered by name; total counts every match. recentlyActive tells whether the user was active in the last 15 minutes; lastActiveAt is the last activity (refreshed at most every 5 minutes), null when the user has never been active",
           schema: AdminUserListResponseSchema,
         },
         400: validationResponse(

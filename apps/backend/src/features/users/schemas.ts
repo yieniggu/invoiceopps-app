@@ -134,11 +134,12 @@ export const UserBasicSchema = z
     name: z.string(),
     email: z.string().nullable(),
     recentlyActive: z.boolean(),
+    lastActiveAt: z.iso.datetime().nullable(),
   })
   .meta({
     id: "UserBasic",
     description:
-      "Name and email only: no RUT, credentials, onboarding state, roles or permissions. recentlyActive is false for a disabled user.",
+      "Name and email only: no RUT, credentials, onboarding state, roles or permissions. recentlyActive is false for a disabled user; lastActiveAt is null when the user has never been active.",
   });
 
 export const SharedOrganizationSchema = z

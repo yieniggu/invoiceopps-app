@@ -30,8 +30,9 @@ export const ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const RECENT_ACTIVITY_WINDOW_MS = 15 * 60 * 1000;
 
 /**
- * lastActiveAt is never exposed: only whether it is inside the window. A
- * disabled user is never reported as active, whatever lastActiveAt says.
+ * Whether lastActiveAt is inside the window. A disabled user is never reported
+ * as recently active, whatever lastActiveAt says; the timestamp itself is
+ * exposed as is, so clients can show how long ago the user was active.
  */
 export function isRecentlyActive(
   lastActiveAt: Date | null,

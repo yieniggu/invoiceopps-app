@@ -64,6 +64,14 @@ async function setLastActive(userId: string, minutesAgo: number | null) {
   );
 }
 
+async function setLastActiveAt(userId: string, iso: string) {
+  await client.query(
+    `UPDATE "User" SET "lastActiveAt" = $2::timestamptz AT TIME ZONE 'UTC'
+     WHERE id = $1`,
+    [userId, iso],
+  );
+}
+
 async function disableDirectly(userId: string) {
   await client.query(
     `UPDATE "User" SET "disabledAt" = ${UTC_NOW} WHERE id = $1`,
@@ -305,12 +313,14 @@ describe("AC-22 GET /organizations/{organizationId}/members", () => {
           name: "Ada Admin",
           email: null,
           recentlyActive: expect.any(Boolean),
+          lastActiveAt: expect.any(String),
         },
         {
           userId: s.member.id,
           name: "Uma User",
           email: "uma@example.test",
           recentlyActive: true,
+          lastActiveAt: expect.any(String),
         },
       ]);
       const serialized = JSON.stringify(response.body);
@@ -319,7 +329,6 @@ describe("AC-22 GET /organizations/{organizationId}/members", () => {
         "role",
         "permissions",
         "disabledAt",
-        "lastActiveAt",
         s.member.rawRut,
       ]) {
         expect(serialized).not.toContain(forbidden);
@@ -384,6 +393,51 @@ describe("AC-22 GET /organizations/{organizationId}/members", () => {
     expect(byId.get(s.member.id)).toBe(true);
     expect(byId.get(stale.id)).toBe(false);
     expect(byId.get(disabled.id)).toBe(false);
+  });
+
+  it("exposes lastActiveAt as ISO 8601 on members and memberships, null when never active", async () => {
+    const s = await orgScenario("members-last-active");
+    const never = await makeUser("Nora Never");
+    const disabled = await makeUser("Dina Disabled");
+    await join(never.id, s.org.id, "USER");
+    await join(disabled.id, s.org.id, "USER");
+    await setLastActiveAt(s.member.id, "2026-10-20T08:15:00.000Z");
+    await setLastActive(never.id, null);
+    await setLastActiveAt(disabled.id, "2026-10-30T12:00:00.000Z");
+    await disableDirectly(disabled.id);
+
+    const members = await call(
+      "get",
+      `/organizations/${s.org.id}/members`,
+      s.adminCookie,
+    );
+    const memberships = await call(
+      "get",
+      `/organizations/${s.org.id}/memberships`,
+      s.adminCookie,
+    );
+
+    const fromMembers = new Map(
+      members.body.members.map(
+        (m: { userId: string; lastActiveAt: unknown }) => [
+          m.userId,
+          m.lastActiveAt,
+        ],
+      ),
+    );
+    const fromMemberships = new Map(
+      memberships.body.memberships.map(
+        (m: { userId: string; user: { lastActiveAt: unknown } }) => [
+          m.userId,
+          m.user.lastActiveAt,
+        ],
+      ),
+    );
+    for (const byId of [fromMembers, fromMemberships]) {
+      expect(byId.get(s.member.id)).toBe("2026-10-20T08:15:00.000Z");
+      expect(byId.get(never.id)).toBeNull();
+      expect(byId.get(disabled.id)).toBe("2026-10-30T12:00:00.000Z");
+    }
   });
 
   it("paginates ordered by name then userId with a stable total", async () => {
@@ -452,6 +506,7 @@ describe("AC-23 GET /organizations/{organizationId}/memberships", () => {
         rut: s.member.rawRut,
         disabled: false,
         recentlyActive: true,
+        lastActiveAt: expect.any(String),
       },
     });
     expect(response.body.memberships).toContainEqual(
@@ -463,7 +518,6 @@ describe("AC-23 GET /organizations/{organizationId}/memberships", () => {
         }),
       }),
     );
-    expect(JSON.stringify(response.body)).not.toContain("lastActiveAt");
     expect(JSON.stringify(response.body)).not.toContain("disabledAt");
   });
 
@@ -672,6 +726,7 @@ describe("AC-09 GET /users/{userId}", () => {
         name: "Pablo Peer",
         email: s.peerEmail,
         recentlyActive: true,
+        lastActiveAt: expect.any(String),
       },
       sharedOrganizations: [
         { id: s.orgA.id, name: s.orgA.name },
@@ -685,7 +740,6 @@ describe("AC-09 GET /users/{userId}", () => {
       "rut",
       s.peer.rawRut,
       "disabledAt",
-      "lastActiveAt",
       "mustChangePassword",
       "role",
       "permissions",
@@ -746,6 +800,17 @@ describe("AC-09 GET /users/{userId}", () => {
     expect(response.status).toBe(200);
     expect(response.body.user.recentlyActive).toBe(false);
     expect(JSON.stringify(response.body)).not.toContain("disabled");
+  });
+
+  it("exposes the peer lastActiveAt as ISO 8601, null when never active", async () => {
+    const s = await sharedScenario();
+    await setLastActiveAt(s.peer.id, "2026-10-20T08:15:00.000Z");
+    const seen = await call("get", `/users/${s.peer.id}`, s.viewerCookie);
+    expect(seen.body.user.lastActiveAt).toBe("2026-10-20T08:15:00.000Z");
+
+    await setLastActive(s.peer.id, null);
+    const never = await call("get", `/users/${s.peer.id}`, s.viewerCookie);
+    expect(never.body.user.lastActiveAt).toBeNull();
   });
 
   it("requires a session and a completed onboarding", async () => {

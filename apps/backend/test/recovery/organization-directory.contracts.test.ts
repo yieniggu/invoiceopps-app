@@ -179,7 +179,7 @@ describe("AC-08/09/10/22/23 organization directory OpenAPI contract", () => {
       Object.keys(
         (schemas.OrganizationMember?.properties ?? {}) as Json,
       ).sort(),
-    ).toEqual(["email", "name", "recentlyActive", "userId"]);
+    ).toEqual(["email", "lastActiveAt", "name", "recentlyActive", "userId"]);
   });
 
   it("documents disabled and recentlyActive on the membership user summary", () => {
@@ -187,6 +187,7 @@ describe("AC-08/09/10/22/23 organization directory OpenAPI contract", () => {
     expect(Object.keys(properties).sort()).toEqual([
       "disabled",
       "id",
+      "lastActiveAt",
       "name",
       "recentlyActive",
       "rut",
@@ -199,7 +200,7 @@ describe("AC-08/09/10/22/23 organization directory OpenAPI contract", () => {
     ).toEqual(["sharedOrganizations", "user"]);
     expect(
       Object.keys((schemas.UserBasic?.properties ?? {}) as Json).sort(),
-    ).toEqual(["email", "id", "name", "recentlyActive"]);
+    ).toEqual(["email", "id", "lastActiveAt", "name", "recentlyActive"]);
   });
 
   it("documents ORGANIZATION_UPDATED in the migration and the schema", async () => {

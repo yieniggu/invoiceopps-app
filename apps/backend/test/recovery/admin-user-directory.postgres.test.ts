@@ -91,6 +91,14 @@ async function setLastActive(userId: string, minutesAgo: number | null) {
   );
 }
 
+async function setLastActiveAt(userId: string, iso: string) {
+  await client.query(
+    `UPDATE "User" SET "lastActiveAt" = $2::timestamptz AT TIME ZONE 'UTC'
+     WHERE id = $1`,
+    [userId, iso],
+  );
+}
+
 async function disableDirectly(userId: string) {
   await client.query(
     `UPDATE "User" SET "disabledAt" = ${UTC_NOW} WHERE id = $1`,
@@ -246,6 +254,7 @@ describe("AC-01 GET /api/v1/admin/users directory", () => {
   it("returns {users,page,pageSize,total} with exactly the documented item keys", async () => {
     const key = token();
     const user = await makeUser(`Shape ${key}`);
+    await setLastActive(user.id, null);
 
     const response = await listUsers(`?search=${key}`);
 
@@ -263,10 +272,10 @@ describe("AC-01 GET /api/v1/admin/users directory", () => {
         name: `Shape ${key}`,
         rut: user.rut,
         disabledAt: null,
-        recentlyActive: expect.any(Boolean),
+        recentlyActive: false,
+        lastActiveAt: null,
       },
     ]);
-    expect(JSON.stringify(response.body)).not.toContain("lastActiveAt");
   });
 
   it("includes the platform administrator and disabled users", async () => {
@@ -467,6 +476,46 @@ describe("AC-01 GET /api/v1/admin/users directory", () => {
     expect(patched.status).toBe(200);
     expect(patched.body.user.recentlyActive).toBe(false);
   });
+
+  it("exposes lastActiveAt as ISO 8601 on list, detail and PATCH, null when never active", async () => {
+    const key = token();
+    const seen = await makeUser(`LastActive ${key} seen`);
+    const never = await makeUser(`LastActive ${key} never`);
+    await setLastActiveAt(seen.id, "2026-10-20T08:15:00.000Z");
+    await setLastActive(never.id, null);
+
+    const list = await listUsers(`?search=${key}`);
+    const detail = await getUser(seen.id);
+    const patched = await patchUser(never.id, {
+      name: `LastActive ${key} never renamed`,
+    });
+
+    const byId = new Map(
+      list.body.users.map((u: { id: string; lastActiveAt: unknown }) => [
+        u.id,
+        u.lastActiveAt,
+      ]),
+    );
+    expect(byId.get(seen.id)).toBe("2026-10-20T08:15:00.000Z");
+    expect(byId.get(never.id)).toBeNull();
+    expect(detail.body.user.lastActiveAt).toBe("2026-10-20T08:15:00.000Z");
+    expect(patched.status).toBe(200);
+    expect(patched.body.user.lastActiveAt).toBeNull();
+  });
+
+  it("keeps the real lastActiveAt of a disabled user while recentlyActive stays false", async () => {
+    const key = token();
+    const user = await makeUser(`LastActive ${key} disabled`);
+    await setLastActiveAt(user.id, "2026-10-30T12:00:00.000Z");
+    await disableDirectly(user.id);
+
+    const list = await listUsers(`?search=${key}`);
+
+    expect(list.body.users[0]).toMatchObject({
+      recentlyActive: false,
+      lastActiveAt: "2026-10-30T12:00:00.000Z",
+    });
+  });
 });
 
 describe("AC-02 GET /api/v1/admin/users/{userId}", () => {
@@ -521,6 +570,7 @@ describe("AC-02 GET /api/v1/admin/users/{userId}", () => {
       disabledAt: null,
       mustChangePassword: false,
       recentlyActive: true,
+      lastActiveAt: expect.any(String),
       isPlatformAdministrator: false,
     });
     expect(response.body.memberships).toEqual([
@@ -550,7 +600,6 @@ describe("AC-02 GET /api/v1/admin/users/{userId}", () => {
     const serialized = JSON.stringify(response.body);
     expect(serialized).not.toContain("passwordHash");
     expect(serialized).not.toContain("scrypt");
-    expect(serialized).not.toContain("lastActiveAt");
   });
 
   it("reports disabledAt, mustChangePassword and the platform administrator flag", async () => {
@@ -644,6 +693,7 @@ describe("AC-03 PATCH /api/v1/admin/users/{userId}", () => {
         disabledAt: null,
         mustChangePassword: false,
         recentlyActive: expect.any(Boolean),
+        lastActiveAt: expect.any(String),
         isPlatformAdministrator: false,
       },
     });

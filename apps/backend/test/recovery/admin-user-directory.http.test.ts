@@ -18,6 +18,7 @@ const detailUser = {
   disabledAt: null,
   mustChangePassword: false,
   recentlyActive: false,
+  lastActiveAt: null,
   isPlatformAdministrator: false,
 };
 

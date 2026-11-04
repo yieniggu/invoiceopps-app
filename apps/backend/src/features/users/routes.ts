@@ -69,7 +69,7 @@ export function createUserOperations(
       responses: {
         200: {
           description:
-            "Visible to the platform administrator, to the user itself and to users sharing an organization with the target. Never exposes the RUT, credentials, onboarding state, roles or permissions; a disabled user stays visible with recentlyActive false",
+            "Visible to the platform administrator, to the user itself and to users sharing an organization with the target. Never exposes the RUT, credentials, onboarding state, roles or permissions; a disabled user stays visible with recentlyActive false and its real lastActiveAt; lastActiveAt is null when the user has never been active",
           schema: UserBasicResponseSchema,
         },
         401: unauthenticatedResponse,

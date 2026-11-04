@@ -339,6 +339,7 @@ export function createUserService(prisma: PrismaClient): UserService {
                     target.lastActiveAt,
                     target.disabledAt,
                   ),
+                  lastActiveAt: target.lastActiveAt?.toISOString() ?? null,
                 },
                 sharedOrganizations: target.memberships.map(
                   ({ organization }) => organization,

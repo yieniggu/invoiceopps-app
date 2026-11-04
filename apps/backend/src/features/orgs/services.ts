@@ -431,6 +431,7 @@ export function createOrganizationService(
                   user.lastActiveAt,
                   user.disabledAt,
                 ),
+                lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
               })),
               page: query.page,
               pageSize: query.pageSize,
@@ -501,6 +502,7 @@ export function createOrganizationService(
                       user.lastActiveAt,
                       user.disabledAt,
                     ),
+                    lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
                   },
                   groups: groupMemberships.map(({ group, ...flags }) => ({
                     groupId: group.id,

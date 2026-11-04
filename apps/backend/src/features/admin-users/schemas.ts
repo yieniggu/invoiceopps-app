@@ -142,6 +142,8 @@ export const AdminUserListItemSchema = z
     // Null while the user is enabled.
     disabledAt: z.iso.datetime().nullable(),
     recentlyActive: z.boolean(),
+    // Null when the user has never been active.
+    lastActiveAt: z.iso.datetime().nullable(),
   })
   .meta({ id: "AdminUserListItem" });
 

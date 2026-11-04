@@ -60,7 +60,13 @@ function harness(options: { mustChangePassword?: boolean } = {}) {
       total: 0,
     })),
     getUser: vi.fn(async () => ({
-      user: { id: TARGET, name: "Grace", email: null, recentlyActive: false },
+      user: {
+        id: TARGET,
+        name: "Grace",
+        email: null,
+        recentlyActive: false,
+        lastActiveAt: null,
+      },
       sharedOrganizations: [],
     })),
   };

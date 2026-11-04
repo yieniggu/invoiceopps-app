@@ -152,6 +152,8 @@ export const MembershipGroupSchema = z
 export const MembershipUserSchema = UserSummarySchema.extend({
   disabled: z.boolean(),
   recentlyActive: z.boolean(),
+  // Null when the user has never been active.
+  lastActiveAt: z.iso.datetime().nullable(),
 }).meta({ id: "MembershipUser" });
 
 export const MembershipWithUserSchema = MembershipSchema.extend({
@@ -183,6 +185,8 @@ export const OrganizationMemberSchema = z
     name: z.string(),
     email: z.string().nullable(),
     recentlyActive: z.boolean(),
+    // Null when the user has never been active.
+    lastActiveAt: z.iso.datetime().nullable(),
   })
   .meta({ id: "OrganizationMember" });
 

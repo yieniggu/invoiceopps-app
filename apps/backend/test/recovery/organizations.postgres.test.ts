@@ -439,6 +439,7 @@ describe("RP0-08 memberships", () => {
         rut: member.rawRut,
         disabled: false,
         recentlyActive: false,
+        lastActiveAt: null,
       },
     });
     expect(response.body).toMatchObject({ page: 1, pageSize: 20, total: 2 });

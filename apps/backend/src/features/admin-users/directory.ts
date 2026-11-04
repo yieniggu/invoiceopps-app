@@ -37,6 +37,7 @@ export function toDetailUser(row: DetailUserRow) {
     email: row.email,
     disabledAt: row.disabledAt?.toISOString() ?? null,
     recentlyActive: isRecentlyActive(row.lastActiveAt, row.disabledAt),
+    lastActiveAt: row.lastActiveAt?.toISOString() ?? null,
     mustChangePassword: row.mustChangePassword,
     isPlatformAdministrator: row.platformAdministrator !== null,
   };
@@ -87,6 +88,7 @@ export async function listUsers(
                 row.lastActiveAt,
                 row.disabledAt,
               ),
+              lastActiveAt: row.lastActiveAt?.toISOString() ?? null,
             })),
             page: query.page,
             pageSize: query.pageSize,

@@ -177,7 +177,7 @@ export function createOrganizationOperations(
       responses: {
         200: {
           description:
-            "One page of memberships with a user summary (disabled, recentlyActive), their invoice permissions and the groups of each member; total counts every membership, or only those of the requested userIds",
+            "One page of memberships with a user summary (disabled, recentlyActive, lastActiveAt: null when never active), their invoice permissions and the groups of each member; total counts every membership, or only those of the requested userIds",
           schema: MembershipListResponseSchema,
         },
         400: validationResponse(
