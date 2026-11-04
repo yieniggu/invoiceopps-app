@@ -9,7 +9,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IssueApiTokenDialog } from "./components/IssueApiTokenDialog";
-import { formatInstant } from "./apiTokenExpiry";
+import { formatInstant } from "../../lib/datetime";
 import type { ApiTokenInput } from "./types";
 
 const options = [

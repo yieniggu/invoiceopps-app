@@ -30,7 +30,7 @@ import {
   serializeClient,
   type RecordedRequest,
 } from "../../test/transport";
-import { formatInstant } from "./apiTokenExpiry";
+import { formatInstant } from "../../lib/datetime";
 
 // The secret of every emission in this file. It must only ever be found in
 // the one dialog that shows it.

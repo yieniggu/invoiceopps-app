@@ -7,6 +7,8 @@
 // the field is capped at 29 calendar days, which a daylight-saving change can
 // stretch to 29 days and 1 hour: still inside the server's 30.)
 
+import { formatInstant } from "../../lib/datetime";
+
 /** The longest expiry offered, in days (the server's own limit is 30). */
 export const MAX_EXPIRY_DAYS = 29;
 export type ExpiryChoice = "7" | "29" | "custom";
@@ -78,17 +80,6 @@ export function resolveExpiry(
     expiresAt: new Date(Math.min(endOfDay.getTime(), limit)).toISOString(),
   };
 }
-
-/** An instant in the person's own time zone, as the screen shows expiries. */
-export const formatInstant = (value: string) => {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "Fecha no disponible"
-    : new Intl.DateTimeFormat("es-CL", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(date);
-};
 
 /** «Vence el …» for the expiry the person is about to send, or nothing yet. */
 export function describeExpiry(

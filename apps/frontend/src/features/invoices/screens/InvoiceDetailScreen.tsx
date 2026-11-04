@@ -11,6 +11,7 @@ import { BackLink } from "../../../components/BackLink";
 import { MutationFeedback } from "../../../components/MutationFeedback";
 import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
+import { formatInstant } from "../../../lib/datetime";
 import { isUuid } from "../../../lib/uuid";
 import type { Profile } from "../../auth/types";
 import { paths, type RouteNotice } from "../../navigation/paths";
@@ -24,7 +25,6 @@ import { canDeleteInvoiceFromProfile } from "../invoiceDeletion";
 import { invoiceFiltersFromSearch, invoiceSearch } from "../invoiceFilters";
 import {
   invoiceCivilDate,
-  invoiceDate,
   invoiceLabel,
   invoiceMoney,
   isOverdue,
@@ -195,7 +195,7 @@ export function InvoiceDetailScreen({ profile }: { profile: Profile }) {
               {invoiceLabel(invoice.processingStatus)}
             </Definition>
             <Definition term="Creada">
-              {invoiceDate(invoice.createdAt)}
+              {formatInstant(invoice.createdAt)}
             </Definition>
           </dl>
         </div>

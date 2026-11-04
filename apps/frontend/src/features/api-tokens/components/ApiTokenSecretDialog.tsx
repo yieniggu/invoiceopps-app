@@ -7,7 +7,7 @@ import {
 } from "react";
 
 import { Dialog } from "../../../components/Dialog";
-import { formatInstant } from "../apiTokenExpiry";
+import { formatInstant } from "../../../lib/datetime";
 import type { IssuedApiToken } from "../types";
 
 type CopyState = "idle" | "copied" | "manual";

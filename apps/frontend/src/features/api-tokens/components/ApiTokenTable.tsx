@@ -1,7 +1,7 @@
 import { DataTable, type DataColumn } from "../../../components/DataTable";
 import type { OrganizationGroups } from "../../invoices/invoiceScopes";
 import type { Profile } from "../../auth/types";
-import { formatInstant } from "../apiTokenExpiry";
+import { formatInstant } from "../../../lib/datetime";
 import {
   scopesText,
   tokenScopeText,

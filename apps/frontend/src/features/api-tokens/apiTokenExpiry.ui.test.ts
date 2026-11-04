@@ -4,10 +4,10 @@ import {
   civilDate,
   describeExpiry,
   expiryBounds,
-  formatInstant,
   MAX_EXPIRY_DAYS,
   resolveExpiry,
 } from "./apiTokenExpiry";
+import { formatInstant } from "../../lib/datetime";
 
 const DAY = 86_400_000;
 const MINUTE = 60_000;

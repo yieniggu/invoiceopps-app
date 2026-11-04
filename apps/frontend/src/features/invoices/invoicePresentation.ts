@@ -28,16 +28,6 @@ export function invoiceCivilDate(value: string) {
   return match ? `${match[3]}-${match[2]}-${match[1]}` : "Fecha no disponible";
 }
 
-export function invoiceDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "Fecha no disponible"
-    : new Intl.DateTimeFormat("es-CL", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(date);
-}
-
 // The business runs on Chilean time: «today» is the Santiago day for everyone,
 // not the day of the viewer's device.
 const BUSINESS_TIME_ZONE = "America/Santiago";
