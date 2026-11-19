@@ -2,3 +2,7 @@
 apps/e2e/test-results/
 apps/e2e/playwright-report/
 apps/e2e/e2e-artifacts/
+apps/e2e/demo-output/
+# Bot outputs (apps/e2e/.gitignore keeps them out of git)
+apps/e2e/**/*.results.json
+apps/e2e/**/*.tmp-*

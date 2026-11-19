@@ -126,7 +126,8 @@ jobs:
   # Browser E2E (CR-220), manual only: the RP0-20 journey (`test:recovery:e2e`,
   # the P0 certification gate) and the full UI regression suite (`test:e2e`).
   # The suite recreates its own invoiceops_recovery_e2e database, separate from
-  # the recovery test database, and refuses any non-loopback host.
+  # the recovery test database, and refuses any non-loopback host. The RPA demo
+  # (`demo` project, RPA_DEMO=1) is not part of either command.
   e2e:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

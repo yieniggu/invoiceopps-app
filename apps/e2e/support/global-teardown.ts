@@ -17,6 +17,10 @@ export const SECRET_SPECS = [
   "api-tokens",
   "swagger",
   "recovery-journey",
+  // The bot types the generated e2e password into the login form.
+  "rpa-invoice-batch",
+  "rpa-cli-signal",
+  "rpa-demo",
 ] as const;
 
 export function removeSecretErrorContexts(resultsDir: string) {

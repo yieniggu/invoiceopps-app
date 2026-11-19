@@ -5,15 +5,21 @@
   "type": "module",
   "scripts": {
     "install:browsers": "playwright install chromium",
-    "test": "node --test support/global-teardown.test.ts",
+    "test": "node --test support/global-teardown.test.ts support/demo-env.test.ts rpa/summary.test.ts rpa/args.test.ts rpa/excel.test.ts rpa/matching.test.ts rpa/contract.test.ts rpa/invoice-batch-bot.test.ts rpa/run-support.test.ts rpa/atomic.test.ts rpa/run-cli.test.ts rpa/fixtures/build-invoice-batch.test.ts",
+    "demo:rpa": "RPA_DEMO=1 playwright test tests/rpa-demo.spec.ts --project=demo --workers=1",
+    "demo:rpa:headless": "RPA_DEMO=1 RPA_DEMO_HEADLESS=1 playwright test tests/rpa-demo.spec.ts --project=demo --workers=1",
     "test:e2e": "playwright test",
     "test:recovery:e2e": "playwright test tests/recovery-journey.spec.ts --project=desktop --project=desktop-dark",
     "test:recovery:swagger": "playwright test tests/swagger.spec.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "rpa:run": "node rpa/run.ts",
+    "rpa:fixture": "node rpa/fixtures/build-invoice-batch.ts",
+    "rpa:fixture:demo": "node rpa/fixtures/build-invoice-batch.ts demo-batch"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "@types/node": "^24.10.1",
+    "exceljs": "^4.4.0",
     "typescript": "^5.9.3"
   }
 }

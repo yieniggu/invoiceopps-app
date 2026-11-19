@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
+import { parseDemoHeadless, parseDemoSlowMo } from "./support/demo-env.ts";
 import { BACKEND_PORT, BASE_URL, FRONTEND_PORT } from "./support/env.ts";
 
 /**
@@ -26,6 +27,21 @@ function recoveryE2eDatabaseUrl() {
 
 const desktop = { width: 1440, height: 900 };
 
+/**
+ * The classroom demo (`pnpm demo:rpa`) is opt-in: the `demo` project only exists
+ * with RPA_DEMO=1 (the e2e `demo:rpa*` scripts set it), so `playwright test`,
+ * `test:e2e` and CI never open it. The other projects always ignore its spec.
+ */
+const demoSpec = /rpa-demo\.spec\.ts/;
+const demoEnabled = process.env.RPA_DEMO === "1";
+const demoHeadless = demoEnabled
+  ? parseDemoHeadless(process.env.RPA_DEMO_HEADLESS)
+  : false;
+// Slow motion makes the bot followable on a projector; headless runs skip it.
+const demoSlowMo = demoEnabled
+  ? parseDemoSlowMo(process.env.RPA_DEMO_SLOWMO, demoHeadless)
+  : 0;
+
 export default defineConfig({
   testDir: "./tests",
   globalSetup: "./support/global-setup.ts",
@@ -51,13 +67,14 @@ export default defineConfig({
   projects: [
     {
       name: "desktop",
+      testIgnore: demoSpec,
       use: { viewport: desktop, colorScheme: "light" },
     },
     {
       name: "mobile",
       // The RP0-20 journey proves cross-surface behavior, not layout: it runs
       // on the desktop projects (light and dark) only.
-      testIgnore: /recovery-journey\.spec\.ts/,
+      testIgnore: [/recovery-journey\.spec\.ts/, demoSpec],
       use: {
         viewport: { width: 375, height: 812 },
         isMobile: true,
@@ -68,8 +85,29 @@ export default defineConfig({
     },
     {
       name: "desktop-dark",
+      testIgnore: demoSpec,
       use: { viewport: desktop, colorScheme: "dark" },
     },
+    ...(demoEnabled
+      ? [
+          {
+            name: "demo",
+            testMatch: demoSpec,
+            use: {
+              viewport: desktop,
+              colorScheme: "light" as const,
+              headless: demoHeadless,
+              video: { mode: "on" as const, size: desktop },
+              // The spec records its own trace into the run folder of
+              // demo-output (see tests/rpa-demo.spec.ts): the one Playwright
+              // writes to test-results is replaced by the next run.
+              trace: "off" as const,
+              screenshot: "on" as const,
+              launchOptions: { slowMo: demoSlowMo },
+            },
+          },
+        ]
+      : []),
   ],
   webServer: [
     {
@@ -77,6 +115,9 @@ export default defineConfig({
       command: "pnpm --filter @invoiceops/backend e2e:server",
       url: `http://127.0.0.1:${BACKEND_PORT}/health/ready`,
       timeout: 240_000,
+      // Default is SIGKILL on the process group; SIGTERM lets the launcher
+      // stop its server and tsx child cleanly.
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
       reuseExistingServer: Boolean(process.env.E2E_REUSE_SERVERS),
       env: {
         RECOVERY_E2E_DATABASE_URL: recoveryE2eDatabaseUrl(),
@@ -88,6 +129,7 @@ export default defineConfig({
       command: `pnpm --filter @invoiceops/frontend exec vite --host 127.0.0.1 --port ${FRONTEND_PORT}`,
       url: BASE_URL,
       timeout: 120_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
       reuseExistingServer: Boolean(process.env.E2E_REUSE_SERVERS),
       env: { PORT: String(BACKEND_PORT) },
     },

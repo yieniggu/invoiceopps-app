@@ -13,6 +13,7 @@
   },
   "include": [
     "*.ts",
+    "rpa/**/*.ts",
     "support/**/*.ts",
     "tests/**/*.ts",
     "../backend/e2e/fixtures.ts"

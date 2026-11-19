@@ -10,6 +10,8 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "demo:rpa": "[ ! -f .env ] || { set -a; . ./.env; set +a; }; pnpm --filter @invoiceops/e2e demo:rpa",
+    "demo:rpa:headless": "[ ! -f .env ] || { set -a; . ./.env; set +a; }; pnpm --filter @invoiceops/e2e demo:rpa:headless",
     "dev": "pnpm --parallel --stream --filter @invoiceops/backend --filter @invoiceops/frontend dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

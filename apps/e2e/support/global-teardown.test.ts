@@ -18,6 +18,9 @@ const SECRET_FOLDERS = [
   "member-creation-secret-c-desktop",
   "api-tokens-d-desktop",
   "swagger-e-desktop",
+  "rpa-invoice-batch-g-RPA-invoice-batch-bot-desktop",
+  "rpa-cli-signal-i-RPA-CLI-signals-desktop",
+  "rpa-demo-h-RPA-demo-demo",
 ];
 
 test("removeSecretErrorContexts drops the snapshots of the specs that show a secret and keeps the rest", () => {
