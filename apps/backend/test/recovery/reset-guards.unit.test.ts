@@ -1,6 +1,21 @@
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+const pgClientConfigs = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock("pg", () => ({
+  default: {
+    Client: class {
+      constructor(config: Record<string, unknown>) {
+        pgClientConfigs.push(config);
+      }
+      connect = async () => {};
+      query = async () => ({ rows: [] });
+      end = async () => {};
+    },
+  },
+}));
 
 import {
   assertRecoveryTarget,
@@ -10,7 +25,11 @@ import {
   safeDecode,
   sanitizeTarget,
 } from "../../scripts/recovery-db-guards.mjs";
-import { runRecoveryReset } from "../../scripts/recovery-local-reset.mjs";
+import {
+  prismaBin,
+  runRecoveryReset,
+  spawnWithGroupKill,
+} from "../../scripts/recovery-local-reset.mjs";
 import { runRecoveryPostgresTests } from "../../scripts/test-recovery-postgres.mjs";
 
 const dev = "invoiceops";
@@ -511,5 +530,140 @@ describe("dedicated E2E database target", () => {
         allowedNames: [e2e],
       }),
     ).toThrow(/host must be/);
+  });
+});
+
+describe("recovery reset: bounded database work and child processes", () => {
+  it("the default client fails a stuck statement instead of waiting for the caller", async () => {
+    const spawn = vi.fn(async () => ({ status: 0 }));
+    await runRecoveryReset({
+      argv: [`--confirm-reset=${test}`],
+      env: { DATABASE_URL: local(test) },
+      spawn,
+      log: vi.fn(),
+    });
+    expect(pgClientConfigs).toHaveLength(1);
+    const config = pgClientConfigs[0] as Record<string, number>;
+    expect(config.connectionTimeoutMillis).toBe(5000);
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.query_timeout).toBe(65_000);
+    // The client timeouts are shorter than the migrate budget below.
+    expect(config.query_timeout).toBeLessThan(180_000);
+  });
+
+  it("runs prisma directly (no pnpm wrapper) under a timeout that kills the group", async () => {
+    const spawn = vi.fn(async () => ({ status: 0 }));
+    await runRecoveryReset({
+      argv: [`--confirm-reset=${test}`],
+      env: { DATABASE_URL: local(test), PATH: "/bin" },
+      createClient: async () => ({
+        connect: async () => {},
+        query: async () => ({ rows: [] }),
+        end: async () => {},
+      }),
+      spawn,
+      log: vi.fn(),
+    });
+    const [command, args, options] = spawn.mock.calls[0] as unknown as [
+      string,
+      string[],
+      { timeout: number; env: Record<string, string> },
+    ];
+    expect(command).toBe(prismaBin);
+    expect(command).not.toBe("pnpm");
+    expect(args).toEqual(["migrate", "deploy"]);
+    expect(options.timeout).toBe(180_000);
+    // The default spawner is the one that owns a process group.
+    expect(spawnWithGroupKill).toBeTypeOf("function");
+  });
+
+  it("on timeout kills the whole process group, not only the direct child", async () => {
+    const killGroup = vi.fn();
+    const result = await spawnWithGroupKill(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        timeout: 100,
+        killGroup: (pid: number) => {
+          killGroup(pid);
+          process.kill(-pid, "SIGKILL");
+        },
+      },
+    );
+    expect(killGroup).toHaveBeenCalledTimes(1);
+    expect((result as { error: Error }).error.message).toMatch(/timed out/);
+    expect((result as { status: number | null }).status).toBeNull();
+  });
+
+  it("a grandchild of the migrate command does not outlive the timeout", async () => {
+    // The direct child starts a grandchild (as pnpm does with prisma) and
+    // prints its pid; a SIGKILL to the direct child alone would leave it alive.
+    const parent = `
+      const { spawn } = require("node:child_process");
+      const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+      console.log("GRANDCHILD " + grandchild.pid);
+      setInterval(() => {}, 1000);
+    `;
+    const result = (await spawnWithGroupKill(process.execPath, ["-e", parent], {
+      timeout: 1500,
+    })) as { stdout: string };
+    const pid = Number(/GRANDCHILD (\d+)/.exec(result.stdout)?.[1]);
+    expect(pid).toBeGreaterThan(0);
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i += 1) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((done) => setTimeout(done, 50));
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
+  });
+
+  it("on win32 spawns through a shell (prisma.cmd) and quotes the binary; POSIX stays direct (CR-431)", async () => {
+    const calls: Array<{ command: string; options: Record<string, unknown> }> =
+      [];
+    const fakeSpawn = ((
+      command: string,
+      _args: string[],
+      options: Record<string, unknown>,
+    ) => {
+      calls.push({ command, options });
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: null;
+        stderr: null;
+        pid: number;
+      };
+      child.stdout = null;
+      child.stderr = null;
+      child.pid = 1;
+      setImmediate(() => child.emit("close", 0));
+      return child;
+    }) as never;
+    await spawnWithGroupKill("C:\\x y\\prisma.cmd", ["migrate"], {
+      spawnImpl: fakeSpawn,
+      platform: "win32",
+    });
+    await spawnWithGroupKill("/x/prisma", ["migrate"], {
+      spawnImpl: fakeSpawn,
+      platform: "linux",
+    });
+    expect(calls[0]?.command).toBe('"C:\\x y\\prisma.cmd"');
+    expect(calls[0]?.options.shell).toBe(true);
+    expect(calls[0]?.options.detached).toBe(false);
+    expect(calls[1]?.command).toBe("/x/prisma");
+    expect(calls[1]?.options.shell).toBe(false);
+    expect(calls[1]?.options.detached).toBe(true);
+  });
+
+  it("resolves with the exit status and output of a command that ends in time", async () => {
+    const result = (await spawnWithGroupKill(
+      process.execPath,
+      ["-e", "console.log('ok'); process.exit(3)"],
+      { timeout: 5000 },
+    )) as { status: number; stdout: string };
+    expect(result.status).toBe(3);
+    expect(result.stdout).toContain("ok");
   });
 });
