@@ -511,3 +511,30 @@ describe("APP-04 organization groups", () => {
     expect(screen.queryByRole("link", { name: /Crear grupo/ })).toBeNull();
   });
 });
+
+// docs/rpa-selector-contract.md §2.2: every screen root names itself, also the
+// shells shown while the session is resolved.
+describe("automation contract: session shells", () => {
+  const screenOf = (name: string) =>
+    document.querySelectorAll(`[data-screen="${name}"]`);
+
+  it("marks the loading shell as screen «loading»", () => {
+    vi.spyOn(globalThis, "fetch").mockReturnValue(deferred<Response>().promise);
+    render(<App />);
+    expect(screen.getByRole("status").textContent).toBe(
+      "Preparando tu espacio de trabajo",
+    );
+    expect(screenOf("loading")).toHaveLength(1);
+    expect(screenOf("loading")[0]?.tagName).toBe("MAIN");
+  });
+
+  it("marks the profile error shell as screen «session-error»", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("Network unavailable"),
+    );
+    render(<App />);
+    await screen.findByText("No fue posible cargar el perfil.");
+    expect(screenOf("session-error")).toHaveLength(1);
+    expect(screenOf("loading")).toHaveLength(0);
+  });
+});

@@ -106,6 +106,15 @@ describe("context selector (AC-14)", () => {
     ).toEqual(["Toda la organización", "Sin grupo asignado", "Contabilidad"]);
   });
 
+  it("renders a single screen root", async () => {
+    inboxTransport(orgReader, () => invoicePage([]));
+    renderApp({ route: "/invoices" });
+    await screen.findByLabelText("Ver facturas de");
+    expect(document.querySelectorAll('[data-screen="invoices"]')).toHaveLength(
+      1,
+    );
+  });
+
   it("offers only the group when the person reads just that group", async () => {
     inboxTransport(groupReader, () => invoicePage([]));
     renderApp({ route: "/invoices" });
@@ -2020,5 +2029,253 @@ describe("re-review 3: focus (CR-403, CR-404, CR-405, CR-407)", () => {
     expect(document.activeElement).toBe(
       screen.getByLabelText("Ver facturas de"),
     );
+  });
+});
+
+// docs/rpa-selector-contract.md §3 «Navegación y bandeja»: what a bot uses to
+// reach the form and to reconcile a batch against the inbox.
+describe("automation contract: navigation and inbox", () => {
+  const readerCreator = () =>
+    profileFixture({
+      memberships: [
+        membership(norte, "USER", {
+          permissions: { ...READ, createInvoices: true },
+          groups: [{ group: contabilidad, effective: READ }],
+        }),
+      ],
+    });
+
+  it("tags the table and each row with the invoice and business ids", async () => {
+    inboxTransport(orgReader, () => invoicePage([invoice(1), invoice(2)]));
+    renderApp({ route: "/invoices" });
+    const rows = await screen.findAllByTestId("invoices-row");
+    expect(
+      rows.map((row) => [
+        row.getAttribute("data-invoice-id"),
+        row.getAttribute("data-business-id"),
+      ]),
+    ).toEqual([
+      [invoice(1).id, "FAC-1"],
+      [invoice(2).id, "FAC-2"],
+    ]);
+    const table = screen.getByTestId("invoices-table");
+    expect(table.id).toBe("invoices-table");
+    expect(table).toBe(screen.getByRole("table", { name: "Facturas" }));
+  });
+
+  it("exposes the facts a bot reconciles on each row, locale-independent", async () => {
+    const tricky = invoice(1, {
+      supplierName: `Café "El Ñandú" & Cía`,
+      amountPesos: 1234567,
+      issuedOn: "2026-01-31",
+      dueOn: "2026-02-28",
+    });
+    const grouped = invoice(2, {
+      groupId: compras.id,
+      amountPesos: 1,
+      issuedOn: "2026-12-31",
+      dueOn: "2027-01-01",
+    });
+    inboxTransport(orgReader, () => invoicePage([tricky, grouped]));
+    renderApp({ route: "/invoices" });
+    const rows = await screen.findAllByTestId("invoices-row");
+    const facts = (row: HTMLElement) =>
+      Object.fromEntries(
+        [
+          "data-organization-id",
+          "data-group-id",
+          "data-supplier",
+          "data-amount-pesos",
+          "data-issued-on",
+          "data-due-on",
+        ].map((name) => [name, row.getAttribute(name)]),
+      );
+    expect(facts(rows[0]!)).toEqual({
+      "data-organization-id": norte.id,
+      "data-group-id": "",
+      "data-supplier": `Café "El Ñandú" & Cía`,
+      "data-amount-pesos": "1234567",
+      "data-issued-on": "2026-01-31",
+      "data-due-on": "2026-02-28",
+    });
+    expect(facts(rows[1]!)).toEqual({
+      "data-organization-id": norte.id,
+      "data-group-id": compras.id,
+      "data-supplier": "Proveedor 2",
+      "data-amount-pesos": "1",
+      "data-issued-on": "2026-12-31",
+      "data-due-on": "2027-01-01",
+    });
+  });
+
+  it("offers «Nueva factura» with its anchor only to a creator", async () => {
+    inboxTransport(readerCreator, () => invoicePage([]));
+    renderApp({ route: "/invoices" });
+    const link = await screen.findByTestId("invoices-new");
+    expect(link.id).toBe("invoices-new");
+    expect(link).toBe(screen.getByRole("link", { name: "Nueva factura" }));
+    expect(link.getAttribute("href")).toBe("/invoices/new");
+  });
+
+  it("leaves «Nueva factura» out for a reader without create", async () => {
+    inboxTransport(orgReader, () => invoicePage([invoice(1)]));
+    renderApp({ route: "/invoices" });
+    await screen.findAllByTestId("invoices-row");
+    expect(screen.queryByTestId("invoices-new")).toBeNull();
+  });
+
+  it("anchors the «Facturas» menu link once", async () => {
+    inboxTransport(orgReader, () => invoicePage([]));
+    renderApp({ route: "/dashboard" });
+    const link = await screen.findByTestId("nav-invoices");
+    expect(link.id).toBe("nav-invoices");
+    expect(link.getAttribute("href")).toBe("/invoices");
+    expect(screen.getAllByTestId("nav-invoices")).toHaveLength(1);
+  });
+});
+
+// docs/rpa-selector-contract.md §3: `invoices-results` tells a bot when the
+// requested page is settled, so «no row» can be trusted as «not there».
+describe("automation contract: results state", () => {
+  const stateOf = () =>
+    screen.getByTestId("invoices-results").getAttribute("data-state");
+
+  it("stays loading until the rows arrive, then turns ready", async () => {
+    const list = deferred<Response>();
+    inboxTransport(orgReader, () => list.promise);
+    renderApp({ route: "/invoices" });
+    await screen.findByTestId("invoices-results");
+    expect(stateOf()).toBe("loading");
+    expect(screen.queryAllByTestId("invoices-row")).toHaveLength(0);
+    await act(async () => list.resolve(await invoicePage([invoice(1)])));
+    await waitFor(() => expect(stateOf()).toBe("ready"));
+    expect(screen.getAllByTestId("invoices-row")).toHaveLength(1);
+  });
+
+  it("turns ready on an empty page too", async () => {
+    inboxTransport(orgReader, () => invoicePage([]));
+    renderApp({ route: "/invoices" });
+    await waitFor(() => expect(stateOf()).toBe("ready"));
+    expect(screen.queryAllByTestId("invoices-row")).toHaveLength(0);
+  });
+
+  it("reports error when the list can not be read", async () => {
+    inboxTransport(orgReader, () => errorResponse(500, "INTERNAL_ERROR"));
+    renderApp({ route: "/invoices" });
+    await waitFor(() => expect(stateOf()).toBe("error"), { timeout: 5_000 });
+  });
+
+  const anchor = () => screen.getByTestId("invoices-results");
+
+  it("keeps the anchor, as loading, while the groups of the URL's organization load", async () => {
+    const groups = deferred<Response>();
+    const transport = inboxTransport(
+      orgReader,
+      () => invoicePage([]),
+      () => groups.promise,
+    );
+    renderApp({
+      route: `/invoices?organizationId=${norte.id}&groupId=${compras.id}`,
+    });
+    await screen.findByText("Cargando facturas…");
+    expect(screen.getAllByTestId("invoices-results")).toHaveLength(1);
+    expect(anchor().id).toBe("invoices-results");
+    expect(stateOf()).toBe("loading");
+    expect(transport.calls(LIST)).toHaveLength(0);
+    await act(async () => groups.resolve(await groupsOf(contabilidad)));
+    await waitFor(() => expect(transport.calls(LIST)).toHaveLength(1));
+  });
+
+  it("keeps the anchor, settled as ready, without asking for groups when no scope is readable", async () => {
+    const transport = inboxTransport(
+      () =>
+        profileFixture({
+          memberships: [
+            membership(norte, "ADMIN", {
+              permissions: { ...READ, readInvoices: false },
+            }),
+          ],
+        }),
+      () => invoicePage([]),
+    );
+    renderApp({ route: "/invoices" });
+    // No groups query can be loading or failed behind an empty scope list.
+    await screen.findByText("Aún no puedes ver facturas");
+    expect(screen.getAllByTestId("invoices-results")).toHaveLength(1);
+    expect(anchor().id).toBe("invoices-results");
+    expect(stateOf()).toBe("ready");
+    expect(transport.calls(LIST)).toHaveLength(0);
+    expect(transport.calls(ORG_GROUPS)).toHaveLength(0);
+    expect(
+      screen.queryByText(/No fue posible cargar todos los grupos/),
+    ).toBeNull();
+  });
+
+  it("tags an inverted date range as invalid-range, without a request", async () => {
+    const transport = inboxTransport(orgReader, () => invoicePage([]));
+    renderApp({
+      route: `/invoices?organizationId=${norte.id}&issuedFrom=2026-05-01&issuedTo=2026-04-01`,
+    });
+    await screen.findByText(/no puede ser posterior/);
+    expect(screen.getAllByTestId("invoices-results")).toHaveLength(1);
+    expect(stateOf()).toBe("error");
+    expect(anchor().getAttribute("data-error-kind")).toBe("invalid-range");
+    expect(transport.calls(LIST)).toHaveLength(0);
+  });
+
+  it("carries no error kind when the list itself fails", async () => {
+    inboxTransport(orgReader, () => errorResponse(500, "INTERNAL_ERROR"));
+    renderApp({ route: "/invoices" });
+    await waitFor(() => expect(stateOf()).toBe("error"), { timeout: 5_000 });
+    expect(anchor().hasAttribute("data-error-kind")).toBe(false);
+  });
+
+  it("is loading, not ready, on the placeholder of a page change", async () => {
+    const next = deferred<Response>();
+    inboxTransport(orgReader, ({ search: query }) =>
+      new URLSearchParams(query).get("page") === "2"
+        ? next.promise
+        : invoicePage([invoice(1)], { total: 41 }),
+    );
+    renderApp({ route: "/invoices" });
+    await screen.findByRole("link", { name: "FAC-1" });
+    expect(stateOf()).toBe("ready");
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await waitFor(() => expect(stateOf()).toBe("loading"));
+    // The previous page is still on screen as a placeholder.
+    expect(screen.getByRole("link", { name: "FAC-1" })).toBeTruthy();
+    await act(async () =>
+      next.resolve(await invoicePage([invoice(21)], { page: 2, total: 41 })),
+    );
+    await waitFor(() => expect(stateOf()).toBe("ready"));
+  });
+
+  it("is loading while the next scope loads", async () => {
+    const next = deferred<Response>();
+    inboxTransport(orgReader, ({ search: query }) =>
+      new URLSearchParams(query).has("groupId")
+        ? next.promise
+        : invoicePage([invoice(1)]),
+    );
+    renderApp({ route: "/invoices" });
+    await screen.findByRole("link", { name: "FAC-1" });
+    await selectContext("Contabilidad");
+    await waitFor(() => expect(stateOf()).toBe("loading"));
+    await act(async () => next.resolve(await invoicePage([])));
+    await waitFor(() => expect(stateOf()).toBe("ready"));
+  });
+
+  it("reports error when a refetch fails while rows are shown", async () => {
+    let fail = false;
+    inboxTransport(orgReader, () =>
+      fail ? errorResponse(500, "INTERNAL") : invoicePage([invoice(1)]),
+    );
+    renderApp({ route: "/invoices" });
+    await screen.findByRole("link", { name: "FAC-1" });
+    expect(stateOf()).toBe("ready");
+    fail = true;
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
+    await waitFor(() => expect(stateOf()).toBe("error"), { timeout: 5_000 });
+    expect(screen.getByRole("link", { name: "FAC-1" })).toBeTruthy();
   });
 });

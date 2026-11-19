@@ -90,11 +90,35 @@ describe("PasswordInput", () => {
   });
 });
 
+describe("PasswordInput contract id", () => {
+  it("uses the given id for label, test id and toggle", () => {
+    render(<PasswordInput label="Contraseña" id="auth-password" />);
+    const input = screen.getByLabelText("Contraseña");
+    expect(input.id).toBe("auth-password");
+    expect(input.getAttribute("data-testid")).toBe("auth-password");
+    expect(
+      screen
+        .getByRole("button", { name: "Mostrar contraseña" })
+        .getAttribute("aria-controls"),
+    ).toBe("auth-password");
+  });
+
+  it("adds no test id without an id", () => {
+    render(<PasswordInput label="Contraseña" />);
+    expect(
+      screen.getByLabelText("Contraseña").hasAttribute("data-testid"),
+    ).toBe(false);
+  });
+});
+
 describe("password fields in the auth screens", () => {
   it("offers the toggle on the login password and keeps current-password", () => {
     renderWithClient(<AuthScreen onLogin={vi.fn()} />);
     const input = screen.getByLabelText("Contraseña") as HTMLInputElement;
     expect(input.getAttribute("autocomplete")).toBe("current-password");
+    expect(document.querySelector('[data-screen="auth"]')).toBe(
+      document.querySelector("main"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Mostrar contraseña" }));
     expect(input.type).toBe("text");
   });
@@ -105,6 +129,7 @@ describe("password fields in the auth screens", () => {
         <ChangePasswordScreen />
       </SessionProvider>,
     );
+    expect(document.querySelector("main")?.dataset.screen).toBe("onboarding");
     expect(
       screen.getAllByRole("button", { name: "Mostrar contraseña" }),
     ).toHaveLength(2);

@@ -132,3 +132,147 @@ describe("AuthScreen closed access", () => {
     expect(rutInput.value).toBe("1.234.567-4");
   });
 });
+
+// docs/rpa-selector-contract.md §3 «Login»: stable anchors and readable state.
+describe("AuthScreen automation contract", () => {
+  const fillAndSubmit = () => {
+    fireEvent.change(screen.getByTestId("login-rut"), {
+      target: { value: "190347907" },
+    });
+    fireEvent.change(screen.getByTestId("login-password"), {
+      target: { value: "secret-password" },
+    });
+    fireEvent.click(screen.getByTestId("login-submit"));
+  };
+  const apiFailure = (status: number, code?: string) =>
+    new Response(JSON.stringify({ error: { code, message: "server text" } }), {
+      status,
+    });
+
+  it("exposes the anchors with the id, test id and name of the contract", () => {
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    const form = screen.getByTestId("login-form");
+    expect(form.id).toBe("login-form");
+    expect(form.getAttribute("data-state")).toBe("idle");
+    const rut = screen.getByRole("textbox", { name: "RUT" });
+    expect(rut).toBe(screen.getByTestId("login-rut"));
+    expect(rut.id).toBe("login-rut");
+    expect(rut.getAttribute("name")).toBe("rut");
+    const password = screen.getByLabelText("Contraseña");
+    expect(password).toBe(screen.getByTestId("login-password"));
+    expect(password.id).toBe("login-password");
+    expect(password.getAttribute("name")).toBe("password");
+    const submit = screen.getByRole("button", { name: "Iniciar sesión" });
+    expect(submit).toBe(screen.getByTestId("login-submit"));
+    expect(submit.id).toBe("login-submit");
+  });
+
+  it.each([
+    [undefined, "none"],
+    ["logout", "logout"],
+    ["unauthorized", "expired"],
+  ] as const)("marks the screen for endedBy=%s as %s", (endedBy, reason) => {
+    renderWithClient(<AuthScreen onLogin={vi.fn()} endedBy={endedBy} />);
+    const main = screen.getByRole("main");
+    expect(main.getAttribute("data-screen")).toBe("auth");
+    expect(main.getAttribute("data-auth-reason")).toBe(reason);
+  });
+
+  it("ties each field message to its field", () => {
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("login-submit"));
+    const rutError = screen.getByTestId("login-rut-error");
+    expect(rutError.getAttribute("data-field")).toBe("rut");
+    expect(rutError.textContent).toBe("Ingresa tu RUT");
+    fireEvent.change(screen.getByTestId("login-rut"), {
+      target: { value: "190347907" },
+    });
+    fireEvent.click(screen.getByTestId("login-submit"));
+    const passwordError = screen.getByTestId("login-password-error");
+    expect(passwordError.getAttribute("data-field")).toBe("password");
+    expect(passwordError.textContent).toBe("Ingresa tu contraseña");
+    expect(screen.getByTestId("login-form").getAttribute("data-state")).toBe(
+      "idle",
+    );
+  });
+
+  it("reports pending while the request is out, then success", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    vi.spyOn(globalThis, "fetch").mockReturnValue(
+      new Promise<Response>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const onLogin = vi.fn();
+    renderWithClient(<AuthScreen onLogin={onLogin} />);
+    fillAndSubmit();
+    const form = screen.getByTestId("login-form");
+    await waitFor(() =>
+      expect(form.getAttribute("data-state")).toBe("pending"),
+    );
+    answer(new Response(JSON.stringify({ user: {} }), { status: 200 }));
+    await waitFor(() =>
+      expect(form.getAttribute("data-state")).toBe("success"),
+    );
+    expect(onLogin).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("login-error")).toBeNull();
+  });
+
+  it.each([
+    [401, "UNAUTHENTICATED", "credentials", "Revisa el RUT y la contraseña"],
+    [400, "VALIDATION_ERROR", "credentials", "Revisa el RUT y la contraseña"],
+    [403, "FORBIDDEN_ORIGIN", "forbidden", "No fue posible autorizar"],
+    [429, "RATE_LIMITED", "rate-limited", "Demasiados intentos"],
+    [503, "SERVICE_UNAVAILABLE", "unknown", "No fue posible iniciar sesión"],
+  ])("classifies HTTP %i (%s) as %s", async (status, code, kind, message) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(apiFailure(status, code));
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fillAndSubmit();
+    const error = await screen.findByTestId("login-error");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(error.getAttribute("data-error-kind")).toBe(kind);
+    expect(error.getAttribute("data-error-status")).toBe(String(status));
+    expect(error.getAttribute("data-error-code")).toBe(code);
+    expect(error.textContent).toContain(message);
+    expect(screen.getByTestId("login-form").getAttribute("data-state")).toBe(
+      "error",
+    );
+  });
+
+  it("keeps the code empty when the API sends none", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("", { status: 502 }),
+    );
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fillAndSubmit();
+    const error = await screen.findByTestId("login-error");
+    expect(error.getAttribute("data-error-kind")).toBe("unknown");
+    expect(error.getAttribute("data-error-status")).toBe("502");
+    expect(error.getAttribute("data-error-code")).toBe("");
+  });
+
+  it("classifies a request without answer as network", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fillAndSubmit();
+    const error = await screen.findByTestId("login-error");
+    expect(error.getAttribute("data-error-kind")).toBe("network");
+    expect(error.getAttribute("data-error-status")).toBe("");
+    expect(error.getAttribute("data-error-code")).toBe("NETWORK");
+    expect(error.textContent).toContain("No fue posible conectar");
+  });
+
+  it("classifies a non-network throw as unknown, not network", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new SyntaxError("bad"));
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fillAndSubmit();
+    const error = await screen.findByTestId("login-error");
+    expect(error.getAttribute("data-error-kind")).toBe("unknown");
+    expect(error.getAttribute("data-error-status")).toBe("");
+    expect(error.getAttribute("data-error-code")).toBe("UNKNOWN");
+    expect(error.textContent).toContain("No fue posible iniciar sesión");
+    expect(error.textContent).not.toContain("conectar");
+  });
+});

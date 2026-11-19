@@ -20,6 +20,9 @@ export function DataTable<Row extends { id: string }>({
   columns,
   className,
   busy = false,
+  testId,
+  rowTestId,
+  rowAttributes,
 }: {
   /** Accessible name of the table; its scroll region is «Tabla de …». */
   label: string;
@@ -29,6 +32,12 @@ export function DataTable<Row extends { id: string }>({
   className?: string;
   /** The rows on screen are being replaced: announced as `aria-busy`. */
   busy?: boolean;
+  /** Automation contract id of the table (`id` and `data-testid`). */
+  testId?: string;
+  /** Test id shared by every row (docs/rpa-selector-contract.md). */
+  rowTestId?: string;
+  /** `data-*` attributes of a row, e.g. the ids a bot reconciles against. */
+  rowAttributes?: (row: Row) => Record<`data-${string}`, string>;
 }) {
   // The scroll area is a region named apart from the table, and a tab stop
   // only while it overflows, so a keyboard user can scroll a table wider than
@@ -44,6 +53,8 @@ export function DataTable<Row extends { id: string }>({
     >
       <table
         className={className ? `data-table ${className}` : "data-table"}
+        id={testId}
+        data-testid={testId}
         role="table"
         aria-label={label}
         aria-busy={busy || undefined}
@@ -64,7 +75,12 @@ export function DataTable<Row extends { id: string }>({
         </thead>
         <tbody role="rowgroup">
           {rows.map((row) => (
-            <tr key={row.id} role="row">
+            <tr
+              key={row.id}
+              role="row"
+              data-testid={rowTestId}
+              {...rowAttributes?.(row)}
+            >
               {columns.map(({ header, cell, className: columnClass }) => (
                 <td
                   key={header}

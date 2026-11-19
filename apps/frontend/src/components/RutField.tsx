@@ -19,6 +19,8 @@ interface RutFieldProps {
   label?: string;
   ariaLabel?: string;
   name?: string;
+  /** Stable contract id: also the input's `data-testid`; the message is `${id}-error`. */
+  id?: string;
   autoComplete?: string;
   disabled?: boolean;
   required?: boolean;
@@ -38,6 +40,7 @@ export function RutField({
   label,
   ariaLabel,
   name,
+  id,
   autoComplete,
   disabled,
   required,
@@ -46,7 +49,8 @@ export function RutField({
   inputRef,
   serverMessage = "",
 }: RutFieldProps) {
-  const errorId = useId();
+  const generatedErrorId = useId();
+  const errorId = id ? `${id}-error` : generatedErrorId;
   const element = useRef<HTMLInputElement | null>(null);
   const pendingCaret = useRef<number | null>(null);
   const [touched, setTouched] = useState(false);
@@ -85,6 +89,8 @@ export function RutField({
   const input = (
     <input
       ref={setRefs}
+      id={id}
+      data-testid={id}
       name={name}
       aria-label={ariaLabel}
       inputMode="text"
@@ -125,7 +131,13 @@ export function RutField({
       ) : (
         input
       )}
-      <p id={errorId} className="field-error" aria-live="polite">
+      <p
+        id={errorId}
+        className="field-error"
+        aria-live="polite"
+        data-testid={id ? errorId : undefined}
+        data-field={id ? name : undefined}
+      >
         {message}
       </p>
     </>

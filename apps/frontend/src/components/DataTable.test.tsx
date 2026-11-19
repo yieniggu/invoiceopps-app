@@ -67,3 +67,48 @@ describe("DataTable scroll region (CR-383)", () => {
     ).toBe("0");
   });
 });
+
+describe("DataTable automation anchors", () => {
+  const rows = [
+    { id: "1", name: "Uno" },
+    { id: "2", name: "Dos" },
+  ];
+  const columns = [
+    { header: "Nombre", cell: ({ name }: { name: string }) => name },
+  ];
+
+  it("tags the table and every row when asked", () => {
+    render(
+      <DataTable
+        label="Cosas"
+        rows={rows}
+        columns={columns}
+        testId="things-table"
+        rowTestId="things-row"
+        rowAttributes={({ id, name }) => ({
+          "data-thing-id": id,
+          "data-thing-name": name,
+        })}
+      />,
+    );
+    const table = screen.getByTestId("things-table");
+    expect(table).toBe(screen.getByRole("table", { name: "Cosas" }));
+    expect(table.id).toBe("things-table");
+    const tagged = screen.getAllByTestId("things-row");
+    expect(tagged.map((row) => row.getAttribute("data-thing-id"))).toEqual([
+      "1",
+      "2",
+    ]);
+    expect(tagged[1].getAttribute("data-thing-name")).toBe("Dos");
+  });
+
+  it("renders no anchor when none is given", () => {
+    renderTable();
+    const table = screen.getByRole("table", { name: "Facturas" });
+    expect(table.hasAttribute("id")).toBe(false);
+    expect(table.hasAttribute("data-testid")).toBe(false);
+    expect(
+      document.querySelector("tbody tr")!.hasAttribute("data-testid"),
+    ).toBe(false);
+  });
+});

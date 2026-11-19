@@ -3,7 +3,7 @@ import { useId, useState, type InputHTMLAttributes, type Ref } from "react";
 
 interface PasswordInputProps extends Omit<
   InputHTMLAttributes<HTMLInputElement>,
-  "type" | "id"
+  "type"
 > {
   /** Visible label text; the label is tied to the input with `htmlFor`. */
   label: string;
@@ -27,9 +27,11 @@ export function PasswordInput({
   label,
   inputRef,
   disabled,
+  id,
   ...inputProps
 }: PasswordInputProps) {
-  const inputId = useId();
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   const [visible, setVisible] = useState(false);
   const Icon = visible ? EyeOff : Eye;
   return (
@@ -39,6 +41,7 @@ export function PasswordInput({
         <input
           {...inputProps}
           id={inputId}
+          data-testid={id}
           ref={inputRef}
           type={visible ? "text" : "password"}
           disabled={disabled}

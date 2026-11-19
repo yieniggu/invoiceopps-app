@@ -20,6 +20,24 @@ export function groupLabel(invoice: Invoice) {
 }
 
 /**
+ * Machine-readable anchors of a row (docs/rpa-selector-contract.md §3): the
+ * raw API values, never the formatted text, so a bot can reconcile without
+ * calling the API. `data-group-id` is empty in the organization scope.
+ */
+function rowFacts(invoice: Invoice) {
+  return {
+    "data-invoice-id": invoice.id,
+    "data-business-id": invoice.businessId,
+    "data-organization-id": invoice.organizationId,
+    "data-group-id": invoice.groupId ?? "",
+    "data-supplier": invoice.supplierName,
+    "data-amount-pesos": String(invoice.amountPesos),
+    "data-issued-on": invoice.issuedOn,
+    "data-due-on": invoice.dueOn,
+  };
+}
+
+/**
  * Rows of the inbox. The business status is the only status shown; the
  * processing status belongs to the detail, labelled apart. The number is the
  * row's link and stretches over the whole row.
@@ -92,6 +110,9 @@ export function InvoiceTable({
       columns={columns}
       className="invoice-table"
       busy={busy}
+      testId="invoices-table"
+      rowTestId="invoices-row"
+      rowAttributes={rowFacts}
     />
   );
 }

@@ -16,6 +16,20 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+/**
+ * A request that got no response: `fetch` rejects with a TypeError (offline,
+ * DNS, connection refused, CORS) or, when it is cut short, with a
+ * DOMException named TimeoutError or AbortError. Any other throw (a body that
+ * does not parse, a bug) is not proof that the network failed.
+ */
+export function isNetworkFailure(error: unknown) {
+  return (
+    error instanceof TypeError ||
+    (error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError"))
+  );
+}
+
 export function isUnauthorized(error: unknown) {
   return isApiError(error) && error.status === 401;
 }

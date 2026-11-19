@@ -32,6 +32,8 @@ interface Attempt {
   status: "inflight" | "uncertain" | "burned";
 }
 
+export type InvoiceCreateState = "idle" | "pending" | "success" | "error";
+
 export interface CreatedResult {
   invoice: CreatedInvoice;
   scope: CreateScopeOption;
@@ -71,6 +73,9 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
   const [confirmationRequests, setConfirmationRequests] = useState(0);
   const [created, setCreated] = useState<CreatedResult>();
   const [uncertain, setUncertain] = useState(false);
+  // A failure was shown for this operation: the screen keeps its alert slot
+  // while the next request is out, so the layout does not jump.
+  const [afterFailure, setAfterFailure] = useState(false);
   const [restarts, setRestarts] = useState(0);
   const attempt = useRef<Attempt | null>(null);
   const fields = useRef<Partial<Record<DraftField | "scope", HTMLElement>>>({});
@@ -103,20 +108,24 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
 
   const send = (next: Attempt) => {
     attempt.current = { ...next, status: "inflight" };
-    // The failure, «Reintentar» and the confirmation stay mounted while the
-    // request is out (their buttons are `aria-disabled`): unmounting the one
-    // the person just activated would drop focus to the page. The outcome
-    // below replaces them.
+    // The previous failure is dropped now, so nothing stale (message, kind)
+    // is exposed while the new request is out. «Reintentar» and the
+    // confirmation stay mounted (their buttons are `aria-disabled`):
+    // unmounting the one the person just activated would drop focus to the
+    // page. The outcome below replaces them.
+    setFailure(undefined);
     create.mutate(
       { input: next.input, idempotencyKey: next.key },
       {
         onSuccess: (invoice) => {
           attempt.current = null;
+          setAfterFailure(false);
           setCreated({ invoice, scope });
         },
         onError: (error) => {
           const result = describeCreateFailure(error);
           setFailure(result);
+          setAfterFailure(true);
           setUncertain(result.kind === "uncertain");
           if (result.kind === "burned") askConfirmation();
           else setConfirming(false);
@@ -187,6 +196,7 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
     setFailure(undefined);
     setConfirming(false);
     setUncertain(false);
+    setAfterFailure(false);
     setCreated(undefined);
     setRestarts((count) => count + 1);
   };
@@ -196,7 +206,17 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
     if (restarts > 0) fields.current.businessId?.focus();
   }, [restarts]);
 
+  // One readable state for automation (docs/rpa-selector-contract.md §2.2).
+  const state: InvoiceCreateState = create.isPending
+    ? "pending"
+    : created
+      ? "success"
+      : failure || Object.keys(errors).length > 0
+        ? "error"
+        : "idle";
+
   return {
+    state,
     values,
     change,
     scope,
@@ -208,6 +228,7 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
     dismissConfirmation: () => setConfirming(false),
     confirmNewOperation,
     uncertain,
+    afterFailure,
     pending: create.isPending,
     created,
     submit,

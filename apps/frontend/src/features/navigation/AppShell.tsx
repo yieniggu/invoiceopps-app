@@ -33,11 +33,18 @@ interface Destination {
   icon: LucideIcon;
   /** Shown but not reachable yet: rendered as a disabled item, not a link. */
   comingSoon?: boolean;
+  /** Automation contract id (`id` and `data-testid`) of the link. */
+  testId?: string;
 }
 
 export const primaryDestinations: Destination[] = [
   { label: "Panel principal", to: paths.dashboard, icon: LayoutDashboard },
-  { label: "Facturas", to: paths.invoices, icon: ReceiptText },
+  {
+    label: "Facturas",
+    to: paths.invoices,
+    icon: ReceiptText,
+    testId: "nav-invoices",
+  },
   {
     label: "Políticas",
     to: paths.policies,
@@ -193,7 +200,13 @@ export function AppShell({
   };
 
   const labelClass = collapsed ? "nav-label visually-hidden" : "nav-label";
-  const renderItem = ({ label, to, icon: Icon, comingSoon }: Destination) =>
+  const renderItem = ({
+    label,
+    to,
+    icon: Icon,
+    comingSoon,
+    testId,
+  }: Destination) =>
     comingSoon ? (
       <li key={to}>
         {/* Not a link: it has no destination yet. aria-disabled keeps it
@@ -216,6 +229,8 @@ export function AppShell({
     ) : (
       <li key={to}>
         <Link
+          id={testId}
+          data-testid={testId}
           to={to}
           className="nav-item"
           aria-current={isDestinationActive(to, pathname) ? "page" : undefined}

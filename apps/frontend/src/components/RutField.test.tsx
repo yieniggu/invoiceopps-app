@@ -6,11 +6,24 @@ import { RutField } from "./RutField";
 
 afterEach(cleanup);
 
-function Harness({ submitted = false }: { submitted?: boolean }) {
+function Harness({
+  submitted = false,
+  id,
+  name,
+  label,
+}: {
+  submitted?: boolean;
+  id?: string;
+  name?: string;
+  label?: string;
+}) {
   const [value, setValue] = useState("");
   return (
     <RutField
-      ariaLabel="RUT de prueba"
+      ariaLabel={label ? undefined : "RUT de prueba"}
+      label={label}
+      id={id}
+      name={name}
       value={value}
       onChange={setValue}
       submitted={submitted}
@@ -24,6 +37,32 @@ const input = () =>
   }) as HTMLInputElement;
 
 describe("RutField", () => {
+  it("carries the contract anchors when given an id", () => {
+    render(<Harness id="auth-rut" name="rut" label="RUT" />);
+    const field = screen.getByLabelText("RUT");
+    expect(field).toBe(screen.getByTestId("auth-rut"));
+    expect(field.id).toBe("auth-rut");
+    expect(field.getAttribute("data-testid")).toBe("auth-rut");
+    fireEvent.change(field, { target: { value: "190347908" } });
+    fireEvent.blur(field);
+    const error = screen.getByTestId("auth-rut-error");
+    expect(error.id).toBe("auth-rut-error");
+    expect(error.textContent).toBe("RUT inválido");
+    expect(error.getAttribute("data-field")).toBe("rut");
+    expect(field.getAttribute("aria-describedby")).toBe("auth-rut-error");
+  });
+
+  it("renders no contract anchors without an id", () => {
+    render(<Harness name="rut" />);
+    expect(input().hasAttribute("data-testid")).toBe(false);
+    expect(input().id).toBe("");
+    const error = document.getElementById(
+      input().getAttribute("aria-describedby") ?? "",
+    );
+    expect(error?.hasAttribute("data-testid")).toBe(false);
+    expect(error?.hasAttribute("data-field")).toBe(false);
+  });
+
   it("has no maxLength and normalizes a pasted value with spaces", () => {
     render(<Harness />);
     expect(input().hasAttribute("maxlength")).toBe(false);

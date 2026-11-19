@@ -31,32 +31,47 @@ function ScopeOptions({ options }: { options: readonly CreateScopeOption[] }) {
 
 /** A label, its control and the persistent message that describes it. */
 function Field({
+  id: contractId,
+  name,
   label,
   error,
   hint,
   children,
 }: {
+  /** Stable contract id (control id and `data-testid`); absent: generated. */
+  id?: string;
+  name?: string;
   label: string;
   error?: string;
   hint?: string;
   children: (props: {
     id: string;
+    name?: string;
+    "data-testid"?: string;
     "aria-invalid": true | undefined;
     "aria-describedby": string;
   }) => ReactNode;
 }) {
-  const id = useId();
-  const messageId = `${id}-message`;
+  const generatedId = useId();
+  const id = contractId ?? generatedId;
+  const messageId = contractId ? `${id}-error` : `${id}-message`;
   const hintId = `${id}-hint`;
   return (
     <div className="form-field">
       <label htmlFor={id}>{label}</label>
       {children({
         id,
+        name,
+        "data-testid": contractId,
         "aria-invalid": error ? true : undefined,
         "aria-describedby": hint ? `${messageId} ${hintId}` : messageId,
       })}
-      <FieldMessage id={messageId} text={error} />
+      <FieldMessage
+        id={messageId}
+        text={error}
+        testId={contractId ? messageId : undefined}
+        field={contractId ? name : undefined}
+      />
       {hint ? (
         <p id={hintId} className="field-hint">
           {hint}
@@ -84,13 +99,20 @@ export function InvoiceCreateForm({
   const titleId = useId();
   return (
     <form
+      id="invoice-create-form"
+      data-testid="invoice-create-form"
+      data-state={form.state}
       className="invoice-form"
       onSubmit={form.submit}
       noValidate
       aria-labelledby={titleId}
     >
       <h2 id={titleId}>Datos de la factura</h2>
-      <Field label="Alcance de la factura">
+      <Field
+        id="invoice-create-scope"
+        name="scope"
+        label="Alcance de la factura"
+      >
         {(props) => (
           <select
             {...props}
@@ -105,7 +127,12 @@ export function InvoiceCreateForm({
           </select>
         )}
       </Field>
-      <Field label="Número de factura" error={errors.businessId}>
+      <Field
+        id="invoice-create-business-id"
+        name="businessId"
+        label="Número de factura"
+        error={errors.businessId}
+      >
         {(props) => (
           <input
             {...props}
@@ -120,7 +147,12 @@ export function InvoiceCreateForm({
           />
         )}
       </Field>
-      <Field label="Proveedor" error={errors.supplierName}>
+      <Field
+        id="invoice-create-supplier-name"
+        name="supplierName"
+        label="Proveedor"
+        error={errors.supplierName}
+      >
         {(props) => (
           <input
             {...props}
@@ -137,6 +169,8 @@ export function InvoiceCreateForm({
       </Field>
       <div className="form-row">
         <Field
+          id="invoice-create-amount"
+          name="amount"
           label="Monto en pesos (CLP)"
           error={errors.amount}
           hint="Pesos chilenos enteros, por ejemplo 12.500."
@@ -155,7 +189,11 @@ export function InvoiceCreateForm({
             />
           )}
         </Field>
-        <Field label="Estado de la factura">
+        <Field
+          id="invoice-create-business-status"
+          name="businessStatus"
+          label="Estado de la factura"
+        >
           {(props) => (
             <select
               {...props}
@@ -179,7 +217,12 @@ export function InvoiceCreateForm({
         </Field>
       </div>
       <div className="form-row">
-        <Field label="Fecha de emisión" error={errors.issuedOn}>
+        <Field
+          id="invoice-create-issued-on"
+          name="issuedOn"
+          label="Fecha de emisión"
+          error={errors.issuedOn}
+        >
           {(props) => (
             <input
               {...props}
@@ -193,7 +236,12 @@ export function InvoiceCreateForm({
             />
           )}
         </Field>
-        <Field label="Fecha de vencimiento" error={errors.dueOn}>
+        <Field
+          id="invoice-create-due-on"
+          name="dueOn"
+          label="Fecha de vencimiento"
+          error={errors.dueOn}
+        >
           {(props) => (
             <input
               {...props}

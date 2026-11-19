@@ -56,7 +56,11 @@ export function SessionGate() {
   }
   if (profile.isError && !profile.isFetching) {
     return (
-      <main className="shell" aria-labelledby="page-title">
+      <main
+        className="shell"
+        data-screen="session-error"
+        aria-labelledby="page-title"
+      >
         <p className="eyebrow">InvoiceOps</p>
         <h1 id="page-title">Mi perfil</h1>
         <p role="alert">No fue posible cargar el perfil.</p>

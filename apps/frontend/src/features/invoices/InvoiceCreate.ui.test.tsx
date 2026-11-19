@@ -152,6 +152,50 @@ describe("entry point (AC-01)", () => {
       await screen.findByText(/No tienes permiso para crear facturas/),
     ).toBeTruthy();
     expect(screen.queryByLabelText("Número de factura")).toBeNull();
+    expect(
+      document.querySelectorAll('[data-screen="invoice-create"]'),
+    ).toHaveLength(1);
+  });
+});
+
+describe("selector contract anchors", () => {
+  const ANCHORS = [
+    ["Alcance de la factura", "invoice-create-scope", "scope"],
+    ["Número de factura", "invoice-create-business-id", "businessId"],
+    ["Proveedor", "invoice-create-supplier-name", "supplierName"],
+    ["Monto en pesos (CLP)", "invoice-create-amount", "amount"],
+    [
+      "Estado de la factura",
+      "invoice-create-business-status",
+      "businessStatus",
+    ],
+    ["Fecha de emisión", "invoice-create-issued-on", "issuedOn"],
+    ["Fecha de vencimiento", "invoice-create-due-on", "dueOn"],
+  ] as const;
+
+  it("gives every control its id, test id and name", async () => {
+    createTransport(creator, () => created());
+    await openForm();
+    expect(
+      document.querySelectorAll('[data-screen="invoice-create"]'),
+    ).toHaveLength(1);
+    for (const [label, id, name] of ANCHORS) {
+      const control = screen.getByTestId(id);
+      expect(control).toBe(screen.getByLabelText(label));
+      expect(control.id).toBe(id);
+      expect(control.getAttribute("name")).toBe(name);
+    }
+  });
+
+  it("points the control at a field-tagged error after an empty submit", async () => {
+    createTransport(creator, () => created());
+    await openForm();
+    submit();
+    const control = screen.getByTestId("invoice-create-business-id");
+    const error = await screen.findByTestId("invoice-create-business-id-error");
+    expect(control.getAttribute("aria-describedby")).toContain(error.id);
+    expect(error.textContent).toBe("Ingresa el número de la factura.");
+    expect(error.getAttribute("data-field")).toBe("businessId");
   });
 });
 
@@ -985,5 +1029,474 @@ describe("late responses", () => {
     expect(store.getSnapshot().client).toBe(clientOfBruno);
     expect(serializeClient(clientOfBruno)).not.toContain("FAC-LATE");
     expect(serializeClient(clientOfBruno)).not.toContain("invoices");
+  });
+});
+
+// docs/rpa-selector-contract.md §3 «Crear factura»: state and outcome are
+// attributes, so a bot never decides from the Spanish text.
+describe("automation contract: state and outcome", () => {
+  const offline = () => {
+    throw new TypeError("Failed to fetch");
+  };
+  // Live regions with something to say (the empty field messages are silent).
+  const speaking = () =>
+    Array.from(root().querySelectorAll("[role='status'], [aria-live]")).filter(
+      (region) => region.textContent !== "",
+    );
+  const root = () =>
+    document.querySelector<HTMLElement>('[data-screen="invoice-create"]')!;
+  const stateOf = (element: HTMLElement) => element.getAttribute("data-state");
+
+  it("moves the screen and the form through idle, pending and success", async () => {
+    const answer = deferred<Response>();
+    createTransport(creator, () => answer.promise);
+    await openForm();
+    expect(stateOf(root())).toBe("idle");
+    expect(stateOf(screen.getByTestId("invoice-create-form"))).toBe("idle");
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    await waitFor(() => expect(stateOf(root())).toBe("pending"));
+    expect(stateOf(screen.getByTestId("invoice-create-form"))).toBe("pending");
+    await act(async () => answer.resolve(await created()));
+    await waitFor(() => expect(stateOf(root())).toBe("success"));
+    const result = screen.getByTestId("invoice-create-created");
+    expect(result.id).toBe("invoice-create-created");
+    expect(result.getAttribute("data-invoice-id")).toBe(invoice(1).id);
+    expect(result.getAttribute("data-business-id")).toBe("FAC-1");
+    expect(screen.queryByTestId("invoice-create-form")).toBeNull();
+  });
+
+  it("returns to idle with an empty form on «Crear otra»", async () => {
+    createTransport(creator, () => created());
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    fireEvent.click(await screen.findByTestId("invoice-create-another"));
+    expect(stateOf(root())).toBe("idle");
+    expect(stateOf(screen.getByTestId("invoice-create-form"))).toBe("idle");
+    expect(
+      (screen.getByTestId("invoice-create-business-id") as HTMLInputElement)
+        .value,
+    ).toBe("");
+  });
+
+  it("reports a field validation error as error without a request", async () => {
+    const transport = createTransport(creator, () => created());
+    await openForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    expect(stateOf(root())).toBe("error");
+    expect(stateOf(screen.getByTestId("invoice-create-form"))).toBe("error");
+    expect(screen.queryByTestId("invoice-create-failure")).toBeNull();
+    expect(posts(transport)).toHaveLength(0);
+  });
+
+  it.each<[string, () => Response, string, string, string]>([
+    [
+      "400",
+      () => errorResponse(400, "VALIDATION_ERROR"),
+      "rejected",
+      "400",
+      "VALIDATION_ERROR",
+    ],
+    [
+      "403",
+      () => errorResponse(403, "FORBIDDEN"),
+      "rejected",
+      "403",
+      "FORBIDDEN",
+    ],
+    [
+      "404",
+      () => errorResponse(404, "NOT_FOUND"),
+      "rejected",
+      "404",
+      "NOT_FOUND",
+    ],
+    [
+      "409 business id",
+      () => errorResponse(409, "BUSINESS_ID_CONFLICT"),
+      "rejected",
+      "409",
+      "BUSINESS_ID_CONFLICT",
+    ],
+    [
+      "409 idempotency",
+      () => errorResponse(409, "IDEMPOTENCY_CONFLICT"),
+      "burned",
+      "409",
+      "IDEMPOTENCY_CONFLICT",
+    ],
+    [
+      "410",
+      () => errorResponse(410, "INVOICE_DELETED"),
+      "burned",
+      "410",
+      "INVOICE_DELETED",
+    ],
+    [
+      "503",
+      () => errorResponse(503, "RETRYABLE_CONFLICT"),
+      "uncertain",
+      "503",
+      "RETRYABLE_CONFLICT",
+    ],
+    [
+      "500",
+      () => errorResponse(500, "INTERNAL_ERROR"),
+      "uncertain",
+      "500",
+      "INTERNAL_ERROR",
+    ],
+    ["network", offline as () => Response, "uncertain", "", "NETWORK"],
+  ])(
+    "tags a %s failure with its kind, status and code",
+    async (_name, respond, kind, status, code) => {
+      createTransport(creator, respond);
+      await openForm();
+      await fillForm();
+      fireEvent.click(screen.getByTestId("invoice-create-submit"));
+      const failure = await screen.findByTestId("invoice-create-failure");
+      expect(failure.getAttribute("role")).toBe("alert");
+      expect(failure.getAttribute("data-failure-kind")).toBe(kind);
+      expect(failure.getAttribute("data-error-status")).toBe(status);
+      expect(failure.getAttribute("data-error-code")).toBe(code);
+      expect(stateOf(root())).toBe("error");
+      expect(screen.queryByTestId("invoice-create-retry") !== null).toBe(
+        kind === "uncertain",
+      );
+      expect(screen.queryByTestId("invoice-create-confirm-new") !== null).toBe(
+        kind === "burned",
+      );
+      expect(
+        screen.queryByTestId("invoice-create-confirm-cancel") !== null,
+      ).toBe(kind === "burned");
+    },
+  );
+
+  it("keeps an unclassified throw uncertain (the key is retried) but not as NETWORK", async () => {
+    createTransport(creator, () => {
+      throw new SyntaxError("Unexpected end of JSON input");
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    const failure = await screen.findByTestId("invoice-create-failure");
+    expect(failure.getAttribute("data-failure-kind")).toBe("uncertain");
+    expect(failure.getAttribute("data-error-status")).toBe("");
+    expect(failure.getAttribute("data-error-code")).toBe("UNKNOWN");
+    expect(failure.textContent).not.toMatch(/No recibimos respuesta/);
+    expect(screen.queryByTestId("invoice-create-retry")).not.toBeNull();
+  });
+
+  it("keeps the code empty when the API sends none", async () => {
+    createTransport(creator, () => new Response("", { status: 502 }));
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    const failure = await screen.findByTestId("invoice-create-failure");
+    expect(failure.getAttribute("data-failure-kind")).toBe("uncertain");
+    expect(failure.getAttribute("data-error-status")).toBe("502");
+    expect(failure.getAttribute("data-error-code")).toBe("");
+  });
+
+  it("exposes no stale failure while a retry is out, and keeps the key", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    const transport = createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return offline();
+      return answer.promise;
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    const failure = await screen.findByTestId("invoice-create-failure");
+    expect(failure.getAttribute("data-failure-kind")).toBe("uncertain");
+    const box = failure.parentElement;
+    expect(box?.classList.contains("inbox-alert--pending")).toBe(false);
+    const retry = screen.getByTestId("invoice-create-retry");
+    fireEvent.click(retry);
+    await waitFor(() => expect(calls).toBe(2));
+    expect(stateOf(root())).toBe("pending");
+    expect(screen.queryByTestId("invoice-create-failure")).toBeNull();
+    expect(document.querySelector("[data-failure-kind]")).toBeNull();
+    // The slot keeps its place with a neutral status, not the stale failure.
+    const retrying = screen.getByTestId("invoice-create-retrying");
+    // The submit label is the single visible progress signal: no slot text.
+    expect(retrying.textContent).toBe("");
+    expect(screen.getByTestId("invoice-create-submit").textContent).toBe(
+      "Creando factura…",
+    );
+    // Neutral, not error-styled, on the same node that held the failure.
+    expect(retrying.parentElement).toBe(box);
+    expect(
+      retrying.parentElement?.classList.contains("inbox-alert--pending"),
+    ).toBe(true);
+    // One signal per event: only the persistent hidden region announces.
+    expect(retrying.hasAttribute("role")).toBe(false);
+    expect(retrying.closest("[role='status'], [aria-live]")).toBeNull();
+    const regions = speaking();
+    expect(regions).toHaveLength(1);
+    expect(regions[0].textContent).toBe("Creando la factura…");
+    expect(retrying.hasAttribute("data-error-status")).toBe(false);
+    expect(retrying.hasAttribute("data-error-code")).toBe(false);
+    // The button the person activated stays, so the focus is not lost.
+    expect(screen.getByTestId("invoice-create-retry")).toBe(retry);
+    await act(async () => answer.resolve(await created()));
+    await screen.findByTestId("invoice-create-created");
+    expect(screen.queryByTestId("invoice-create-retrying")).toBeNull();
+    const [first, second] = posts(transport);
+    expect(second.key).toBe(first.key);
+  });
+
+  it("keeps the alert slot, neutral and silent, while a resubmit after a rejection is out", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return errorResponse(403, "FORBIDDEN");
+      return answer.promise;
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    const failure = await screen.findByTestId("invoice-create-failure");
+    const slot = failure.parentElement;
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(stateOf(root())).toBe("pending");
+    expect(screen.queryByTestId("invoice-create-failure")).toBeNull();
+    expect(document.querySelector("[data-failure-kind]")).toBeNull();
+    const sending = screen.getByTestId("invoice-create-sending");
+    expect(sending.textContent).toBe("");
+    expect(
+      sending.parentElement?.classList.contains("inbox-alert--pending"),
+    ).toBe(true);
+    expect(sending.parentElement).toBe(slot);
+    expect(slot?.isConnected).toBe(true);
+    expect(sending.hasAttribute("role")).toBe(false);
+    expect(screen.queryByTestId("invoice-create-retrying")).toBeNull();
+    expect(speaking()).toHaveLength(1);
+    await act(async () => answer.resolve(await created()));
+    await screen.findByTestId("invoice-create-created");
+    expect(screen.queryByTestId("invoice-create-sending")).toBeNull();
+  });
+
+  it("holds the failure's height in the placeholder while a resubmit is out (CR-438)", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return errorResponse(403, "FORBIDDEN");
+      return answer.promise;
+    });
+    // jsdom has no layout: pretend the failure message wrapped to several
+    // lines. Only the failure node is faked; every other element measures as
+    // before (CR-448).
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.getAttribute("data-testid") === "invoice-create-failure"
+          ? ({ height: 48 } as DOMRect)
+          : original.call(this);
+      });
+    try {
+      await openForm();
+      await fillForm();
+      fireEvent.click(screen.getByTestId("invoice-create-submit"));
+      await screen.findByTestId("invoice-create-failure");
+      fireEvent.click(screen.getByTestId("invoice-create-submit"));
+      await waitFor(() => expect(calls).toBe(2));
+      const sending = screen.getByTestId("invoice-create-sending");
+      expect(sending.style.minHeight).toBe("48px");
+      await act(async () => answer.resolve(await created()));
+      await screen.findByTestId("invoice-create-created");
+      expect(screen.queryByTestId("invoice-create-sending")).toBeNull();
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
+  it("keeps the held failure height current when the failure resizes (CR-447)", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return errorResponse(403, "FORBIDDEN");
+      return answer.promise;
+    });
+    let height = 48;
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.getAttribute("data-testid") === "invoice-create-failure"
+          ? ({ height } as DOMRect)
+          : original.call(this);
+      });
+    const observers: Array<{
+      callback: () => void;
+      targets: Element[];
+      disconnected: boolean;
+    }> = [];
+    class FakeResizeObserver {
+      private readonly record: (typeof observers)[number];
+      constructor(callback: () => void) {
+        this.record = { callback, targets: [], disconnected: false };
+        observers.push(this.record);
+      }
+      observe(target: Element) {
+        this.record.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.record.disconnected = true;
+      }
+    }
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    try {
+      await openForm();
+      await fillForm();
+      fireEvent.click(screen.getByTestId("invoice-create-submit"));
+      const failure = await screen.findByTestId("invoice-create-failure");
+      const watching = observers.filter((o) => o.targets.includes(failure));
+      expect(watching).toHaveLength(1);
+      // The viewport narrowed: the message wraps to one more line.
+      height = 72;
+      act(() => watching[0]?.callback());
+      fireEvent.click(screen.getByTestId("invoice-create-submit"));
+      await waitFor(() => expect(calls).toBe(2));
+      expect(screen.getByTestId("invoice-create-sending").style.minHeight).toBe(
+        "72px",
+      );
+      expect(watching[0]?.disconnected).toBe(true);
+      await act(async () => answer.resolve(await created()));
+      await screen.findByTestId("invoice-create-created");
+    } finally {
+      vi.unstubAllGlobals();
+      measure.mockRestore();
+    }
+  });
+
+  it("keeps one silent, neutral signal while a confirmed new operation is out, then clears it", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    const transport = createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return errorResponse(409, "IDEMPOTENCY_CONFLICT");
+      return answer.promise;
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    await screen.findByTestId("invoice-create-failure");
+    fireEvent.click(screen.getByTestId("invoice-create-confirm-new"));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(stateOf(root())).toBe("pending");
+    const sending = screen.getByTestId("invoice-create-sending");
+    expect(sending.textContent).toBe("");
+    expect(sending.hasAttribute("role")).toBe(false);
+    expect(
+      sending.parentElement?.classList.contains("inbox-alert--pending"),
+    ).toBe(true);
+    expect(screen.queryByTestId("invoice-create-failure")).toBeNull();
+    expect(document.querySelector("[data-failure-kind]")).toBeNull();
+    expect(screen.queryByTestId("invoice-create-retrying")).toBeNull();
+    const regions = speaking();
+    expect(regions).toHaveLength(1);
+    expect(regions[0].textContent).toBe("Creando la factura…");
+    await act(async () => answer.resolve(await created()));
+    await screen.findByTestId("invoice-create-created");
+    expect(screen.queryByTestId("invoice-create-sending")).toBeNull();
+    expect(document.querySelector("[data-failure-kind]")).toBeNull();
+    const [first, second] = posts(transport);
+    expect(second.key).not.toBe(first.key);
+  });
+
+  it("keeps one silent, neutral signal while a new operation is confirmed after an uncertain failure (CR-440)", async () => {
+    const answer = deferred<Response>();
+    let calls = 0;
+    const transport = createTransport(creator, () => {
+      calls += 1;
+      if (calls === 1) return offline();
+      return answer.promise;
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    await screen.findByTestId("invoice-create-retry");
+    set("Monto en pesos (CLP)", "13.000");
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    fireEvent.click(await screen.findByTestId("invoice-create-confirm-new"));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(stateOf(root())).toBe("pending");
+    const sending = screen.getByTestId("invoice-create-sending");
+    expect(sending.textContent).toBe("");
+    expect(sending.hasAttribute("role")).toBe(false);
+    expect(
+      sending.parentElement?.classList.contains("inbox-alert--pending"),
+    ).toBe(true);
+    expect(screen.queryByTestId("invoice-create-failure")).toBeNull();
+    expect(screen.queryByTestId("invoice-create-retrying")).toBeNull();
+    expect(document.querySelector("[data-failure-kind]")).toBeNull();
+    const regions = speaking();
+    expect(regions).toHaveLength(1);
+    expect(regions[0].textContent).toBe("Creando la factura…");
+    await act(async () => answer.resolve(await created()));
+    await screen.findByTestId("invoice-create-created");
+    expect(screen.queryByTestId("invoice-create-sending")).toBeNull();
+    const [first, second] = posts(transport);
+    expect(second.key).toMatch(KEY_FORMAT);
+    expect(second.key).not.toBe(first.key);
+    expect(second.body.amountPesos).toBe(13000);
+  });
+
+  it("ties a duplicated number to the business id field as well", async () => {
+    createTransport(creator, () => errorResponse(409, "BUSINESS_ID_CONFLICT"));
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    const message = await waitFor(() => {
+      const element = screen.getByTestId("invoice-create-business-id-error");
+      expect(element.textContent).toMatch(/Ya existe una factura/);
+      return element;
+    });
+    expect(message.getAttribute("data-field")).toBe("businessId");
+    expect(
+      screen
+        .getByTestId("invoice-create-business-id")
+        .getAttribute("aria-invalid"),
+    ).toBe("true");
+  });
+
+  it("succeeds through «Reintentar» after an uncertain attempt", async () => {
+    let calls = 0;
+    createTransport(creator, () => {
+      calls += 1;
+      return calls === 1 ? offline() : created();
+    });
+    await openForm();
+    await fillForm();
+    fireEvent.click(screen.getByTestId("invoice-create-submit"));
+    fireEvent.click(await screen.findByTestId("invoice-create-retry"));
+    await waitFor(() => expect(stateOf(root())).toBe("success"));
+    expect(
+      screen
+        .getByTestId("invoice-create-created")
+        .getAttribute("data-invoice-id"),
+    ).toBe(invoice(1).id);
+  });
+
+  it("tags the missing-permission notice", async () => {
+    createTransport(
+      () => profileFixture({ memberships: [membership(norte, "USER")] }),
+      () => created(),
+    );
+    renderApp({ route: "/invoices/new" });
+    const notice = await screen.findByTestId("invoice-create-forbidden");
+    expect(notice.getAttribute("role")).toBe("alert");
+    expect(root().getAttribute("data-screen")).toBe("invoice-create");
+    expect(root().getAttribute("data-state")).toBe("idle");
   });
 });

@@ -17,7 +17,11 @@ export function SessionSkeleton() {
     return () => clearTimeout(timer);
   }, []);
   return (
-    <main className="session-skeleton" aria-label={STATUS_TEXT}>
+    <main
+      className="session-skeleton"
+      data-screen="loading"
+      aria-label={STATUS_TEXT}
+    >
       <p role="status" className="visually-hidden">
         {announced ? STATUS_TEXT : null}
       </p>

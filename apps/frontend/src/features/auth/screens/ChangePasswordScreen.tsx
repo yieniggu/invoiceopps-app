@@ -108,7 +108,11 @@ export function ChangePasswordScreen() {
   };
 
   return (
-    <main className="shell" aria-labelledby="password-change-title">
+    <main
+      className="shell"
+      data-screen="onboarding"
+      aria-labelledby="password-change-title"
+    >
       <div className="shell-toolbar">
         <ThemeToggle />
       </div>

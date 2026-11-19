@@ -2123,6 +2123,18 @@ input.secret-value {
   color: inherit;
 }
 
+.app-shell .inbox-alert--pending {
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* Reserves the failure line while a request is out, with no text. */
+.app-shell .inbox-alert-slot:empty {
+  /* Fallback for browsers without the lh unit (about one line of body text). */
+  min-height: 1.5em;
+  min-height: 1lh;
+}
+
 .invoice-skeleton {
   display: grid;
   gap: 0.5rem;

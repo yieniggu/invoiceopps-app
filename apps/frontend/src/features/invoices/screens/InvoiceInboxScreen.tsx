@@ -40,7 +40,15 @@ import type { InvoiceFilters, InvoiceScope } from "../types";
 
 /** Entry to the create form, offered only to someone who can create somewhere. */
 function NewInvoiceLink() {
-  return <LinkButton to={paths.newInvoice}>Nueva factura</LinkButton>;
+  return (
+    <LinkButton
+      id="invoices-new"
+      data-testid="invoices-new"
+      to={paths.newInvoice}
+    >
+      Nueva factura
+    </LinkButton>
+  );
 }
 
 function listErrorText(error: unknown, forbidden: boolean) {
@@ -138,6 +146,15 @@ function InvoiceInbox({
   const loadingRows =
     (page === undefined && query.isPending && !failed) ||
     (stale && page?.items.length === 0);
+  // One readable state for automation (docs/rpa-selector-contract.md §2.2):
+  // «ready» only once the rows or the empty state of the requested page are
+  // on screen and nothing is being fetched.
+  const resultsState =
+    failed && !query.isFetching
+      ? "error"
+      : query.isFetching || page === undefined || stale || outOfRange
+        ? "loading"
+        : "ready";
   const countText = stale
     ? "Actualizando…"
     : page
@@ -195,7 +212,14 @@ function InvoiceInbox({
         focusSearch={focusSearch}
       />
       {inverted ? (
-        <p role="alert" className="inbox-alert">
+        <p
+          id="invoices-results"
+          data-testid="invoices-results"
+          data-state="error"
+          data-error-kind="invalid-range"
+          role="alert"
+          className="inbox-alert"
+        >
           La fecha «Desde» no puede ser posterior a «Hasta».
         </p>
       ) : (
@@ -220,7 +244,13 @@ function InvoiceInbox({
           ) : null}
           {/* Mounted before it speaks: a region inserted with its text is not
               reliably announced. */}
-          <p role="status" className="visually-hidden">
+          <p
+            id="invoices-results"
+            data-testid="invoices-results"
+            data-state={resultsState}
+            role="status"
+            className="visually-hidden"
+          >
             {loadingRows ? "Cargando facturas…" : ""}
           </p>
           {loadingRows ? (
@@ -324,7 +354,7 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
   const canCreate = hasCreateAccess(profile);
 
   return (
-    <div className="screen-stack screen-fill">
+    <div className="screen-stack screen-fill" data-screen="invoices">
       <Toast message={notice.message} noticeId={notice.id} />
       {/* The status region stays mounted and only its content changes. */}
       <div role="status" className="groups-status">
@@ -351,13 +381,34 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
       {awaitingGroups ? (
         <>
           <PageHeader title="Facturas" />
-          <p role="status">Cargando facturas…</p>
+          {/* The anchor is always in the inbox (contract §3): loading until
+              the groups of the URL's organization are known. */}
+          <p
+            id="invoices-results"
+            data-testid="invoices-results"
+            data-state="loading"
+            role="status"
+          >
+            Cargando facturas…
+          </p>
         </>
       ) : selected === undefined ? (
         <>
           <PageHeader
             title="Facturas"
             action={canCreate ? <NewInvoiceLink /> : undefined}
+          />
+          {/* Nothing to wait for: the (empty) answer is already on screen.
+              No option means no organization-wide read and no group read in
+              any membership, so useInvoiceScopeOptions starts no groups query
+              (it only asks for organizations with organization read, which
+              always yield options). Loading or error cannot coexist with
+              "no scope", so "ready" is truthful. */}
+          <p
+            id="invoices-results"
+            data-testid="invoices-results"
+            data-state="ready"
+            className="visually-hidden"
           />
           <EmptyState
             compact

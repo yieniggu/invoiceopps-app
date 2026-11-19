@@ -4,24 +4,74 @@ import { ThemeToggle } from "../../../components/ThemeToggle";
 import { PasswordInput } from "../../../components/PasswordInput";
 import { RutField } from "../../../components/RutField";
 import { isValidRut } from "../../../lib/rut";
-import { isApiError } from "../api/apiError";
+import { isApiError, isNetworkFailure } from "../api/apiError";
 import { useLoginMutation } from "../hooks/useAuthMutations";
 import type { SessionEnd } from "../session/sessionStore";
 
-function authErrorMessage(error: unknown) {
-  if (!isApiError(error)) {
-    return "No fue posible conectar. Revisa tu conexión e intenta nuevamente.";
-  }
-  if (error.status === 429) {
-    return "Demasiados intentos. Espera unos minutos antes de intentar nuevamente.";
-  }
-  if (error.status === 403)
-    return "No fue posible autorizar el acceso. Recarga la página e intenta nuevamente.";
-  if (error.status === 401 || error.status === 400) {
-    return "Revisa el RUT y la contraseña e intenta nuevamente.";
-  }
-  return "No fue posible iniciar sesión. Intenta nuevamente más tarde.";
+/** Contract kind of a failed login (docs/rpa-selector-contract.md §2.2). */
+type AuthErrorKind =
+  "credentials" | "forbidden" | "rate-limited" | "network" | "unknown";
+
+interface AuthFailure {
+  kind: AuthErrorKind;
+  message: string;
+  /** HTTP status, or empty when no response arrived. */
+  status: string;
+  /** API error code, `NETWORK` without a response, empty when none was sent. */
+  code: string;
 }
+
+function describeAuthFailure(error: unknown): AuthFailure {
+  if (!isApiError(error) && !isNetworkFailure(error))
+    return {
+      kind: "unknown",
+      message: "No fue posible iniciar sesión. Intenta nuevamente más tarde.",
+      status: "",
+      code: "UNKNOWN",
+    };
+  if (!isApiError(error))
+    return {
+      kind: "network",
+      message:
+        "No fue posible conectar. Revisa tu conexión e intenta nuevamente.",
+      status: "",
+      code: "NETWORK",
+    };
+  const reply = { status: String(error.status), code: error.code ?? "" };
+  if (error.status === 429)
+    return {
+      kind: "rate-limited",
+      message:
+        "Demasiados intentos. Espera unos minutos antes de intentar nuevamente.",
+      ...reply,
+    };
+  if (error.status === 403)
+    return {
+      kind: "forbidden",
+      message:
+        "No fue posible autorizar el acceso. Recarga la página e intenta nuevamente.",
+      ...reply,
+    };
+  if (error.status === 401 || error.status === 400)
+    return {
+      kind: "credentials",
+      message: "Revisa el RUT y la contraseña e intenta nuevamente.",
+      ...reply,
+    };
+  return {
+    kind: "unknown",
+    message: "No fue posible iniciar sesión. Intenta nuevamente más tarde.",
+    ...reply,
+  };
+}
+
+/** Why the login screen is shown, for automation (`data-auth-reason`). */
+const authReason = (endedBy: SessionEnd | null) =>
+  endedBy === "logout"
+    ? "logout"
+    : endedBy === "unauthorized"
+      ? "expired"
+      : "none";
 
 export function AuthScreen({
   onLogin,
@@ -40,6 +90,14 @@ export function AuthScreen({
   const rutInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
   const pending = login.isPending;
+  const failure = login.isError ? describeAuthFailure(login.error) : undefined;
+  const formState = pending
+    ? "pending"
+    : login.isSuccess
+      ? "success"
+      : failure
+        ? "error"
+        : "idle";
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,7 +133,12 @@ export function AuthScreen({
   };
 
   return (
-    <main className="shell" aria-labelledby="auth-title">
+    <main
+      className="shell"
+      data-screen="auth"
+      data-auth-reason={authReason(endedBy)}
+      aria-labelledby="auth-title"
+    >
       <div className="shell-toolbar">
         <ThemeToggle />
       </div>
@@ -87,12 +150,17 @@ export function AuthScreen({
           : "Tu sesión no está disponible o expiró."}
       </p>
       <form
+        id="login-form"
+        data-testid="login-form"
+        data-state={formState}
         onSubmit={submit}
         noValidate
         aria-labelledby="auth-title"
         aria-busy={pending}
       >
         <RutField
+          id="login-rut"
+          name="rut"
           label="RUT"
           autoComplete="username"
           value={rut}
@@ -103,6 +171,8 @@ export function AuthScreen({
           required
         />
         <PasswordInput
+          id="login-password"
+          name="password"
           label="Contraseña"
           inputRef={passwordInput}
           autoComplete="current-password"
@@ -116,15 +186,35 @@ export function AuthScreen({
           aria-invalid={passwordMissing}
           aria-describedby="login-password-error"
         />
-        <p id="login-password-error" className="field-error" aria-live="polite">
+        <p
+          id="login-password-error"
+          data-testid="login-password-error"
+          data-field="password"
+          className="field-error"
+          aria-live="polite"
+        >
           {passwordMissing ? "Ingresa tu contraseña" : ""}
         </p>
-        <button type="submit" disabled={pending}>
+        <button
+          id="login-submit"
+          data-testid="login-submit"
+          type="submit"
+          disabled={pending}
+        >
           {pending ? "Iniciando sesión..." : "Iniciar sesión"}
         </button>
         {pending ? <p role="status">Iniciando sesión...</p> : null}
-        {login.isError ? (
-          <p role="alert">{authErrorMessage(login.error)}</p>
+        {failure ? (
+          <p
+            id="login-error"
+            data-testid="login-error"
+            data-error-kind={failure.kind}
+            data-error-status={failure.status}
+            data-error-code={failure.code}
+            role="alert"
+          >
+            {failure.message}
+          </p>
         ) : null}
       </form>
     </main>
