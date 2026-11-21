@@ -117,6 +117,7 @@ describe("RP0-22 profile memberships with permissions", () => {
     createInvoices: false,
     deleteOwnInvoices: false,
     deleteOthersInvoices: false,
+    deployModels: false,
   };
   const mk = (name: string, enabled = true) =>
     prisma.organization.create({
@@ -163,7 +164,11 @@ describe("RP0-22 profile memberships with permissions", () => {
         },
       });
     await join(beta, { createInvoices: true });
-    await join(alpha, { deleteOwnInvoices: true, deleteOthersInvoices: true });
+    await join(alpha, {
+      deleteOwnInvoices: true,
+      deleteOthersInvoices: true,
+      deployModels: false,
+    });
     await join(hidden, { deleteOwnInvoices: true });
 
     const login = await auth.login({
@@ -175,7 +180,12 @@ describe("RP0-22 profile memberships with permissions", () => {
     expect(profile).not.toHaveProperty("contexts");
     expect(profile.memberships).toEqual([
       {
-        organization: { id: orgA.id, name: "Alpha", slug: orgA.slug },
+        organization: {
+          id: orgA.id,
+          name: "Alpha",
+          slug: orgA.slug,
+          mlEnabled: false,
+        },
         role: "USER",
         permissions: { ...NONE, readInvoices: true },
         groups: [
@@ -185,12 +195,14 @@ describe("RP0-22 profile memberships with permissions", () => {
               ...NONE,
               deleteOwnInvoices: true,
               deleteOthersInvoices: true,
+              deployModels: false,
             },
             effective: {
               readInvoices: true,
               createInvoices: false,
               deleteOwnInvoices: true,
               deleteOthersInvoices: true,
+              deployModels: false,
             },
           },
           {
@@ -209,6 +221,7 @@ describe("RP0-22 profile memberships with permissions", () => {
           id: orgDisabled.id,
           name: "Disabled",
           slug: orgDisabled.slug,
+          mlEnabled: false,
         },
         role: "ADMIN",
         permissions: { ...NONE, readInvoices: true, createInvoices: true },
@@ -296,6 +309,44 @@ describe("RP0-04 session expiry while onboarding", () => {
 });
 
 describe("RP0-04 change-password over HTTP", () => {
+  it("answers 400 INVALID_CURRENT_PASSWORD for a wrong current password and keeps the session and password", async () => {
+    const user = await createUser("temporary-password-1", {
+      temporaryExpiresInMs: 2 * HOUR,
+    });
+    const app = createApp(database, auth);
+    const login = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ rut: user.rut, password: "temporary-password-1" });
+    const cookie = String(login.headers["set-cookie"]).split(";")[0];
+    const before = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { passwordHash: true },
+    });
+
+    const wrong = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set(SAME_ORIGIN)
+      .set("Cookie", cookie)
+      .send({
+        currentPassword: "not-the-temporary-1",
+        newPassword: "a-different-password-9",
+      });
+
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error.code).toBe("INVALID_CURRENT_PASSWORD");
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+    expect(
+      (await request(app).get("/api/v1/auth/profile").set("Cookie", cookie))
+        .status,
+    ).toBe(200);
+    expect(await sessionCount(user.id)).toBe(1);
+    const after = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { passwordHash: true },
+    });
+    expect(after.passwordHash).toBe(before.passwordHash);
+  });
+
   it("rejects reuse, then rotates the session and revokes tokens", async () => {
     const user = await createUser("temporary-password-1", {
       temporaryExpiresInMs: 2 * HOUR,

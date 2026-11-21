@@ -166,19 +166,27 @@ const flags = {
   createInvoices: false,
   deleteOwnInvoices: true,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const allFalse = {
   readInvoices: false,
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const permissionCases: Case[] = [
   ["all four flags", { permissions: flags }, flags],
   ["all false", { permissions: allFalse }, allFalse],
   [
     "missing flag",
-    { permissions: { ...flags, deleteOthersInvoices: undefined } },
+    {
+      permissions: {
+        ...flags,
+        deleteOthersInvoices: undefined,
+        deployModels: false,
+      },
+    },
     "reject",
   ],
   [

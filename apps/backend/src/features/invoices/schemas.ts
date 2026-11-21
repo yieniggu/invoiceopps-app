@@ -5,6 +5,7 @@ import {
   paginationResponseShape,
 } from "../../pagination.js";
 import { hasNoNul, NO_NUL } from "../../text.js";
+import { PredictionSchema } from "../predictions/schemas.js";
 
 const MAX_AMOUNT_PESOS = 2_147_483_647;
 
@@ -174,10 +175,17 @@ export const InvoiceViewSchema = InvoiceSchema.extend({
 });
 
 export const InvoiceViewResponseSchema = z
-  .object({ invoice: InvoiceViewSchema })
+  .object({
+    invoice: InvoiceViewSchema,
+    predictions: z.array(PredictionSchema).optional().meta({
+      description:
+        "Automatic predictions of the invoice, oldest first. Present only while the organization's Models section (mlEnabled) is on; visible to whoever can read the invoice.",
+    }),
+  })
   .meta({
     id: "InvoiceViewResponse",
-    description: "Envelope of one invoice as read.",
+    description:
+      "Envelope of one invoice as read, with its automatic predictions when the Models section is on.",
   });
 
 const ungrouped = z

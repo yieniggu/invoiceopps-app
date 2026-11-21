@@ -7,7 +7,14 @@ import { loadEffectivePermissions } from "../groups/invoice-permissions.js";
 import { lockMembershipsForInvoiceWrite } from "../groups/locks.js";
 import { validateTokenExpiry } from "./authorization.js";
 import { generateTokenSecret } from "./secret.js";
-import { FLAG_BY_SCOPE, fromStoredScopes, toStoredScopes } from "./scopes.js";
+import { hasMlflowAccess } from "./mlflow-access.js";
+import {
+  FLAG_BY_SCOPE,
+  fromStoredScopes,
+  isInvoiceScope,
+  isMlflowScope,
+  toStoredScopes,
+} from "./scopes.js";
 import type {
   ApiTokenCreatedResponse,
   ApiTokenCreateRequest,
@@ -129,7 +136,19 @@ export function createApiTokenService(prisma: PrismaClient): ApiTokenService {
       groupId,
     });
     const expiresAt = new Date(request.expiresAt);
-    if (request.scopes.some((scope) => !permissions[FLAG_BY_SCOPE[scope]])) {
+    // Invoice scopes need the matching permission flag; MLflow scopes need an
+    // active membership of the context (see hasMlflowAccess).
+    const exceedsInvoicePermissions = request.scopes
+      .filter(isInvoiceScope)
+      .some((scope) => !permissions[FLAG_BY_SCOPE[scope]]);
+    const exceedsMlflowAccess =
+      request.scopes.some(isMlflowScope) &&
+      !(await hasMlflowAccess(transaction, {
+        userId,
+        organizationId,
+        groupId,
+      }));
+    if (exceedsInvoicePermissions || exceedsMlflowAccess) {
       throw new ApiError(
         403,
         "FORBIDDEN",

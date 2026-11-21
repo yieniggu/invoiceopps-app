@@ -22,6 +22,7 @@ const NO_FLAGS = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const MISSING_ORG = "00000000-0000-4000-8000-000000000000";
 

@@ -27,6 +27,38 @@ const VALID = {
   businessStatus: "PENDING",
 };
 
+const FLAGS = {
+  readInvoices: true,
+  createInvoices: true,
+  deleteOwnInvoices: true,
+  deleteOthersInvoices: false,
+  deployModels: false,
+};
+
+/**
+ * Reads the unlocked authorization preflight performs before the Deployment
+ * read (CR-533). `member: false` makes it answer 404, `createInvoices: false`
+ * 403.
+ */
+function preflightReads(
+  options: { member?: boolean; createInvoices?: boolean } = {},
+) {
+  const { member = true, createInvoices = true } = options;
+  const permissions = { ...FLAGS, createInvoices };
+  return {
+    organization: { findUnique: vi.fn(async () => ({ enabled: true })) },
+    user: {
+      findUnique: vi.fn(async () => ({ mustChangePassword: false })),
+    },
+    organizationMembership: {
+      findFirst: vi.fn(async () => (member ? { id: "m1" } : null)),
+      findUnique: vi.fn(async () => (member ? permissions : null)),
+    },
+    group: { findFirst: vi.fn(async () => ({ id: GROUP_ID })) },
+    groupMembership: { findFirst: vi.fn(async () => null) },
+  };
+}
+
 function parse(body: unknown) {
   return InvoiceCreateRequestSchema.safeParse(body);
 }
@@ -240,7 +272,9 @@ describe("createInvoice unique-violation retries (CR-326)", () => {
       throw Object.assign(new Error("unique"), { code: "P2002" });
     });
     const service = createInvoiceCreateService({
+      ...preflightReads(),
       $transaction: transaction,
+      deployment: { findMany: vi.fn(async () => []) },
     } as unknown as PrismaClient);
 
     const outcome = service.createInvoice(
@@ -261,5 +295,83 @@ describe("createInvoice unique-violation retries (CR-326)", () => {
       operation: "invoice_create",
       outcome: "gave_up",
     });
+  });
+});
+
+describe("createInvoice eligible deployments (CR-505)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads the eligible deployments once, before the SERIALIZABLE transaction opens", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const order: string[] = [];
+    const findMany = vi.fn(async () => {
+      order.push("read deployments");
+      return [];
+    });
+    const transaction = vi.fn(async () => {
+      order.push("transaction");
+      throw Object.assign(new Error("unique"), { code: "P2002" });
+    });
+    const service = createInvoiceCreateService({
+      ...preflightReads(),
+      $transaction: transaction,
+      deployment: { findMany },
+    } as unknown as PrismaClient);
+
+    await service
+      .createInvoice(
+        "44444444-4444-4444-8444-444444444444",
+        InvoiceCreateRequestSchema.parse(VALID),
+        "a".repeat(16),
+        null,
+      )
+      .catch(() => undefined);
+
+    // Three transaction attempts, a single read, and it came first.
+    expect(order).toEqual([
+      "read deployments",
+      "transaction",
+      "transaction",
+      "transaction",
+    ]);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "ACTIVE",
+          inferenceEnabled: true,
+          organization: { mlEnabled: true },
+        }),
+      }),
+    );
+  });
+});
+
+describe("createInvoice reads no Deployment when rejected (CR-533)", () => {
+  const rejected = [
+    ["a non-member (404)", { member: false }, 404],
+    ["an actor without createInvoices (403)", { createInvoices: false }, 403],
+  ] as const;
+
+  it.each(rejected)("%s", async (_label, options, status) => {
+    const findMany = vi.fn(async () => []);
+    const transaction = vi.fn();
+    const service = createInvoiceCreateService({
+      ...preflightReads(options),
+      $transaction: transaction,
+      deployment: { findMany },
+    } as unknown as PrismaClient);
+
+    await expect(
+      service.createInvoice(
+        "44444444-4444-4444-8444-444444444444",
+        InvoiceCreateRequestSchema.parse(VALID),
+        "a".repeat(16),
+        null,
+      ),
+    ).rejects.toMatchObject({ status });
+    expect(findMany).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

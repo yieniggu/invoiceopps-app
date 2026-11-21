@@ -67,6 +67,7 @@ describe("AC-16 OpenAPI documentation for the Swagger UI", () => {
         "Admin users",
         "Invoices",
         "API tokens",
+        "Models",
       ]),
     );
   });

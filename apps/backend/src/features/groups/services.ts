@@ -14,6 +14,7 @@ import {
   NO_INVOICE_PERMISSIONS,
   PERMISSION_SELECT,
   permissionsOf,
+  type InvoicePermissionsUpdate,
   type InvoicePermissions,
 } from "./invoice-permissions.js";
 import {
@@ -57,6 +58,7 @@ function toGroupMembershipDto(row: {
   createInvoices: boolean;
   deleteOwnInvoices: boolean;
   deleteOthersInvoices: boolean;
+  deployModels: boolean;
 }): GroupMembershipDto {
   return {
     userId: row.userId,
@@ -82,7 +84,7 @@ export interface GroupService {
     organizationId: string,
     groupId: string,
     userId: string,
-    permissions: InvoicePermissions,
+    permissions: InvoicePermissionsUpdate,
   ): Promise<GroupMembershipDto>;
   listMemberships(
     actorUserId: string,
@@ -108,7 +110,7 @@ export interface GroupService {
     organizationId: string,
     groupId: string,
     userIds: string[],
-    permissions: InvoicePermissions,
+    permissions: InvoicePermissionsUpdate,
   ): Promise<GroupMembershipDto[]>;
   removeMember(
     actorUserId: string,
@@ -202,10 +204,12 @@ export function createGroupService(prisma: PrismaClient): GroupService {
               data: permissions,
               select: GROUP_MEMBERSHIP_SELECT,
             });
+            // Audited with the stored flags (an omitted deployModels shows its
+            // unchanged value).
             await auditPermissionsChanged(
               transaction,
               { actorUserId, organizationId, groupId },
-              [{ userId, permissions }],
+              [{ userId, permissions: permissionsOf(updated) }],
             );
             return toGroupMembershipDto(updated);
           }, SERIALIZABLE),
@@ -409,16 +413,19 @@ export function createGroupService(prisma: PrismaClient): GroupService {
               where: { groupId, userId: { in: userIds } },
               data: permissions,
             });
-            await auditPermissionsChanged(
-              transaction,
-              { actorUserId, organizationId, groupId },
-              userIds.map((id) => ({ userId: id, permissions })),
-            );
             const rows = await transaction.groupMembership.findMany({
               where: { groupId, userId: { in: userIds } },
               select: GROUP_MEMBERSHIP_SELECT,
             });
             const byUser = new Map(rows.map((row) => [row.userId, row]));
+            await auditPermissionsChanged(
+              transaction,
+              { actorUserId, organizationId, groupId },
+              userIds.map((id) => ({
+                userId: id,
+                permissions: permissionsOf(byUser.get(id)!),
+              })),
+            );
             return userIds.map((id) => toGroupMembershipDto(byUser.get(id)!));
           }, SERIALIZABLE),
         undefined,

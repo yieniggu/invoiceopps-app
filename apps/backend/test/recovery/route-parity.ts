@@ -32,6 +32,12 @@ export const DEFAULT_PARITY_EXCLUSIONS: readonly string[] = [
   "/health/live",
   "/health/ready",
   "/openapi.json",
+  // Private service-to-service routes (MLOPS-01): never documented publicly.
+  "/internal/api-tokens/introspect",
+  "/internal/sessions/introspect",
+  // MLflow SSO handoff (service-credential only; GET /api/v1/mlflow/authorize is documented).
+  "/internal/sessions/exchange",
+  "/internal/sessions/revoke",
   // Swagger UI (public, outside the API): the page and its local assets.
   "/docs",
   "/docs/swagger-initializer.js",

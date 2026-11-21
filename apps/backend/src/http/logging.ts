@@ -23,12 +23,29 @@ export interface LogFields {
   targetUserId?: string;
   invoiceId?: string;
   tokenId?: string;
+  deploymentId?: string;
+  predictionId?: string;
   /** Transaction conflicts: fixed operation label, attempt and outcome (plus `reason`). */
   operation?: string;
   attempt?: number;
   outcome?: string;
+  /** Organization updates: which fields changed, and the ML switch's old and new value. */
+  changedFields?: string[];
+  mlEnabledFrom?: boolean;
+  mlEnabledTo?: boolean;
   /** Bulk audit events: how many memberships the batch touched. */
   memberCount?: number;
+  /** Prediction queue gauges (PENDING count, oldest PENDING age, FAILED in a window). */
+  pendingCount?: number;
+  oldestPendingAgeSeconds?: number;
+  failedInWindow?: number;
+  windowSeconds?: number;
+  threshold?: number;
+  /** Models reconcile: how much one run changed. */
+  sweptCount?: number;
+  quarantinedCount?: number;
+  unloadedCount?: number;
+  reloadedCount?: number;
 }
 
 export function logEvent(

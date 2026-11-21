@@ -55,7 +55,7 @@ export function createApiTokenOperations(
         ),
         401: unauthenticatedResponse,
         403: forbiddenResponse(
-          "a requested scope exceeds the caller's current invoice permissions in the token's scope (organization flags for an organization token; organization OR group flags for a group token). An API token (Bearer) cannot call this operation",
+          "a requested scope exceeds the caller's current rights in the token's scope: invoices:* scopes need the matching invoice permission (organization flags for an organization token; organization OR group flags for a group token); mlflow:read and mlflow:write need an active membership of the organization (and of the group for a group token), whatever the invoice flags. An API token (Bearer) cannot call this operation",
         ),
         404: notFoundResponse(
           "the organization does not exist or the caller is not a member (the platform administrator has no implicit membership), or the group does not belong to the organization; all answer the same body",

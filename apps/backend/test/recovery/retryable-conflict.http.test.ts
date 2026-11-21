@@ -45,6 +45,7 @@ const FLAGS = {
   createInvoices: true,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 // Every serializable transaction loses to a concurrent writer (Prisma P2034).
@@ -89,6 +90,7 @@ const OPERATIONS = [
         createInvoices: true,
         deleteOwnInvoices: false,
         deleteOthersInvoices: false,
+        deployModels: false,
       },
     },
   ],
@@ -101,6 +103,7 @@ const OPERATIONS = [
         createInvoices: true,
         deleteOwnInvoices: false,
         deleteOthersInvoices: false,
+        deployModels: false,
       },
     },
   ],

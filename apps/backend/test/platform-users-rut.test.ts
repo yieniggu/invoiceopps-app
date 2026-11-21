@@ -115,6 +115,7 @@ describe("RV-081 POST /organizations/{organizationId}/users RUT contract", () =>
         createInvoices: false,
         deleteOwnInvoices: false,
         deleteOthersInvoices: false,
+        deployModels: false,
       },
     });
     expect(typeof response.body.temporaryPassword).toBe("string");

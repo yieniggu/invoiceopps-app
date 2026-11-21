@@ -4,7 +4,12 @@ import type { AuthRateLimiter } from "../../auth-rate-limit.js";
 import { parseRut } from "../../rut.js";
 import { ApiError, parseWith, sendError } from "../../http/errors.js";
 import { logEvent, requestFields } from "../../http/logging.js";
-import { AuthError, type AuthProfile, type AuthService } from "./services.js";
+import {
+  AuthError,
+  hashSessionToken,
+  type AuthProfile,
+  type AuthService,
+} from "./services.js";
 import {
   LoginRequestSchema,
   PasswordChangeRequestSchema,
@@ -35,6 +40,7 @@ export function toAuthProfileDto(profile: AuthProfile): AuthProfileDto {
         id: membership.organization.id,
         name: membership.organization.name,
         slug: membership.organization.slug,
+        mlEnabled: membership.organization.mlEnabled ?? false,
       },
       role: membership.role,
       permissions: { ...membership.permissions },
@@ -177,20 +183,54 @@ export function createAuthController(
       .json(profileResponse(await service.updateProfile(sessionToken, input)));
   };
 
+  /**
+   * The current password is a credential check, so a stolen session could
+   * guess it. Wrong guesses are limited per session (the hashed token, never
+   * the token itself) with the login limiter's budget and window; the
+   * reservation is made before any await, kept only for a wrong current
+   * password, and given back for every other outcome (success, validation, an
+   * expired session, a server failure), so only guesses consume budget.
+   */
   const changePassword: RequestHandler = async (request, response) => {
     const { sessionToken } = requireSession(auth, request.headers.cookie);
     if (!auth?.changePassword) {
       throw new AuthError(401, "Unauthenticated");
     }
-
-    const rotated = await auth.changePassword(
-      sessionToken,
-      parseWith(
-        PasswordChangeRequestSchema,
-        request.body,
-        "Invalid password change",
-      ),
+    const input = parseWith(
+      PasswordChangeRequestSchema,
+      request.body,
+      "Invalid password change",
     );
+
+    const key = `change-password:s:${hashSessionToken(sessionToken)}`;
+    if (limiter.isBlocked(key)) {
+      logEvent("warn", "auth.rate_limited", {
+        ...requestFields(request),
+        code: "RATE_LIMITED",
+        scope: "change_password",
+      });
+      sendError(
+        response,
+        429,
+        "RATE_LIMITED",
+        "Too many attempts; wait before trying again",
+      );
+      return;
+    }
+    limiter.recordFailure(key);
+
+    let rotated;
+    try {
+      rotated = await auth.changePassword(sessionToken, input);
+    } catch (error) {
+      if (!(
+        error instanceof AuthError && error.code === "INVALID_CURRENT_PASSWORD"
+      )) {
+        limiter.refund(key);
+      }
+      throw error;
+    }
+    limiter.reset(key);
     if (rotated) setSessionCookie(response, rotated.sessionToken);
     logEvent("info", "auth.password_changed", requestFields(request));
     response.status(204).end();

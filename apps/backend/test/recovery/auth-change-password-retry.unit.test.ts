@@ -182,3 +182,43 @@ describe("changePassword retry (CR-351)", () => {
     expect(response.body.error.code).toBe("RETRYABLE_CONFLICT");
   });
 });
+
+describe("changePassword with a wrong current password", () => {
+  it("answers 400 INVALID_CURRENT_PASSWORD, not 401, and changes nothing", async () => {
+    const { auth, prisma, created } = fixture(0);
+    const app = createApp(
+      { isReady: async () => true, prisma: prisma as never },
+      auth,
+    );
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set(SAME_ORIGIN)
+      .set("Cookie", `invoiceops_session=${SESSION}`)
+      .send({ currentPassword: "not-the-current-1", newPassword: NEXT });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_CURRENT_PASSWORD");
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(created.passwordHashes).toEqual([]);
+    expect(created.sessions).toEqual([]);
+  });
+
+  it("keeps 401 for a session that does not exist", async () => {
+    const { auth, prisma } = fixture(0);
+    prisma.session.findUnique.mockResolvedValueOnce(null as never);
+    const app = createApp(
+      { isReady: async () => true, prisma: prisma as never },
+      auth,
+    );
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set(SAME_ORIGIN)
+      .set("Cookie", `invoiceops_session=${SESSION}`)
+      .send({ currentPassword: CURRENT, newPassword: NEXT });
+
+    expect(response.status).toBe(401);
+  });
+});

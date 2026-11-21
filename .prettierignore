@@ -6,3 +6,7 @@ apps/e2e/demo-output/
 # Bot outputs (apps/e2e/.gitignore keeps them out of git)
 apps/e2e/**/*.results.json
 apps/e2e/**/*.tmp-*
+
+# Byte-identical copies of invoiceops-ml fixtures, pinned by sha256 in tests.
+apps/backend/test/fixtures/supplier_key_vectors.json
+apps/backend/test/fixtures/feature_vectors.json

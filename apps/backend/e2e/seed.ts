@@ -7,6 +7,7 @@ import {
   e2eDatabaseName,
 } from "../scripts/recovery-db-guards.mjs";
 import { createDatabase } from "../src/database.js";
+import { supplierKey } from "../src/supplier-key.js";
 import { hashPassword } from "../src/features/auth/services.js";
 import {
   ALL_FLAGS,
@@ -119,6 +120,7 @@ async function main() {
         groupId: accounting.id,
         scopeKey: accounting.id,
         supplierName: invoice.supplier,
+        supplierKey: supplierKey(invoice.supplier),
         amountPesos: invoice.amount,
         currency: "CLP",
         issuedOn: day(`2026-09-0${index + 1}`),

@@ -15,12 +15,14 @@ export const NO_FLAGS = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 export const ALL_FLAGS = {
   readInvoices: true,
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 
 export function randomRut() {

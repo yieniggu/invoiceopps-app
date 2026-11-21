@@ -9,7 +9,11 @@ import {
 } from "../../generated/prisma/client.js";
 import { logEvent } from "../../http/logging.js";
 import { formatRut, parseRut } from "../../rut.js";
-import { runSerializable } from "../../transactions.js";
+import {
+  mapTransactionTimeout,
+  runSerializable,
+  TRANSACTION_TIMING,
+} from "../../transactions.js";
 import {
   PERMISSION_SELECT,
   permissionsOf,
@@ -63,7 +67,13 @@ export interface AuthProfileGroup {
 }
 
 export interface AuthProfileMembership {
-  organization: { id: string; name: string; slug: string };
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    /** Absent (fakes, older callers) means off. */
+    mlEnabled?: boolean;
+  };
   role: OrganizationRole;
   /** Flags of the organization membership alone. */
   permissions: InvoicePermissions;
@@ -106,7 +116,8 @@ export class AuthError extends Error {
     readonly status: 400 | 401 | 403 | 404 | 409,
     message: string,
     /** Overrides the default status-derived public error code. */
-    readonly code?: "PASSWORD_REUSE" | "USER_CONFLICT",
+    readonly code?:
+      "PASSWORD_REUSE" | "INVALID_CURRENT_PASSWORD" | "USER_CONFLICT",
   ) {
     super(message);
   }
@@ -284,6 +295,7 @@ export function createAuthService(
                     name: true,
                     slug: true,
                     enabled: true,
+                    mlEnabled: true,
                   },
                 },
                 groupMemberships: {
@@ -327,6 +339,7 @@ export function createAuthService(
             id: membership.organization.id,
             name: membership.organization.name,
             slug: membership.organization.slug,
+            mlEnabled: membership.organization.mlEnabled,
           },
           role: membership.role,
           permissions: organizationMembership.permissions,
@@ -401,54 +414,59 @@ export function createAuthService(
       const sessionToken = randomBytes(32).toString("base64url");
       // The password was verified outside the transaction (scrypt is slow);
       // under the user lock the credential is re-read and must be unchanged.
-      await prisma.$transaction(async (transaction) => {
-        await lockUser(transaction, user.id);
-        const current = await transaction.user.findUnique({
-          where: { id: user.id },
-          select: {
-            rut: true,
-            passwordHash: true,
-            mustChangePassword: true,
-            temporaryPasswordExpiresAt: true,
-            disabledAt: true,
-          },
-        });
-        const at = now();
-        // A RUT change revokes credentials under this same lock: a login that
-        // authenticated with the old RUT must not leave a session behind.
-        if (
-          !current ||
-          current.disabledAt ||
-          current.rut !== user.rut ||
-          current.passwordHash !== user.passwordHash ||
-          temporaryPasswordExpired(current, at)
-        ) {
-          throw new AuthError(401, INVALID_CREDENTIALS);
-        }
+      await mapTransactionTimeout(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            await lockUser(transaction, user.id);
+            const current = await transaction.user.findUnique({
+              where: { id: user.id },
+              select: {
+                rut: true,
+                passwordHash: true,
+                mustChangePassword: true,
+                temporaryPasswordExpiresAt: true,
+                disabledAt: true,
+              },
+            });
+            const at = now();
+            // A RUT change revokes credentials under this same lock: a login that
+            // authenticated with the old RUT must not leave a session behind.
+            if (
+              !current ||
+              current.disabledAt ||
+              current.rut !== user.rut ||
+              current.passwordHash !== user.passwordHash ||
+              temporaryPasswordExpired(current, at)
+            ) {
+              throw new AuthError(401, INVALID_CREDENTIALS);
+            }
 
-        const expiresAt = new Date(at.getTime() + SESSION_LIFETIME_MS);
-        await transaction.session.create({
-          data: {
-            tokenHash: hashSessionToken(sessionToken),
-            userId: user.id,
-            expiresAt:
-              current.mustChangePassword && current.temporaryPasswordExpiresAt
-                ? new Date(
-                    Math.min(
-                      expiresAt.getTime(),
-                      current.temporaryPasswordExpiresAt.getTime(),
-                    ),
-                  )
-                : expiresAt,
-          },
-        });
-        // Also commits a write on the locked User row: SERIALIZABLE admin
-        // transactions that locked it after their snapshot abort and retry.
-        await transaction.user.update({
-          where: { id: user.id },
-          data: { lastActiveAt: at },
-        });
-      });
+            const expiresAt = new Date(at.getTime() + SESSION_LIFETIME_MS);
+            await transaction.session.create({
+              data: {
+                tokenHash: hashSessionToken(sessionToken),
+                userId: user.id,
+                expiresAt:
+                  current.mustChangePassword &&
+                  current.temporaryPasswordExpiresAt
+                    ? new Date(
+                        Math.min(
+                          expiresAt.getTime(),
+                          current.temporaryPasswordExpiresAt.getTime(),
+                        ),
+                      )
+                    : expiresAt,
+              },
+            });
+            // Also commits a write on the locked User row: SERIALIZABLE admin
+            // transactions that locked it after their snapshot abort and retry.
+            await transaction.user.update({
+              where: { id: user.id },
+              data: { lastActiveAt: at },
+            });
+          }, TRANSACTION_TIMING),
+        "login",
+      );
 
       return {
         sessionToken,
@@ -514,7 +532,13 @@ export function createAuthService(
       }
       const currentHash = session.user.passwordHash;
       if (!(await passwordVerifier(input.currentPassword, currentHash))) {
-        throw new AuthError(401, INVALID_CREDENTIALS);
+        // The session is valid; only the typed current password is wrong, so
+        // this must not look like an expired session (401) to the client.
+        throw new AuthError(
+          400,
+          "The current password is incorrect.",
+          "INVALID_CURRENT_PASSWORD",
+        );
       }
       if (await passwordVerifier(input.newPassword, currentHash)) {
         throw new AuthError(

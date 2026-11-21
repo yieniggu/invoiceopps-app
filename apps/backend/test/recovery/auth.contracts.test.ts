@@ -25,6 +25,7 @@ describe("RP0-04 auth OpenAPI contract", () => {
       expect.arrayContaining([
         "AMBIGUOUS_AUTH",
         "PASSWORD_REUSE",
+        "INVALID_CURRENT_PASSWORD",
         "ONBOARDING_REQUIRED",
         "UNAUTHENTICATED",
         "FORBIDDEN_ORIGIN",
@@ -69,6 +70,7 @@ describe("RP0-04 auth OpenAPI contract", () => {
         "createInvoices",
         "deleteOthersInvoices",
         "deleteOwnInvoices",
+        "deployModels",
         "readInvoices",
       ]);
     }
@@ -89,6 +91,9 @@ describe("RP0-04 auth OpenAPI contract", () => {
       ],
     ).toBeDefined();
     expect(String(responses["400"].description)).toContain("PASSWORD_REUSE");
+    expect(String(responses["400"].description)).toContain(
+      "INVALID_CURRENT_PASSWORD",
+    );
   });
 
   it("documents AMBIGUOUS_AUTH on every auth operation", async () => {

@@ -58,6 +58,7 @@ const permissions = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 function appWith(overrides: {

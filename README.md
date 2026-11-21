@@ -359,12 +359,16 @@ organizaciones contra PostgreSQL.
 `POST /api/v1/api-tokens` (solo sesión con cookie y la comprobación de `Origin`
 habitual) emite un token `iop_…` para una organización o un grupo:
 `{name, organizationId, groupId?, scopes[], expiresAt}` con `scopes` entre
-`invoices:read`, `invoices:create`, `invoices:delete-own` e
-`invoices:delete-others`, y `expiresAt` futuro y como máximo a 30 días. La
+`invoices:read`, `invoices:create`, `invoices:delete-own`,
+`invoices:delete-others`, `mlflow:read` y `mlflow:write`, y `expiresAt` futuro y como máximo a 30 días. La
 respuesta `201` (`Cache-Control: no-store`) devuelve `{token, secret}`: el
 secreto se muestra una sola vez y la base guarda solo su hash SHA-256. Los
 scopes no pueden superar los permisos vigentes de la persona en ese alcance
-(si los superan, `403 FORBIDDEN`). `GET /api/v1/api-tokens?organizationId=…[&groupId=…]`
+(si los superan, `403 FORBIDDEN`). Regla de los scopes `mlflow:*` (MLOPS-01):
+cualquier miembro activo del contexto puede emitirlos (usuario no desactivado y
+con onboarding completo, organización habilitada, membresía de la organización
+y, para un token de grupo, membresía del grupo), sin importar sus permisos de
+facturas ni su rol. `GET /api/v1/api-tokens?organizationId=…[&groupId=…]`
 lista los tokens propios (también los revocados) y
 `DELETE /api/v1/api-tokens/{tokenId}` revoca uno propio (`204`, repetible).
 
@@ -388,6 +392,429 @@ un dueño desactivado, responde `401` con `WWW-Authenticate: Bearer`; con
 contraseña temporal pendiente, `403 ONBOARDING_REQUIRED`. Cambiar la
 contraseña, desactivar al usuario, restablecer su contraseña o cambiar su RUT
 revoca sus tokens.
+
+#### Introspección privada para el gateway de MLflow (MLOPS-01)
+
+`POST /internal/api-tokens/introspect` está fuera de `/api/v1`, no figura en
+OpenAPI y nginx no lo publica. Exige `Authorization: Bearer <INTERNAL_INTROSPECTION_SECRET>`
+(credencial de servicio, mínimo 32 caracteres, comparada en tiempo constante); sin
+la variable el endpoint rechaza todo (`401`, falla cerrada). Una sesión de
+usuario o un token `iop_…` responden `401`. Cuerpo: `{"token": "iop_…"}`.
+
+- Válido: `200 {active: true, userId, organizationId, groupId|null, scopes: ["mlflow:read"|"mlflow:write"…], cacheTtlSeconds: 30}`.
+- Cualquier otro caso (desconocido, revocado, vencido, sin scopes `mlflow:*`,
+  usuario desactivado o con contraseña temporal pendiente, organización
+  deshabilitada, membresía de organización o de grupo retirada):
+  `200 {active: false, cacheTtlSeconds: 5}`, sin motivo.
+- La respuesta lleva `Cache-Control: private, max-age=<cacheTtlSeconds>`; el
+  gateway no debe cachear más de 30 s. La revocación y la pérdida de acceso se
+  ven en la app de inmediato.
+- `lastUsedAt` se actualiza sin bloquear la respuesta, como máximo una vez por
+  minuto por token.
+
+#### Handoff de acceso a MLflow e introspección de sesión (MLOPS-02)
+
+La app (`https://invoiceops.aglai.dev`) y el gateway de MLflow (`https://mlflow-invoiceops.aglai.dev`)
+comparten solo el dominio padre, así que cada uno guarda una cookie **host-only**. La cookie
+`invoiceops_session` nunca lleva atributo `Domain` y no hay variable para cambiarlo (`SESSION_COOKIE_DOMAIN`
+se eliminó: ningún entorno debe compartir la sesión con un subdominio hermano). Si una petición trae más de
+una cookie `invoiceops_session` se trata como si no trajera ninguna (el gateway aplica la misma regla), para
+que ambos lados nunca autentiquen sesiones distintas. El navegador entra a MLflow mediante un handoff por redirección:
+
+1. El gateway redirige una navegación de navegador sin sesión a
+   `GET /api/v1/mlflow/authorize?redirect_uri=<callback del gateway>&state=<aleatorio>` (navegador, cookie de sesión).
+   Límite: 30 solicitudes por minuto por **sesión válida** (`429 RATE_LIMITED` con `Retry-After`). Una cookie
+   inválida o ausente no abre un cupo propio: se cuenta contra la IP del cliente (30 por minuto), así que
+   cambiar el valor de la cookie en cada intento no evade el límite.
+2. `redirect_uri` debe ser **exactamente** `MLFLOW_PUBLIC_URL` + `/_gateway/callback`; en otro caso `400` y
+   sin redirección. Sin sesión válida el endpoint redirige a `/` (la SPA aún no tiene un mecanismo de
+   regreso al login: el usuario inicia sesión y vuelve a abrir MLflow). Con sesión guarda un código de un
+   solo uso (256 bits, solo se guarda su SHA-256, TTL de 60 s, ligado al usuario y a la sesión de la app) y
+   responde `302` al callback con `code` y `state`. `403` si la cuenta no tiene ningún contexto de MLflow.
+3. El gateway canjea el código con `POST /internal/sessions/exchange` `{"code"}` (credencial de servicio):
+   atómico y de un solo uso; `200 {active: true, sessionToken, expiresInSeconds}` o `200 {active: false}`
+   (desconocido, repetido, vencido o sesión padre inexistente; sin motivo). El `sessionToken` (`mls_...`) es
+   una **sesión hija solo-MLflow**: vive en su propia tabla, ninguna ruta de la app la acepta, dura como
+   máximo 8 h y nunca más que la sesión padre. Se elimina con la sesión padre (logout, cambio de contraseña,
+   desactivación, vencimiento) mediante una clave foránea en cascada. El canje bloquea primero la fila de la
+   sesión padre y después la del código (mismo orden que el logout), para que ambos no se bloqueen entre sí.
+   Las sesiones hijas vencidas se podan al emitir un código nuevo.
+4. `POST /internal/sessions/introspect` `{"sessionToken": "<token hijo>"}` (misma credencial de servicio,
+   fuera de `/api/v1`, no publicado por nginx) resuelve la hija: `200 {active: true, userId,
+contexts: [{organizationId, groupId|null, label}], cacheTtlSeconds: 30}` (contexto de organización más
+   uno por grupo, solo organizaciones habilitadas, misma regla que la emisión de tokens `mlflow:*`) o
+   `200 {active: false, cacheTtlSeconds: 5}` sin motivo. Un token de sesión de la app nunca se resuelve aquí.
+5. `POST /internal/sessions/revoke` `{"sessionToken"}` (credencial de servicio, `204`, idempotente) elimina
+   una hija; el gateway lo llama en su propio logout.
+
+Arranque: `INTERNAL_INTROSPECTION_SECRET` definido con menos de 32 o más de 512 caracteres, con espacios o
+que no parezca generado al azar (hexadecimal con al menos 8 dígitos distintos o cualquier cadena con alta
+entropía; se rechazan repeticiones como `aaaa…` o `changeme` repetido) impide el arranque (sin definir sigue
+fallando cerrado). Lo mismo vale para `MODEL_API_SERVICE_TOKEN` y `GATEWAY_SERVICE_READ_TOKEN`, y las tres
+credenciales presentes deben ser **distintas entre sí**: un valor repetido impide el arranque (el mensaje
+nombra las variables, nunca el valor). Genera cada una con `openssl rand -hex 32`. `MLFLOW_PUBLIC_URL` debe ser un origen sin
+credenciales, ruta, query ni fragmento y usar https cuando `NODE_ENV=production`; en otro caso el proceso no
+arranca. Se normaliza igual que en el gateway (esquema y host en minúsculas, puerto por defecto omitido). Sin
+definir, el handoff queda apagado (`/api/v1/mlflow/authorize` responde `503`). Las escrituras con cookie siguen
+exigiendo `Origin` igual a `PUBLIC_ORIGIN`; el gateway aplica la misma regla con su propio origen.
+
+Las cuatro rutas privadas `/internal/*` comparten un limitador por IP de las respuestas `401`: más de 20
+credenciales incorrectas en un minuto desde la misma IP reciben `429` (`Retry-After: 60`), lo que acota las
+pruebas por fuerza bruta y el ruido en el log. La credencial se compara primero: la correcta siempre pasa y nunca
+consume cupo, así que un `X-Forwarded-For` falsificado no puede dejar fuera al gateway. Se desactiva junto con `AUTH_RATE_LIMIT_DISABLED` (solo local). nginx no
+publica `/internal/*`: un test de contrato lee `apps/frontend/nginx.conf` y comprueba que ninguna ruta
+con `proxy_pass` pueda recibirlo.
+
+##### Rotación de los secretos de servicio
+
+`INTERNAL_INTROSPECTION_SECRET` (backend y gateway), `MODEL_API_SERVICE_TOKEN` (backend y Model API) y
+`GATEWAY_SERVICE_READ_TOKEN` (backend y gateway) se rotan de uno en uno, nunca los tres a la vez, y un
+secreto solo se reutiliza entre sus dos extremos. Los servicios leen el secreto al arrancar, así que la
+rotación implica un reinicio breve de ambos extremos y, durante ese intervalo, las llamadas entre ellos
+responden `401` (fallan cerradas):
+
+1. Genera el valor nuevo con `openssl rand -hex 32` y verifica que no coincide con ninguno de los otros dos.
+2. Actualiza el archivo de entorno de producción (`/opt/invoiceops/invoiceops.env`, permisos `600`) con el
+   valor nuevo en el proyecto de ambos extremos.
+3. Reinicia primero el servicio que **recibe** la llamada y luego el que la **envía**, por ejemplo
+   `docker compose -f compose.production.yml up -d backend` y a continuación el proyecto del gateway o de la
+   Model API; reinicia `web` si se recreó el backend (nginx resuelve el nombre una sola vez).
+4. Comprueba `GET /health/ready` y una introspección real (abrir MLflow desde la app); el log del backend no
+   debe mostrar ráfagas de `internal.rate_limited`.
+5. Si el backend rechaza el arranque con «must be different values», dos variables quedaron con el mismo
+   valor: corrige la repetida.
+
+Una credencial comprometida se rota de inmediato con este mismo procedimiento; no hay período de gracia con
+dos valores válidos a la vez.
+
+#### Sección «Modelos» y deployments (MLOPS-05)
+
+Apagada por defecto: cada organización tiene el flag `mlEnabled` (columna `Organization.mlEnabled`,
+`false` al migrar) que un ADMIN de la organización cambia con `PATCH /api/v1/organizations/{id}`
+(`{mlEnabled: true}`); el perfil lo expone en `memberships[].organization.mlEnabled`. Con el flag
+apagado la sección no se muestra y los endpoints responden `404` (igual que a un no miembro); el
+resto de la app no cambia. El permiso nuevo `deployModels` (el «models:deploy» del ticket) es un
+quinto flag independiente en las membresías de organización y de grupo, administrado como los demás
+(`PUT .../permissions`); ningún rol lo concede. **Omitir `deployModels` en un `PUT .../permissions` (individual
+o masivo, de organización o de grupo) deja el valor guardado sin cambios**, no lo pone en `false`: un cliente
+anterior al flag no revoca el permiso sin querer (OpenAPI lo documenta en `InvoicePermissionsUpdate`). Al
+**crear** una membresía sin `permissions.deployModels` sí vale `false`. La auditoría del cambio guarda el valor
+efectivo resultante.
+
+Equivalencias con los tickets: `deployModels` es el permiso `models:deploy` del ticket MLOPS-05; y `FAILED` es el
+estado con el que la app guarda un deployment **rechazado** (`rejected`) por el gate oficial de la Model API (o
+cuyo chequeo no terminó): `FAILED` = `rejected`, con sus razones en `gate.reasons`.
+
+`mlEnabled` también gobierna el acceso a MLflow: con el flag apagado la organización no ofrece contexto de
+MLflow, de modo que la emisión de tokens `mlflow:*`, la introspección de tokens (`POST /internal/api-tokens/introspect`)
+y la introspección de sesión (`POST /internal/sessions/introspect`) responden «inactivo» (`active: false`) o
+`403` según corresponda, y el handoff `GET /api/v1/mlflow/authorize` responde `403` si la cuenta no tiene
+ningún contexto. Los demás tokens (facturas) no cambian. Cada cambio de `mlEnabled` queda en el log
+(`audit.org_updated`) y en la tabla `PlatformAdministrativeAuditEvent` (evento `ORGANIZATION_UPDATED`, columnas
+`mlEnabledFrom` y `mlEnabledTo` con el valor anterior y el nuevo; nulas en los demás eventos). Apagar el flag
+descarga de la Model API los modelos de la organización en la siguiente pasada de mantenimiento (abajo); las
+filas de deployment conservan su estado, así que al volver a encenderlo el modelo se recarga cuando haga falta.
+
+Endpoints (solo sesión; un `Authorization: Bearer` responde `401`). El contexto es
+`organizationId` (+ `groupId` opcional) y el workspace de MLflow (`org-<uuid>` / `grp-<uuid>`) lo
+deriva el servidor, nunca el cliente:
+
+- `GET /api/v1/models` modelos y versiones del contexto (lectura con el servicio de solo lectura del
+  gateway) y enlace a la UI de MLflow (`MLFLOW_PUBLIC_URL/?context=<workspace>`). Cualquier miembro activo.
+- `GET /api/v1/deployments` últimos 100 deployments del contexto con su reporte del gate. **Solo lee**: indica
+  `loaded` (si la Model API lo sirve) pero no escribe nada ni descarga modelos; eso lo hace el mantenimiento
+  periódico. `limits.activeCount` se cuenta en base de datos (todos los `ACTIVE` y `CHECKING` del ámbito), no
+  sobre las 100 filas listadas.
+- `POST /api/v1/deployments` `{organizationId, groupId?, registeredModel, version}` (requiere `deployModels`):
+  registra una fila `CHECKING` (tope y límite de tasa dentro de la misma transacción serializable) y llama
+  `PUT /deployments/{id}` de la Model API, que repite el gate oficial y carga solo si pasa (una sola
+  evaluación del set oculto por despliegue). Responde `201` con `ACTIVE` o `FAILED` + razones (un rechazo
+  del gate no es un error). Tope de activos por ámbito (`MODEL_DEPLOYMENT_MAX_ACTIVE_PER_SCOPE`, 3):
+  `409 DEPLOYMENT_LIMIT`. Límite de gates por ámbito y hora (`MODEL_DEPLOY_CHECK_MAX_PER_HOUR`, 10, contado
+  en base de datos): `429 RATE_LIMITED` con `Retry-After`. Si no hubo conexión con la Model API
+  (rechazada, DNS) o respondió `409 CAPACITY_EXCEEDED` el intento no deja rastro ni consume cupo; si
+  respondió con error o no contestó a tiempo (el gate pudo correr) la fila queda `FAILED`
+  (`MODEL_API_ERROR` / `CHECK_TIMEOUT`), cuenta para el límite por hora y se descarga lo que haya cargado.
+  Un despliegue puede durar hasta 120 s (nginx corta a los 60 s: la ruta de deployments tiene su propio
+  `proxy_read_timeout` en el frontend). Si el cliente se desconecta, la petición **no se cancela**: el backend
+  termina el gate y deja la fila en `ACTIVE` o `FAILED`; solo una caída del proceso deja un `CHECKING`, que el
+  mantenimiento (y el siguiente `POST` del ámbito) marca `FAILED` pasados 10 min. Reintentar el mismo
+  `POST` es seguro: responde `409 CONFLICT` con `error.fields.deploymentId` y `error.fields.status` (`CHECKING`,
+  `ACTIVE` o `QUARANTINED`), el estado actual de ese deployment, y no crea otro; el cliente lo consulta en
+  `GET /api/v1/deployments`.
+- `PATCH /api/v1/deployments/{id}?organizationId=…[&groupId=…]` `{inferenceEnabled}`: activa o desactiva el
+  puntaje de facturas nuevas. Activar verifica que el modelo siga cargado y, si la Model API lo perdió
+  (reinicio), lo recarga repitiendo el gate. Desactivar no descarga el modelo.
+- `DELETE /api/v1/deployments/{id}?organizationId=…[&groupId=…]` descarga y marca `INACTIVE` (historial
+  conservado, libera el cupo; idempotente).
+
+Estados: `CHECKING`, `ACTIVE` (pasó el gate y está cargado), `INACTIVE`, `FAILED`, `QUARANTINED`
+(la Model API lo puso en cuarentena; se quita y se vuelve a desplegar). Un `deploymentId` de otro
+contexto responde `404`. Auditoría: tabla `DeploymentEvent` (DEPLOYED, DEPLOY_FAILED, ACTIVATED,
+DEACTIVATED, REMOVED, QUARANTINED) y eventos `audit.deployment_*` en el log.
+
+Mantenimiento periódico (tarea en el proceso del backend, cada `MODELS_RECONCILE_INTERVAL_MS`, 30 000 por
+defecto; solo si la Model API está configurada; nunca dentro de un `GET`): marca `FAILED` los `CHECKING`
+vencidos (10 min) y descarga lo que hubieran cargado, pone en `QUARANTINED` los deployments que la Model API
+puso en cuarentena, descarga los modelos cargados cuya fila esté `FAILED`, `INACTIVE` o no exista (solo ids con
+forma de UUID) y los de organizaciones con `mlEnabled` apagado. Además recarga de forma ansiosa (CR-621) los `ACTIVE` con inferencia activa y `mlEnabled` que la Model API ya no sirve (reinicio), con la misma `ensureLoaded` (una ejecución por deployment), concurrencia 2 y hasta 20 por pasada; un fallo solo se registra, de modo que la primera predicción tras un reinicio no paga el gate. Si la Model API no responde solo barre los
+`CHECKING`. Cada pasada con cambios deja un log `models.reconciled` con los conteos; si la Model API no responde,
+deja un `warn` `models.reconcile_unavailable` (como máximo uno cada 5 minutos). Las llamadas concurrentes
+de recarga de un mismo deployment (`ensureLoaded`, que usa el worker de predicciones) comparten una sola
+ejecución del gate.
+
+Variables (todas vacías = sección sin configurar, sus endpoints responden `503` sin afectar nada más; una URL
+sin su secreto, o un secreto de menos de 32 caracteres, impide arrancar): `MODEL_API_URL`,
+`MODEL_API_SERVICE_TOKEN`, `MLFLOW_GATEWAY_INTERNAL_URL`, `GATEWAY_SERVICE_READ_TOKEN`,
+`MLFLOW_PUBLIC_URL`, `MODEL_DEPLOYMENT_MAX_ACTIVE_PER_SCOPE`, `MODEL_DEPLOY_CHECK_MAX_PER_HOUR`.
+Las respuestas de los servicios internos se leen con un tope de 1 MiB. Al listar deployments (y al barrer
+checks vencidos) se descarga de la Model API todo modelo cargado cuya fila esté `FAILED`, `INACTIVE` o
+no exista (solo ids con forma de UUID).
+
+### Predicciones automáticas (MLOPS-06)
+
+Al crear una factura, en la **misma transacción**, se inserta una fila `InvoicePrediction` `PENDING` por
+cada deployment `ACTIVE` con inferencia activa que aplique a la factura, solo si la organización tiene
+`mlEnabled`. Aplican los deployments del mismo ámbito (misma organización y `scopeKey`) y los de nivel
+organización (`scopeKey = "organization"`): una factura de un grupo la puntúan los deployments de ese grupo
+**y** los de su organización; una factura sin grupo, solo los de la organización; un deployment de grupo
+nunca puntúa facturas de otro grupo ni de la organización. Las features (`supplier_prior_*`) salen siempre
+del ámbito de la factura, no del deployment. Los deployments elegibles se leen en una consulta corta **antes**
+de abrir la transacción SERIALIZABLE de la factura (dentro de ella, esa lectura tomaría bloqueos de predicado
+que chocarían con cualquier cambio concurrente de deployments o del flag `mlEnabled` y abortarían creaciones
+no relacionadas con `RETRYABLE_CONFLICT`); dentro de la transacción solo hay `INSERT`s. Una lectura algo vieja
+es inocua: el worker revisa de nuevo `mlEnabled` y el deployment al procesar, y la base de datos rechaza
+cualquier fila que una un deployment de otra organización o de otro ámbito (ver abajo). La creación de la
+factura no llama a la Model API, no se hace más lenta ni falla por ML. Sin deployments elegibles o con
+`mlEnabled` apagado no se encola nada; no hay puntaje retroactivo (solo facturas creadas con el deployment ya activo).
+
+Integridad en la base de datos: `InvoicePrediction(deploymentId, organizationId)` es una clave foránea compuesta
+a `Deployment(id, organizationId)` (una predicción no puede apuntar a un deployment de otra organización) y un
+trigger exige que `Deployment.scopeKey` sea el de la predicción (el de la factura) o `organization`; un
+deployment de grupo nunca puntúa otro grupo. Lo cubre `prediction-integrity.postgres.test.ts`.
+
+La fila es a la vez el job (outbox) y su resultado: única `(invoiceId, deploymentId)`, estados `PENDING`,
+`SUCCEEDED`, `FAILED`, `SKIPPED`, con `attempts`, `lastErrorCode` (código, nunca texto de un servicio) y
+`nextAttemptAt`. Un worker en el mismo proceso del backend (arranca solo si `MODEL_API_URL` está configurada)
+reclama los jobs vencidos con `FOR UPDATE SKIP LOCKED` y los arrienda (`nextAttemptAt` +5 min), así dos
+workers nunca toman el mismo job y uno que muere lo deja reclamable. Al procesar revisa de nuevo que la
+factura no esté eliminada, que `mlEnabled` siga activo y que el deployment siga `ACTIVE` con inferencia
+(si no, `SKIPPED`); envía a `POST /deployments/{id}/predict` los campos crudos de la factura (sin su
+`businessStatus`, que es la etiqueta) y las facturas previas del mismo proveedor, del mismo ámbito, creadas
+antes, no eliminadas, **las 5000 más recientes** como máximo (el tope del Model API). «Mismo proveedor» es
+igualdad de `Invoice.supplierKey` (índice `organizationId, scopeKey, supplierKey, createdAt DESC`), calculado
+con `supplierKey()` de `apps/backend/src/supplier-key.ts`: NFKC, minúsculas, split por el conjunto explícito
+de espacios de `str.isspace()` de Python y unión con un espacio; es gemelo de `invoiceops_ml.contract.supplier_key`
+y ambos se validan con `tests/fixtures/supplier_key_vectors.json` (copia idéntica en invoiceops-ml y en
+`apps/backend/test/fixtures/`; deben mantenerse sincronizados). La columna es nullable: se llena al crear la
+factura y, para filas existentes o insertadas por una versión anterior (rollback), con un backfill idempotente
+que el backend ejecuta al arrancar (antes de iniciar el worker) o a pedido: en desarrollo con
+`pnpm --filter @invoiceops/backend backfill:supplier-key` y en la imagen de producción, que no trae `pnpm` ni
+`tsx`, con el script compilado: `docker compose -f compose.production.yml exec backend node dist/backfill-supplier-key-command.js`
+(necesita `DATABASE_URL`, que el contenedor ya tiene; es idempotente y reanudable). Un índice parcial
+(`WHERE "supplierKey" IS NULL`) mantiene barata la búsqueda de esas filas. Durante un despliegue gradual una
+réplica antigua puede insertar facturas sin clave: el worker las empareja calculando `supplierKey()` al vuelo
+sobre las filas sin clave del ámbito, de modo que las features no se sesgan mientras no corra el backfill.
+**Límite de ese respaldo:** lee solo las 5000 filas sin clave más recientes del ámbito (de cualquier proveedor) y filtra
+en memoria; si el ámbito tiene más de 5000 facturas sin clave, las previas más antiguas del proveedor pueden faltar y
+las features quedan incompletas hasta que termine el backfill. Cada consulta que llega a ese tope registra el `warn`
+`prediction.unkeyed_priors_capped` (`invoiceId`, `organizationId`, `threshold`), como máximo una vez cada 10 minutos
+por organización y ámbito (cada proceso lleva su propia cuenta); si aparece, ejecuta el backfill.
+Si el cuerpo superara 3,5 MiB (la Model API responde 413 por encima de 4 MiB) se descartan las previas más antiguas. `404 DEPLOYMENT_NOT_LOADED` llama `ensureLoaded` (MLOPS-05) y reintenta una
+vez. Los errores por **indisponibilidad** de la Model API (`MODEL_API_UNREACHABLE`, `MODEL_API_TIMEOUT`,
+`MODEL_API_UNAVAILABLE`, `INFERENCE_UNAVAILABLE` / `503`, incluido `503 BUSY` cuando su compuerta de descargas está llena, `MODEL_API_AUTH`) **no consumen intentos**: el job
+vuelve a `PENDING` con backoff exponencial con jitter (`PREDICTION_RETRY_BASE_MS` × 2^(n-1), con tope
+`PREDICTION_RETRY_MAX_MS`, 15 min) y solo falla (`FAILED`, `JOB_EXPIRED`) cuando supera su edad máxima
+(`PREDICTION_MAX_JOB_AGE_MS`, 24 h desde su creación), de modo que una caída de la Model API de varios minutos
+o de unas horas no pierde predicciones. El resto de errores reintentables (`MODEL_API_ERROR`,
+`DEPLOYMENT_NOT_LOADED`, error del worker) sí consumen intentos hasta `PREDICTION_MAX_ATTEMPTS` y luego
+`FAILED`. Un `400`/`413`/`422` (`INVALID_REQUEST`) de la Model API no mejora al reintentar: el job queda `FAILED` de inmediato con `lastErrorCode = INVALID_INPUT`. Un job que pierde su worker se reclama tras 5 min y, agotados sus intentos, queda `FAILED`
+(`ATTEMPTS_EXHAUSTED`). Cada poll reclama como máximo `min(PREDICTION_BATCH_SIZE, PREDICTION_CONCURRENCY)`
+jobs, todos los cuales empiezan de inmediato: un job reclamado detrás de uno lento ya habría gastado un intento
+y parte de su arriendo sin haber empezado.
+Procesar de nuevo un job `SUCCEEDED` no hace nada. Eliminar una factura salta sus jobs pendientes.
+Al detener el proceso el worker aborta las llamadas en curso al Model API y devuelve todos sus jobs reclamados
+(el intento no se consume); la tarea periódica de mantenimiento de modelos (`models.reconcile`) recibe la misma
+señal de aborto y corta sus llamadas a la Model API y su pasada entre pasos, de modo que el proceso sale limpio dentro de los
+10 s de `SHUTDOWN_DEADLINE_MS` y `compose.production.yml` da 20 s (`stop_grace_period`) antes del `SIGKILL`. El detalle de la UI
+refresca (2 s hasta 10 s, máximo ~2 min) mientras alguna predicción esté `PENDING`.
+
+`GET /api/v1/invoices/{invoiceId}` agrega `predictions` (modelo, versión, run, `deploymentScope`
+`ORGANIZATION`/`GROUP`, probabilidad de rechazo, estado, código de error, fechas) solo si la organización tiene `mlEnabled`, con la misma autorización de
+lectura de la factura. El detalle de la UI muestra el panel «Predicciones», con la etiqueta «Organización» o «Grupo» por modelo.
+
+Variables (valores por defecto seguros): `PREDICTION_WORKER_DISABLED` (`false`), `PREDICTION_WORKER_POLL_MS`
+(2000), `PREDICTION_MAX_ATTEMPTS` (5), `PREDICTION_CONCURRENCY` (4), `PREDICTION_BATCH_SIZE` (10),
+`PREDICTION_RETRY_BASE_MS` (5000), `PREDICTION_RETRY_MAX_MS` (900000), `PREDICTION_MAX_JOB_AGE_MS`
+(86400000), `PREDICTION_METRICS_INTERVAL_MS` (60000), `PREDICTION_FAILED_WARN_THRESHOLD` (10),
+`PREDICTION_FAILED_WINDOW_MS` (900000) y `MODELS_RECONCILE_INTERVAL_MS` (30000). Un valor mal formado
+(o `PREDICTION_RETRY_MAX_MS` menor que `PREDICTION_RETRY_BASE_MS`) impide arrancar.
+
+#### Observabilidad de la cola y runbook (MLOPS-06)
+
+Cada `PREDICTION_METRICS_INTERVAL_MS` el backend registra la línea JSON `prediction.queue` con los jobs
+`PENDING` (`pendingCount`), la edad en segundos del más antiguo (`oldestPendingAgeSeconds`, ausente si no hay) y los
+`FAILED` de la ventana (`failedInWindow`). Solo mide la cola viva y la ventana reciente, con dos lecturas por índice
+(`InvoicePrediction(status, createdAt)` e `InvoicePrediction(status, updatedAt)`): no recorre el histórico
+`SUCCEEDED`/`SKIPPED`, que crece sin límite (ver «Retención»). Cuando
+`failedInWindow` alcanza `PREDICTION_FAILED_WARN_THRESHOLD` dentro de `PREDICTION_FAILED_WINDOW_MS` registra además
+un `warn` `prediction.failed_spike` (con `windowSeconds` y `threshold`) sobre el que se puede alertar. Una cola sana
+muestra `oldestPendingAgeSeconds` de pocos segundos; si crece sin parar, la Model API está caída o el worker
+está apagado. Las reglas de alerta con los campos exactos están en `DEPLOY.md` (sección 12).
+
+La misma vista, a mano (solo lectura; recorre la tabla completa, úsala con moderación si es muy grande):
+
+```sql
+SELECT "status", count(*) AS jobs, min("createdAt") AS oldest
+FROM "InvoicePrediction" GROUP BY "status" ORDER BY "status";
+```
+
+```sql
+SELECT "lastErrorCode", count(*) AS jobs, max("updatedAt") AS last_seen
+FROM "InvoicePrediction" WHERE "status" = 'FAILED' AND "updatedAt" > now() - interval '24 hours'
+GROUP BY "lastErrorCode" ORDER BY jobs DESC;
+```
+
+Reencolar jobs `FAILED` (por ejemplo, `JOB_EXPIRED` tras una caída larga de la Model API) es una operación manual
+con acceso a la base de datos: pone el job de nuevo en `PENDING`, reinicia sus contadores y le da una vida
+nueva (la edad máxima se cuenta desde `createdAt`, así que también se renueva). Solo para predicciones cuya
+factura siga vigente (el worker las salta si fue eliminada) y cuyo deployment siga `ACTIVE`:
+
+```sql
+UPDATE "InvoicePrediction"
+SET "status" = 'PENDING', "attempts" = 0, "unavailableRetries" = 0,
+    "lastErrorCode" = NULL, "nextAttemptAt" = now(), "createdAt" = now(), "updatedAt" = now()
+WHERE "status" = 'FAILED' AND "lastErrorCode" IN ('JOB_EXPIRED', 'ATTEMPTS_EXHAUSTED', 'MODEL_API_ERROR')
+  AND "updatedAt" > now() - interval '48 hours';
+```
+
+Ejecútalo con el backend en marcha (el worker toma los jobs en el siguiente poll) y revisa después
+`prediction.queue`. Si los jobs volvieron a fallar por la misma causa, resuelve primero la Model API.
+
+#### Retención de `InvoicePrediction`
+
+La tabla **no se limpia automáticamente**: cada factura con ML activo agrega una fila por deployment y nada las
+borra (el worker nunca elimina). `SUCCEEDED` es el resultado que muestra el detalle de la factura, así que la
+política es una decisión del operador y se ejecuta **a mano**, con acceso a la base de datos. La propuesta:
+
+| Estado              | Conservar                  | Por qué                                                                              |
+| ------------------- | -------------------------- | ------------------------------------------------------------------------------------ |
+| `PENDING`           | siempre                    | Es la cola viva: nunca se borra a mano.                                              |
+| `FAILED`, `SKIPPED` | 90 días desde `updatedAt`  | Diagnóstico; el runbook solo reencola `FAILED` de las últimas 48 h.                  |
+| `SUCCEEDED`         | 365 días desde `updatedAt` | Es el dato que ve el usuario; al borrarlo la factura deja de mostrar esa predicción. |
+
+Borra por lotes y repite cada sentencia hasta que informe `DELETE 0`. `FAILED` y `SKIPPED` van en sentencias
+**separadas** con igualdad de estado: con `status IN ('FAILED', 'SKIPPED')` el índice `(status, updatedAt)` no
+puede entregar las filas ordenadas por `updatedAt` (son dos rangos), así que cada lote leía y ordenaba todas las
+filas vencidas antes de aplicar el `LIMIT`. Con una sola igualdad el planificador puede recorrer el índice en orden y
+detenerse al llenar el lote (medido en PostgreSQL 17 con 500 mil filas: `Index Scan using
+"InvoicePrediction_status_updatedAt_idx"` sin `Sort`, 10 mil filas leídas, frente a un `Sort` de todas las filas que
+cumplen la condición con `IN`; si quedan pocas filas vencidas el planificador elige un `Bitmap Index Scan` más un
+`Sort` pequeño, que también usa el índice). Ambos lotes usan el índice y no bloquean la cola. Esto vale para la selección del lote (la subconsulta con
+`ORDER BY "updatedAt" LIMIT`); el `DELETE` externo (`WHERE "id" IN (…)`) puede usar un recorrido secuencial o un
+`Hash Join` según el tamaño de la tabla, y es el costo esperado de borrar las filas ya elegidas:
+
+```sql
+DELETE FROM "InvoicePrediction"
+WHERE "id" IN (
+  SELECT "id" FROM "InvoicePrediction"
+  WHERE "status" = 'FAILED' AND "updatedAt" < now() - interval '90 days'
+  ORDER BY "updatedAt" LIMIT 10000
+);
+```
+
+```sql
+DELETE FROM "InvoicePrediction"
+WHERE "id" IN (
+  SELECT "id" FROM "InvoicePrediction"
+  WHERE "status" = 'SKIPPED' AND "updatedAt" < now() - interval '90 days'
+  ORDER BY "updatedAt" LIMIT 10000
+);
+```
+
+```sql
+DELETE FROM "InvoicePrediction"
+WHERE "id" IN (
+  SELECT "id" FROM "InvoicePrediction"
+  WHERE "status" = 'SUCCEEDED' AND "updatedAt" < now() - interval '365 days'
+  ORDER BY "updatedAt" LIMIT 10000
+);
+```
+
+Ninguna otra tabla referencia a `InvoicePrediction`, así que el borrado no necesita nada más. Tras una limpieza grande
+ejecuta `VACUUM (ANALYZE) "InvoicePrediction";` **con el rol dueño** (`POSTGRES_USER`): el rol de la aplicación
+no es dueño de la tabla, y `VACUUM` sobre una tabla ajena se omite con un `WARNING` (`skipping ... only table or
+database owner can vacuum it`) sin error visible. Si no lo ejecutas, el autovacuum de PostgreSQL hace el mismo trabajo
+más tarde, sin que tengas que hacer nada. Si no aplicas ninguna política, el gauge sigue siendo barato (solo lee la cola viva y la
+ventana de `FAILED`); lo que crece es el almacenamiento: mide el tamaño con
+`SELECT pg_size_pretty(pg_total_relation_size('"InvoicePrediction"'));`.
+
+#### Notas de migración de MLOps (`20261101…`, `20261126…`, `20261127…` y `20261128…`)
+
+- **Corrección sobre `20261101000000_api_token_mlflow_scopes` (CR-521).** El comentario de esa migración dice que
+  revertir la aplicación es seguro porque los dos valores nuevos del enum «quedan sin usar» en la versión
+  anterior. Es incorrecto para los datos: PostgreSQL no puede quitar un valor de un enum, y la versión anterior de
+  la aplicación **falla con `P2023`** (valor de enum desconocido) al leer cualquier fila de `ApiToken` cuyo
+  `scopes` contenga `mlflow:read` o `mlflow:write`, también las revocadas o vencidas (el listado de tokens las
+  incluye). La migración ya está aplicada y su checksum impide editar el comentario, así que la corrección vive
+  aquí y en DEPLOY.md §9. Antes de volver a una versión anterior a `20261101…`, con el rol dueño
+  (`POSTGRES_USER`, no el rol de la aplicación) elimina esos tokens y avisa a las personas afectadas de que deben
+  volver a emitirlos al actualizar de nuevo (los tokens con scopes de facturas y MLflow a la vez también se
+  eliminan):
+
+```sql
+BEGIN;
+SELECT count(*) AS mlflow_tokens FROM "ApiToken" WHERE "scopes" && ARRAY['mlflow:read', 'mlflow:write']::"ApiTokenScope"[];
+DELETE FROM "ApiToken" WHERE "scopes" && ARRAY['mlflow:read', 'mlflow:write']::"ApiTokenScope"[];
+COMMIT;
+```
+
+Revocar (`revokedAt`) no basta, porque la fila sigue leyéndose. Lo cubre `api-token-rollback.postgres.test.ts`
+(ejecuta este SQL) y `api-token-rollback.contracts.test.ts` (README y DEPLOY.md mantienen el paso).
+
+- Las migraciones ya aplicadas **no se editan ni se pueden volver a ejecutar a mano**: Prisma registra cada una
+  y no repite ninguna. En particular `20261126000000_prediction_org_deployment_on_group_invoice` reemplazó la
+  clave compuesta `(deploymentId, organizationId, scopeKey)` por una clave simple y **no es re-ejecutable**
+  (su `ADD CONSTRAINT` no tiene guarda: una segunda ejecución falla porque la clave ya existe); su defecto (una predicción podía unir
+  una factura de la organización A con un deployment de la B) se corrige hacia adelante con una migración nueva.
+- `20261127000000_prediction_integrity_and_audit` aún no estaba desplegada y es **idempotente** (todas sus
+  sentencias tienen guardas: `IF NOT EXISTS`, `DROP … IF EXISTS`, una comprobación de la restricción sobre su tabla),
+  de modo que aplicarla otra vez, por ejemplo a mano tras una ejecución parcial, no cambia nada ni falla. Hace:
+  `UNIQUE (id, organizationId)` en `Deployment`; clave foránea compuesta
+  `InvoicePrediction(deploymentId, organizationId)` → `Deployment(id, organizationId)` creada `NOT VALID` y validada
+  después (`VALIDATE CONSTRAINT` toma un bloqueo `SHARE ROW EXCLUSIVE` sobre `InvoicePrediction` y sobre `Deployment`, que
+  **impide escribir** en ambas tablas mientras recorre todas las filas de `InvoicePrediction`; como Prisma corre la migración
+  en una sola transacción, el bloqueo se mantiene hasta el `COMMIT` de la migración completa, no solo durante la validación, y las
+  lecturas siguen); elimina la clave
+  foránea simple y el índice único `(id, organizationId, scopeKey)` que ya no se usa; trigger
+  `InvoicePrediction_deployment_scope_guard`; columna `InvoicePrediction.unavailableRetries`; índice parcial
+  `Invoice_supplierKey_null_idx` y las columnas `mlEnabledFrom` / `mlEnabledTo` del audit.
+- Si existiera una fila de `InvoicePrediction` que una organización con el deployment de otra, la validación
+  falla y la migración entera se revierte (corre en una sola transacción); corrige o borra esas filas y repite.
+  Un test automático (`migration-populated.postgres.test.ts`) aplica las migraciones sobre una base ya poblada.
+- **Bloqueo de `Invoice`**: crear un índice (el parcial de arriba, y antes `Invoice_organizationId_scopeKey_supplierKey_createdAt_idx`
+  de `20261121…`) toma un bloqueo que impide **escribir** en `Invoice` mientras se construye (las lecturas siguen).
+  Prisma ejecuta cada migración en una transacción, así que no puede usar `CREATE INDEX CONCURRENTLY`. El índice
+  parcial solo guarda las filas sin `supplierKey`, pero igual debe leer toda la tabla: medido en un contenedor
+  PostgreSQL 17 local con una tabla de 1 millón de filas (peor caso, todas sin clave) tarda cerca de 1,5 a 2 s, es
+  decir, del orden de **1 s por cada 500 mil facturas** (con las columnas reales de `Invoice`, más anchas, cuenta
+  con ~1 s por cada 300 mil). Con pocas facturas es instantáneo, pero con millones el bloqueo dura segundos.
+  Aplica las migraciones en un momento de poco tráfico de creación de facturas.
+- `20261128000000_prediction_queue_metrics_indexes` es **idempotente** (`CREATE INDEX IF NOT EXISTS`) y crea
+  `InvoicePrediction(status, createdAt)` e `InvoicePrediction(status, updatedAt)` para el gauge de la cola.
+  También bloquea las escrituras de `InvoicePrediction` (la creación de facturas con ML activo) mientras construye: medido,
+  1,5 millones de filas tardan unos 7 s por índice, así que con una tabla grande aplícala en una ventana de poco tráfico. Con el
+  gauge sobre ese conjunto (300 `PENDING`, 50 `FAILED` recientes) cada lectura pasó de un barrido completo de la tabla
+  (~600 ms, 33 mil páginas) a un `Index Only Scan` de 0,1 ms y 5 a 7 páginas.
+- **Comentario desactualizado en `20261121…`.** La migración `20261121000000_invoice_supplier_key` dice que las
+  filas con `supplierKey` NULL «no se usan como priors hasta que se rellenan» con el backfill. Ese comentario está
+  desactualizado y su checksum impide editarlo: el worker calcula la clave al vuelo para las predicciones previas con
+  `supplierKey` NULL, así que esas filas sí cuentan sin esperar al backfill.
+- Despliegue gradual: una réplica antigua puede insertar facturas sin `supplierKey` y no conoce
+  `unavailableRetries`; ambos casos están cubiertos (el worker calcula la clave al vuelo y la columna tiene valor
+  por defecto). Revertir la aplicación a la versión anterior es seguro **respecto de estas columnas**: la versión
+  anterior las ignora y las garantías de la base solo rechazan lo que esa versión nunca escribe. **No es seguro si
+  existen tokens de API con scopes `mlflow:*`**; ver la corrección de `20261101…` más arriba (primer punto de esta sección).
 
 ### Documentación interactiva (Swagger UI)
 
@@ -436,7 +863,9 @@ hash, responde `204` y borra la cookie con los mismos atributos. No devuelve
 tokens ni revoca otras sesiones activas del usuario.
 
 `change-password` exige una contraseña nueva distinta de la actual (`400
-PASSWORD_REUSE`). En una sola transacción actualiza el hash, quita el cambio
+PASSWORD_REUSE`). Si la contraseña actual es incorrecta responde `400
+INVALID_CURRENT_PASSWORD` y la sesión sigue válida; `401` queda solo para una sesión
+inválida, vencida o deshabilitada. En una sola transacción actualiza el hash, quita el cambio
 obligatorio, elimina todas las sesiones del usuario, crea una sesión nueva (cookie
 `Set-Cookie` rotada), revoca sus API tokens y registra auditoría. Login y cambio de
 contraseña se serializan por usuario con un bloqueo de fila (`SELECT … FOR NO
@@ -451,8 +880,9 @@ sola responde `401` (un token Bearer solo se acepta en las cuatro operaciones de
 organización, `role`, `permissions` y los grupos de esa organización con sus
 `permissions` y `effective` (presentación; el servidor decide). No existe `contexts`.
 
-Solo `POST /api/v1/auth/login` limita los intentos mediante memoria local
-(`logout` y `change-password` no tienen límite). Política: cuenta únicamente
+`POST /api/v1/auth/login` y `POST /api/v1/auth/change-password` limitan los
+intentos mediante memoria local (`logout` no tiene límite; el de
+`change-password` se describe tras este bloque). Política de login: cuenta únicamente
 credenciales **fallidas**, con dos claves (IP del cliente y RUT normalizado; ambas
 deben permitir). La clave de IP usa cinco fallos por ventana fija de 15 minutos;
 la del RUT bloquea de forma progresiva (al quinto fallo 1 minuto, luego 2, 4, 8…
@@ -465,6 +895,14 @@ mensaje seguro. El límite es por proceso y no se comparte entre réplicas; para
 producción distribuida se requiere un limitador compartido. La memoria está
 acotada (10 000 claves): las claves inactivas se descartan primero y nunca una
 clave bloqueada salvo que todas lo estén.
+
+`change-password` usa el mismo limitador (mismo máximo y ventana, y se desactiva con
+`AUTH_RATE_LIMIT_DISABLED` solo en local) con **una clave por sesión** (hash del
+token de la cookie, nunca el token): solo cuentan las contraseñas actuales
+**incorrectas** (`400 INVALID_CURRENT_PASSWORD`). Superado el máximo responde `429
+RATE_LIMITED` sin llamar al servicio y la sesión sigue válida. Un cambio correcto, un
+error de validación, una sesión vencida o un fallo del servidor no consumen cupo. Así
+una sesión robada no puede adivinar la contraseña actual.
 
 Por defecto la aplicación no confía en ningún proxy (`request.ip` es la dirección
 del socket, `X-Forwarded-For` se ignora). Detrás de un proxy inverso define

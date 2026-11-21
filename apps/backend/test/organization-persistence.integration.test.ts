@@ -389,6 +389,7 @@ const NO_FLAGS = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 describe("APP-04 PostgreSQL organization groups", () => {

@@ -71,6 +71,7 @@ async function orgFlags(userId: string, organizationId: string) {
     createInvoices: row.createInvoices,
     deleteOwnInvoices: row.deleteOwnInvoices,
     deleteOthersInvoices: row.deleteOthersInvoices,
+    deployModels: row.deployModels,
   };
 }
 
@@ -83,6 +84,7 @@ async function groupFlags(userId: string, groupId: string) {
     createInvoices: row.createInvoices,
     deleteOwnInvoices: row.deleteOwnInvoices,
     deleteOthersInvoices: row.deleteOthersInvoices,
+    deployModels: row.deployModels,
   };
 }
 
@@ -104,6 +106,7 @@ describe("B3b-UX2 GET organization summary", () => {
         name: s.org.name,
         slug: s.org.slug,
         description: null,
+        mlEnabled: false,
       },
       summary: { memberCount: 4, groupCount: 2 },
     });
@@ -715,8 +718,12 @@ async function settled(send: () => PromiseLike<Response>) {
   throw new Error("request still conflicted after the bounded client retries");
 }
 
-const isUniform = (flags: Record<string, boolean>) =>
-  new Set(Object.values(flags)).size === 1;
+// The four invoice flags move together in these races; `deployModels` is a
+// separate decision that ALL_FLAGS leaves off.
+const isUniform = ({
+  deployModels: _deployModels,
+  ...flags
+}: Record<string, boolean>) => new Set(Object.values(flags)).size === 1;
 
 /**
  * Proves the requests overlap instead of hoping the scheduler made them. Every

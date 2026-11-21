@@ -129,11 +129,16 @@ export function createAuthOperations(
           headers: SET_COOKIE,
         },
         400: {
-          description: `VALIDATION_ERROR: invalid body (newPassword must have ${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters); PASSWORD_REUSE: the new password equals the current one; ${INVALID_JSON}; ${AMBIGUOUS}`,
+          description: `VALIDATION_ERROR: invalid body (newPassword must have ${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters); INVALID_CURRENT_PASSWORD: the current password is incorrect (the session stays valid); PASSWORD_REUSE: the new password equals the current one; ${INVALID_JSON}; ${AMBIGUOUS}`,
           schema: ERROR,
         },
         401: unauthenticated,
         403: forbiddenOrigin,
+        429: {
+          description:
+            "RATE_LIMITED: too many wrong current passwords from this session (the login limit and window apply; only wrong guesses count); the session stays valid",
+          schema: ERROR,
+        },
         503: retryableConflictResponse,
       },
       handler: controller.changePassword,

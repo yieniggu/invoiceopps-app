@@ -26,12 +26,14 @@ export const ALL_FLAGS = {
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 export const NO_FLAGS = {
   readInvoices: false,
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 export const READ_ONLY = { ...NO_FLAGS, readInvoices: true };
 

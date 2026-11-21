@@ -32,6 +32,7 @@ const FLAGS = {
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 
 const profile = {

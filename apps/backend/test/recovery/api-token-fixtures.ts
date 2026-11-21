@@ -14,13 +14,16 @@ export const API_SCOPES = [
   "invoices:delete-own",
   "invoices:delete-others",
 ] as const;
-export type ApiScope = (typeof API_SCOPES)[number];
+export type ApiScope =
+  (typeof API_SCOPES)[number] | "mlflow:read" | "mlflow:write";
 
 const ENUM_BY_SCOPE = {
   "invoices:read": "INVOICES_READ",
   "invoices:create": "INVOICES_CREATE",
   "invoices:delete-own": "INVOICES_DELETE_OWN",
   "invoices:delete-others": "INVOICES_DELETE_OTHERS",
+  "mlflow:read": "MLFLOW_READ",
+  "mlflow:write": "MLFLOW_WRITE",
 } as const satisfies Record<ApiScope, string>;
 
 export const sha256Hex = (value: string) =>

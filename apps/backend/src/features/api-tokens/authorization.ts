@@ -3,7 +3,7 @@ import {
   NO_INVOICE_PERMISSIONS,
   type InvoicePermissions,
 } from "../groups/invoice-permissions.js";
-import { FLAG_BY_SCOPE, type ApiScope } from "./scopes.js";
+import { FLAG_BY_SCOPE, isInvoiceScope, type ApiScope } from "./scopes.js";
 import type { ApiTokenContext } from "./types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -21,6 +21,8 @@ export function restrictPermissionsByToken(
 ): InvoicePermissions {
   const restricted: InvoicePermissions = { ...NO_INVOICE_PERMISSIONS };
   for (const scope of scopes) {
+    // MLflow scopes carry no invoice permission.
+    if (!isInvoiceScope(scope)) continue;
     const flag = FLAG_BY_SCOPE[scope];
     restricted[flag] = permissions[flag];
   }

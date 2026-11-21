@@ -22,12 +22,14 @@ const ALL = {
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 const NONE = {
   readInvoices: false,
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 describe("RP0-16 token secrets (AC-06)", () => {

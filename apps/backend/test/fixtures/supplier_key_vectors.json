@@ -1,0 +1,247 @@
+[
+ {
+  "name": "plain",
+  "input": "ACME Ltda",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "empty",
+  "input": "",
+  "expected": ""
+ },
+ {
+  "name": "only spaces",
+  "input": "   ",
+  "expected": ""
+ },
+ {
+  "name": "only mixed ws",
+  "input": " \t\n\u00a0\u3000 ",
+  "expected": ""
+ },
+ {
+  "name": "collapse spaces",
+  "input": "  ACME   Ltda ",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "tabs and newlines",
+  "input": "Acme\t\tLtda\nSpA\r\n",
+  "expected": "acme ltda spa"
+ },
+ {
+  "name": "nbsp",
+  "input": "Acme\u00a0Ltda",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "nbsp edges",
+  "input": "\u00a0Acme\u00a0",
+  "expected": "acme"
+ },
+ {
+  "name": "fs gs rs us",
+  "input": "Acme\u001cLtda\u001dSpA\u001eSur\u001fNorte",
+  "expected": "acme ltda spa sur norte"
+ },
+ {
+  "name": "next line U+0085",
+  "input": "Acme\u0085Ltda",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "vt ff",
+  "input": "Acme\u000bLtda\fSpA",
+  "expected": "acme ltda spa"
+ },
+ {
+  "name": "sharp s",
+  "input": "Stra\u00dfe GmbH",
+  "expected": "stra\u00dfe gmbh"
+ },
+ {
+  "name": "sharp s caps",
+  "input": "STRASSE Gmbh",
+  "expected": "strasse gmbh"
+ },
+ {
+  "name": "capital sharp s",
+  "input": "GRO\u1e9eE Firma",
+  "expected": "gro\u00dfe firma"
+ },
+ {
+  "name": "final sigma",
+  "input": "\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3 Ltda",
+  "expected": "\u03bf\u03b4\u03c5\u03c3\u03c3\u03b5\u03c5\u03c2 ltda"
+ },
+ {
+  "name": "sigma mid word",
+  "input": "\u03a3\u038a\u03a3\u03a5\u03a6\u039f\u03a3",
+  "expected": "\u03c3\u03af\u03c3\u03c5\u03c6\u03bf\u03c2"
+ },
+ {
+  "name": "sigma alone",
+  "input": "\u03a3",
+  "expected": "\u03c3"
+ },
+ {
+  "name": "fi ligature",
+  "input": "\ufb01nanzas \ufb01rst",
+  "expected": "finanzas first"
+ },
+ {
+  "name": "ffl ligature",
+  "input": "\ufb04e",
+  "expected": "ffle"
+ },
+ {
+  "name": "dotted capital I",
+  "input": "\u0130stanbul Ltda",
+  "expected": "i\u0307stanbul ltda"
+ },
+ {
+  "name": "turkish dotless",
+  "input": "ISTANBUL \u0131\u0131",
+  "expected": "istanbul \u0131\u0131"
+ },
+ {
+  "name": "accents",
+  "input": "Caf\u00e9  \u00d1and\u00fa  SpA",
+  "expected": "caf\u00e9 \u00f1and\u00fa spa"
+ },
+ {
+  "name": "decomposed accents",
+  "input": "Cafe\u0301 Nu\u0303",
+  "expected": "caf\u00e9 n\u0169"
+ },
+ {
+  "name": "emoji",
+  "input": "Acme \ud83d\ude80  Ltda \ud83d\ude00",
+  "expected": "acme \ud83d\ude80 ltda \ud83d\ude00"
+ },
+ {
+  "name": "emoji zwj",
+  "input": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 Familia",
+  "expected": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 familia"
+ },
+ {
+  "name": "cjk",
+  "input": "\u682a\u5f0f\u4f1a\u793e\u3000\u30c6\u30b9\u30c8",
+  "expected": "\u682a\u5f0f\u4f1a\u793e \u30c6\u30b9\u30c8"
+ },
+ {
+  "name": "fullwidth latin",
+  "input": "\uff21\uff23\uff2d\uff25\u3000\uff2c\uff54\uff44\uff41",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "fullwidth digits",
+  "input": "Proveedor \uff11\uff12\uff13",
+  "expected": "proveedor 123"
+ },
+ {
+  "name": "halfwidth katakana",
+  "input": "\uff83\uff7d\uff84 \uff76\uff8c\uff9e",
+  "expected": "\u30c6\u30b9\u30c8 \u30ab\u30d6"
+ },
+ {
+  "name": "ogham space",
+  "input": "Acme\u1680Ltda",
+  "expected": "acme ltda"
+ },
+ {
+  "name": "en quad to hair",
+  "input": "A\u2000B\u2001C\u2002D\u2003E\u2004F\u2005G\u2006H\u2007I\u2008J\u2009K\u200aL",
+  "expected": "a b c d e f g h i j k l"
+ },
+ {
+  "name": "line and paragraph sep",
+  "input": "A\u2028B\u2029C",
+  "expected": "a b c"
+ },
+ {
+  "name": "narrow nbsp",
+  "input": "A\u202fB",
+  "expected": "a b"
+ },
+ {
+  "name": "medium math space",
+  "input": "A\u205fB",
+  "expected": "a b"
+ },
+ {
+  "name": "zero width space kept",
+  "input": "A\u200bB",
+  "expected": "a\u200bb"
+ },
+ {
+  "name": "bom kept",
+  "input": "\ufeffAcme",
+  "expected": "\ufeffacme"
+ },
+ {
+  "name": "mongolian vowel sep kept",
+  "input": "A\u180eB",
+  "expected": "a\u180eb"
+ },
+ {
+  "name": "roman numeral",
+  "input": "\u216b Ltda",
+  "expected": "xii ltda"
+ },
+ {
+  "name": "superscript",
+  "input": "m\u00b2  S.A.",
+  "expected": "m2 s.a."
+ },
+ {
+  "name": "circled",
+  "input": "\u2460  Uno",
+  "expected": "1 uno"
+ },
+ {
+  "name": "trademark",
+  "input": "Acme\u2122 Corp",
+  "expected": "acmetm corp"
+ },
+ {
+  "name": "greek mu",
+  "input": "\u00b5 Labs",
+  "expected": "\u03bc labs"
+ },
+ {
+  "name": "kelvin",
+  "input": "K Ltda",
+  "expected": "k ltda"
+ },
+ {
+  "name": "angstrom",
+  "input": "\u00c5 Ltda",
+  "expected": "\u00e5 ltda"
+ },
+ {
+  "name": "punctuation",
+  "input": "Acme, S.A. (Chile)",
+  "expected": "acme, s.a. (chile)"
+ },
+ {
+  "name": "hangul",
+  "input": "\uc8fc\uc2dd\ud68c\uc0ac  \ud14c\uc2a4\ud2b8",
+  "expected": "\uc8fc\uc2dd\ud68c\uc0ac \ud14c\uc2a4\ud2b8"
+ },
+ {
+  "name": "arabic",
+  "input": "\u0634\u0631\u0643\u0629  \u0627\u0644\u0627\u062e\u062a\u0628\u0627\u0631",
+  "expected": "\u0634\u0631\u0643\u0629 \u0627\u0644\u0627\u062e\u062a\u0628\u0627\u0631"
+ },
+ {
+  "name": "mixed",
+  "input": "  \u00d1u\u00f1oa\u00a0\u00a0\uff33\uff45\uff52\uff56\uff49\uff43\uff49\uff4f\uff53\t\ufb01nos\u0085 \u0130 ",
+  "expected": "\u00f1u\u00f1oa servicios finos i\u0307"
+ },
+ {
+  "name": "unicode 200 chars",
+  "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ }
+]

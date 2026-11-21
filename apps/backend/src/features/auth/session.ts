@@ -6,17 +6,36 @@ import type { AuthProfile, AuthService } from "./services.js";
 export const SESSION_COOKIE_NAME = "invoiceops_session";
 export const SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * The session token of a Cookie header. A request carrying more than one
+ * `invoiceops_session` cookie is treated as having none: with a parent-domain
+ * cookie a sibling subdomain can toss a second cookie, and "first wins" here
+ * versus "last wins" elsewhere (the MLflow gateway) would let the two sides
+ * authenticate different sessions. The gateway applies the same rule.
+ */
 export function sessionTokenFromCookie(header: string | undefined) {
   if (!header) {
     return undefined;
   }
 
-  return header
-    .split(";")
-    .map((value) => value.trim().split("="))
-    .find(([name]) => name === SESSION_COOKIE_NAME)?.[1];
+  const values: string[] = [];
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const separator = trimmed.indexOf("=");
+    if (separator > 0 && trimmed.slice(0, separator) === SESSION_COOKIE_NAME) {
+      values.push(trimmed.slice(separator + 1));
+    }
+  }
+
+  return values.length === 1 ? values[0] : undefined;
 }
 
+/**
+ * The session cookie is host-only: no `Domain` attribute, so the browser sends
+ * it only to the exact host that set it. MLflow sign-in is a redirect handoff
+ * (GET /api/v1/mlflow/authorize), not a shared cookie, and the app and the
+ * gateway live on sibling subdomains that must not see each other's session.
+ */
 const sessionCookieOptions = () => ({
   httpOnly: true,
   path: "/",

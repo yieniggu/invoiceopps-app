@@ -1,7 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 
-// Invoice authorization rules derived from four independent flags stored per
-// user on the organization membership and on the group membership. The role
+// Authorization rules derived from five independent flags (four invoice flags
+// plus `deployModels`, MLOPS-05) stored per user on the organization membership and on the group membership. The role
 // of a member (ADMIN included) and the platform administrator status never
 // grant any of them, and no flag implies another one: delete-own and
 // delete-others are evaluated against the creator of each invoice.
@@ -11,7 +11,20 @@ export interface InvoicePermissions {
   createInvoices: boolean;
   deleteOwnInvoices: boolean;
   deleteOthersInvoices: boolean;
+  /** May deploy registered models and toggle inference in the scope. */
+  deployModels: boolean;
 }
+
+/**
+ * Body of a permissions replacement (PUT): the four invoice flags are always
+ * given; `deployModels` may be omitted and then keeps its stored value.
+ */
+export type InvoicePermissionsUpdate = Omit<
+  InvoicePermissions,
+  "deployModels"
+> & {
+  deployModels?: boolean;
+};
 
 export const NO_INVOICE_PERMISSIONS: Readonly<InvoicePermissions> =
   Object.freeze({
@@ -19,6 +32,7 @@ export const NO_INVOICE_PERMISSIONS: Readonly<InvoicePermissions> =
     createInvoices: false,
     deleteOwnInvoices: false,
     deleteOthersInvoices: false,
+    deployModels: false,
   });
 
 export type InvoiceScope = "organization" | "group";
@@ -60,6 +74,7 @@ export function resolveEffectivePermissions(
       organization.deleteOwnInvoices || group.deleteOwnInvoices,
     deleteOthersInvoices:
       organization.deleteOthersInvoices || group.deleteOthersInvoices,
+    deployModels: organization.deployModels || group.deployModels,
   };
 }
 
@@ -69,6 +84,7 @@ function pick(flags: InvoicePermissions): InvoicePermissions {
     createInvoices: flags.createInvoices,
     deleteOwnInvoices: flags.deleteOwnInvoices,
     deleteOthersInvoices: flags.deleteOthersInvoices,
+    deployModels: flags.deployModels,
   };
 }
 
@@ -88,9 +104,10 @@ export const PERMISSION_SELECT = {
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: true,
 } as const;
 
-/** Extracts the four flags from any row that carries them. */
+/** Extracts the five flags from any row that carries them. */
 export function permissionsOf(row: InvoicePermissions): InvoicePermissions {
   return pick(row);
 }

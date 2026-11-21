@@ -41,6 +41,32 @@ enum ApiTokenScope {
   INVOICES_CREATE        @map("invoices:create")
   INVOICES_DELETE_OWN    @map("invoices:delete-own")
   INVOICES_DELETE_OTHERS @map("invoices:delete-others")
+  MLFLOW_READ            @map("mlflow:read")
+  MLFLOW_WRITE           @map("mlflow:write")
+}
+
+enum DeploymentStatus {
+  CHECKING
+  ACTIVE
+  INACTIVE
+  FAILED
+  QUARANTINED
+}
+
+enum PredictionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+enum DeploymentEventType {
+  DEPLOYED
+  DEPLOY_FAILED
+  ACTIVATED
+  DEACTIVATED
+  REMOVED
+  QUARANTINED
 }
 
 enum PlatformAdministrativeAuditEventType {
@@ -78,10 +104,14 @@ model User {
   memberships                        OrganizationMembership[]
   groupMemberships                   GroupMembership[]
   sessions                           Session[]
+  mlflowHandoffCodes                 MlflowHandoffCode[]
+  mlflowSessions                     MlflowSession[]
   createdInvoices                    Invoice[]                          @relation("InvoiceCreatedBy")
   deletedInvoices                    Invoice[]                          @relation("InvoiceDeletedBy")
   idempotencyRecords                 InvoiceIdempotencyRecord[]
   invoiceEvents                      InvoiceEvent[]                     @relation("InvoiceEventActor")
+  createdDeployments                 Deployment[]                       @relation("DeploymentCreatedBy")
+  deploymentEvents                   DeploymentEvent[]                  @relation("DeploymentEventActor")
   apiTokens                          ApiToken[]
   platformAdministrator              PlatformAdministrator?
   platformAdministrativeAuditEvents  PlatformAdministrativeAuditEvent[] @relation("PlatformAdministrativeAuditActor")
@@ -97,6 +127,9 @@ model Organization {
   slug             String                   @unique
   description      String?
   enabled          Boolean                  @default(true)
+  // MLOPS-05: the "Modelos" section and its endpoints operate only while this
+  // is on. Off by default; toggled by an organization ADMIN.
+  mlEnabled        Boolean                  @default(false)
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
   memberships      OrganizationMembership[]
@@ -104,6 +137,8 @@ model Organization {
   invoices         Invoice[]
   invoiceEvents    InvoiceEvent[]
   businessPolicies BusinessPolicy[]
+  deployments      Deployment[]
+  deploymentEvents DeploymentEvent[]
 
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Organization_name_trgm_idx")
 }
@@ -118,6 +153,8 @@ model OrganizationMembership {
   createInvoices       Boolean           @default(false)
   deleteOwnInvoices    Boolean           @default(false)
   deleteOthersInvoices Boolean           @default(false)
+  // MLOPS-05: may deploy registered models and toggle inference in scope.
+  deployModels         Boolean           @default(false)
   user                 User              @relation(fields: [userId], references: [id])
   organization         Organization      @relation(fields: [organizationId], references: [id])
   groupMemberships     GroupMembership[]
@@ -136,6 +173,7 @@ model Group {
   invoices           Invoice[]
   idempotencyRecords InvoiceIdempotencyRecord[]
   apiTokens          ApiToken[]
+  deployments        Deployment[]
 
   @@unique([id, organizationId])
   @@index([organizationId, name])
@@ -151,6 +189,7 @@ model GroupMembership {
   createInvoices         Boolean                @default(false)
   deleteOwnInvoices      Boolean                @default(false)
   deleteOthersInvoices   Boolean                @default(false)
+  deployModels           Boolean                @default(false)
   group                  Group                  @relation(fields: [groupId, organizationId], references: [id, organizationId])
   user                   User                   @relation(fields: [userId], references: [id])
   organizationMembership OrganizationMembership @relation(fields: [userId, organizationId], references: [userId, organizationId])
@@ -166,7 +205,44 @@ model Session {
   expiresAt DateTime
   user      User     @relation(fields: [userId], references: [id])
 
+  mlflowHandoffCodes MlflowHandoffCode[]
+  mlflowSessions     MlflowSession[]
+
   @@index([userId])
+  @@index([expiresAt])
+}
+
+// MLflow SSO handoff (redirect-based, host-only cookies on both hosts). A
+// single-use authorization code, stored only as a SHA-256 hash, bound to the
+// app session that issued it. Deleting the session cascades to its codes.
+model MlflowHandoffCode {
+  id         String    @id @default(uuid())
+  codeHash   String    @unique
+  userId     String
+  sessionId  String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([expiresAt])
+}
+
+// MLflow-only child session: the gateway's credential. It is never accepted as
+// an app session (separate table and hash) and dies with its parent Session.
+model MlflowSession {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  sessionId String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
   @@index([expiresAt])
 }
 
@@ -178,6 +254,9 @@ model Invoice {
   // COALESCE(groupId, 'organization'), enforced by a CHECK in the migration.
   scopeKey           String
   supplierName       String                     @db.VarChar(200)
+  // supplierKey(supplierName) (src/supplier-key.ts, same as the Python
+  // contract). Nullable: filled on create and by the startup backfill.
+  supplierKey        String?
   amountPesos        Int
   currency           Currency
   issuedOn           DateTime                   @db.Date
@@ -194,10 +273,12 @@ model Invoice {
   deletedByUser      User?                      @relation("InvoiceDeletedBy", fields: [deletedByUserId], references: [id], onDelete: Restrict)
   idempotencyRecords InvoiceIdempotencyRecord[]
   events             InvoiceEvent[]
+  predictions        InvoicePrediction[]
 
   @@unique([organizationId, businessId])
   @@unique([id, organizationId, scopeKey])
   @@index([organizationId, scopeKey, deletedAt, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([organizationId, scopeKey, supplierKey, createdAt(sort: Desc)])
   @@index([businessId(ops: raw("gin_trgm_ops"))], type: Gin, map: "Invoice_businessId_trgm_idx")
   @@index([supplierName(ops: raw("gin_trgm_ops"))], type: Gin, map: "Invoice_supplierName_trgm_idx")
   // Raw SQL in the invoice_events migration that Prisma cannot express:
@@ -266,6 +347,112 @@ model ApiToken {
   @@index([userId, organizationId, groupId])
 }
 
+// A registered MLflow model version deployed into a scope (MLOPS-05). `id` is
+// also the deploymentId of the Model API. `ACTIVE` means the version passed the
+// gate and is (or should be) loaded; `inferenceEnabled` says whether new
+// invoices of the scope are scored with it (MLOPS-06 reads status = ACTIVE AND
+// inferenceEnabled). The scope never moves.
+model Deployment {
+  id               String           @id @default(uuid())
+  organizationId   String
+  groupId          String?
+  // COALESCE(groupId, 'organization'), enforced by a CHECK in the migration.
+  scopeKey         String
+  // MLflow workspace of the scope: org-<organizationId> or grp-<groupId>.
+  workspace        String
+  registeredModel  String           @db.VarChar(256)
+  // Fixed integer version, as the Model API expects it.
+  version          String           @db.VarChar(20)
+  runId            String?          @db.VarChar(64)
+  status           DeploymentStatus
+  inferenceEnabled Boolean          @default(false)
+  // { passed, metrics, reasons[], featureSchemaVersion } of the last gate run.
+  gateReport       Json?
+  createdByUserId  String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  group            Group?           @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  createdByUser    User             @relation("DeploymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  events           DeploymentEvent[]
+  predictions      InvoicePrediction[]
+
+  // Target of the composite key of InvoicePrediction: a prediction can only
+  // reference a deployment of its own organization.
+  @@unique([id, organizationId])
+  @@index([organizationId, scopeKey, status, createdAt(sort: Desc)])
+  // Raw SQL in the deployments migration that Prisma cannot express:
+  // - CHECK "Deployment_scopeKey_matches_groupId_check";
+  // - partial unique index "Deployment_live_model_version_key" on
+  //   (organizationId, scopeKey, registeredModel, version) WHERE status IN
+  //   ('CHECKING', 'ACTIVE', 'QUARANTINED'): one live deployment per version.
+}
+
+// MLOPS-06: automatic prediction of one invoice by one deployment. The row is
+// both the outbox job (inserted in the transaction that creates the invoice,
+// PENDING) and its stored result. The worker claims due PENDING rows with
+// FOR UPDATE SKIP LOCKED, leasing them through nextAttemptAt. The model
+// reference is copied from the deployment at enqueue time (what the user sees
+// while PENDING) and overwritten with what the Model API reports on success.
+model InvoicePrediction {
+  id                   String           @id @default(uuid())
+  invoiceId            String
+  deploymentId         String
+  organizationId       String
+  // Scope of the INVOICE (composite FK enforces it); the deployment may be an
+  // organization-level one scoring a group invoice.
+  scopeKey             String
+  registeredModel      String           @db.VarChar(256)
+  modelVersion         String           @db.VarChar(20)
+  runId                String?          @db.VarChar(64)
+  featureSchemaVersion String?          @db.VarChar(64)
+  // Probability that the invoice is REJECTED; set only when SUCCEEDED.
+  probability          Float?
+  status               PredictionStatus @default(PENDING)
+  attempts             Int              @default(0)
+  // Reason code of the last failure or skip (never free text from a service).
+  lastErrorCode        String?          @db.VarChar(64)
+  // Retries caused by an unavailable Model API. They do not consume an attempt;
+  // this counter only drives their capped backoff.
+  unavailableRetries   Int              @default(0)
+  nextAttemptAt        DateTime         @default(now())
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  invoice              Invoice          @relation(fields: [invoiceId, organizationId, scopeKey], references: [id, organizationId, scopeKey], onDelete: Restrict)
+  deployment           Deployment       @relation(fields: [deploymentId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([invoiceId, deploymentId])
+  @@index([status, nextAttemptAt])
+  // Periodic queue gauge (CR-516): PENDING count and oldest createdAt, and the
+  // FAILED jobs of the recent window, without scanning the whole table.
+  @@index([status, createdAt])
+  @@index([status, updatedAt])
+  @@index([deploymentId])
+  // Raw SQL in the migrations that Prisma cannot express:
+  // - CHECK "InvoicePrediction_probability_range_check" (0 <= probability <= 1);
+  // - trigger "InvoicePrediction_deployment_scope_guard": the deployment's
+  //   scopeKey equals the prediction's (the invoice's) or is 'organization'.
+}
+
+// Durable audit of deployment changes, written in the transaction of the change.
+model DeploymentEvent {
+  id             String              @id @default(uuid())
+  deploymentId   String
+  type           DeploymentEventType
+  // Null for events the system recorded on its own (a quarantine seen while
+  // reconciling with the Model API).
+  actorUserId    String?
+  organizationId String
+  groupId        String?
+  createdAt      DateTime            @default(now())
+  deployment     Deployment          @relation(fields: [deploymentId], references: [id], onDelete: Restrict)
+  actor          User?               @relation("DeploymentEventActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([deploymentId, createdAt, id])
+  @@index([organizationId, createdAt, id])
+}
+
 model BusinessPolicy {
   id                    String            @id @default(uuid())
   organizationId        String
@@ -304,6 +491,11 @@ model PlatformAdministrativeAuditEvent {
   createInvoices       Boolean?
   deleteOwnInvoices    Boolean?
   deleteOthersInvoices Boolean?
+  deployModels         Boolean?
+  // ORGANIZATION_UPDATED events only: the old and new value of mlEnabled when
+  // the update changed it (null otherwise).
+  mlEnabledFrom        Boolean?
+  mlEnabledTo          Boolean?
   // True when the actor changed their own membership (self-grant is allowed
   // but always visible in the audit trail).
   actorIsTarget        Boolean                              @default(false)

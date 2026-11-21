@@ -39,8 +39,16 @@ const {
 
 const MISSING = "00000000-0000-4000-8000-000000000000";
 const DELETE_OWN = { ...NO_FLAGS, deleteOwnInvoices: true };
-const DELETE_OTHERS = { ...NO_FLAGS, deleteOthersInvoices: true };
-const DELETE_BOTH = { ...DELETE_OWN, deleteOthersInvoices: true };
+const DELETE_OTHERS = {
+  ...NO_FLAGS,
+  deleteOthersInvoices: true,
+  deployModels: false,
+};
+const DELETE_BOTH = {
+  ...DELETE_OWN,
+  deleteOthersInvoices: true,
+  deployModels: false,
+};
 const UNIQUE_VIOLATION = "23505";
 const FK_VIOLATION = "23503";
 

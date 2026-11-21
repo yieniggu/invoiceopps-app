@@ -168,6 +168,7 @@ describe("consolidated schema on real PostgreSQL", () => {
       "createInvoices",
       "deleteOthersInvoices",
       "deleteOwnInvoices",
+      "deployModels",
       "groupId",
       "id",
       "organizationId",
@@ -196,7 +197,7 @@ describe("consolidated schema on real PostgreSQL", () => {
       [randomUUID(), group, memberB, org],
     );
     const result = await client.query(
-      `SELECT "userId","readInvoices","createInvoices","deleteOwnInvoices","deleteOthersInvoices"
+      `SELECT "userId","readInvoices","createInvoices","deleteOwnInvoices","deleteOthersInvoices","deployModels"
        FROM "GroupMembership" WHERE "groupId" = $1`,
       [group],
     );
@@ -208,12 +209,14 @@ describe("consolidated schema on real PostgreSQL", () => {
       createInvoices: false,
       deleteOwnInvoices: false,
       deleteOthersInvoices: true,
+      deployModels: false,
     });
     expect(byUser[memberB]).toMatchObject({
       readInvoices: false,
       createInvoices: false,
       deleteOwnInvoices: false,
       deleteOthersInvoices: false,
+      deployModels: false,
     });
   });
 
@@ -509,6 +512,8 @@ describe("consolidated schema on real PostgreSQL", () => {
       "invoices:create",
       "invoices:delete-own",
       "invoices:delete-others",
+      "mlflow:read",
+      "mlflow:write",
     ]);
   });
 });
@@ -698,7 +703,39 @@ describe("B3c follow-up migration", () => {
       "20261026000000_initial_recovery_p0",
       "20261028000000_user_status_activity",
       "20261029000000_invoice_events",
+      "20261101000000_api_token_mlflow_scopes",
+      "20261110000000_models_deployments",
+      "20261120000000_invoice_predictions",
+      "20261121000000_invoice_supplier_key",
+      "20261125000000_mlflow_sso_handoff",
+      "20261126000000_prediction_org_deployment_on_group_invoice",
+      "20261127000000_prediction_integrity_and_audit",
+      "20261128000000_prediction_queue_metrics_indexes",
     ]);
+  });
+
+  it("creates the prediction queue gauge indexes and re-applies idempotently (CR-516)", async () => {
+    const names = [
+      "InvoicePrediction_status_createdAt_idx",
+      "InvoicePrediction_status_updatedAt_idx",
+    ];
+    const indexes = () =>
+      client.query(
+        `SELECT indexname FROM pg_indexes
+         WHERE schemaname = current_schema() AND indexname = ANY($1)
+         ORDER BY indexname`,
+        [names],
+      );
+    expect((await indexes()).rows.map((row) => row.indexname)).toEqual(names);
+    const sql = await readFile(
+      new URL(
+        "../../prisma/migrations/20261128000000_prediction_queue_metrics_indexes/migration.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    await client.query(sql);
+    expect((await indexes()).rows.map((row) => row.indexname)).toEqual(names);
   });
 
   it("creates the trigram indexes for the directory and organization searches", async () => {

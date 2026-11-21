@@ -8,8 +8,10 @@ import { ApiError } from "../../http/errors.js";
 import { escapeLike, pageWindow, type PageQuery } from "../../pagination.js";
 import {
   isUniqueViolation,
+  mapTransactionTimeout,
   runSerializable,
   SERIALIZABLE,
+  TRANSACTION_TIMING,
 } from "../../transactions.js";
 import { isRecentlyActive } from "../auth/services.js";
 import {
@@ -21,6 +23,7 @@ import {
   NO_INVOICE_PERMISSIONS,
   PERMISSION_SELECT,
   permissionsOf,
+  type InvoicePermissionsUpdate,
   type InvoicePermissions,
 } from "../groups/invoice-permissions.js";
 import {
@@ -73,6 +76,7 @@ function toMembershipDto(row: {
   createInvoices: boolean;
   deleteOwnInvoices: boolean;
   deleteOthersInvoices: boolean;
+  deployModels: boolean;
 }): MembershipDto {
   return {
     userId: row.userId,
@@ -121,7 +125,12 @@ export interface OrganizationService {
     actorUserId: string,
     organizationId: string,
     input: OrganizationUpdateRequest,
-  ): Promise<{ organization: OrganizationBasicDto; changed: boolean }>;
+  ): Promise<{
+    organization: OrganizationBasicDto;
+    /** The values before the update, for the audit of what changed. */
+    previous: OrganizationBasicDto;
+    changed: boolean;
+  }>;
   listMembers(
     actorUserId: string,
     organizationId: string,
@@ -151,13 +160,13 @@ export interface OrganizationService {
     actorUserId: string,
     organizationId: string,
     userId: string,
-    permissions: InvoicePermissions,
+    permissions: InvoicePermissionsUpdate,
   ): Promise<MembershipDto>;
   updateMembershipsPermissions(
     actorUserId: string,
     organizationId: string,
     userIds: string[],
-    permissions: InvoicePermissions,
+    permissions: InvoicePermissionsUpdate,
   ): Promise<MembershipDto[]>;
   removeMembership(
     actorUserId: string,
@@ -231,67 +240,71 @@ export function createOrganizationService(
     },
 
     async createOrganization(actorUserId, input) {
-      return prisma.$transaction(async (transaction) => {
-        if (!(await isPlatformAdministrator(transaction, actorUserId))) {
-          throw new ApiError(403, "FORBIDDEN", "Forbidden");
-        }
-        const firstAdmin = await transaction.user.findUnique({
-          where: { rut: input.firstAdminRut },
-          select: { id: true },
-        });
-        if (!firstAdmin) throw userNotFound();
+      return mapTransactionTimeout(
+        () =>
+          prisma.$transaction(async (transaction) => {
+            if (!(await isPlatformAdministrator(transaction, actorUserId))) {
+              throw new ApiError(403, "FORBIDDEN", "Forbidden");
+            }
+            const firstAdmin = await transaction.user.findUnique({
+              where: { rut: input.firstAdminRut },
+              select: { id: true },
+            });
+            if (!firstAdmin) throw userNotFound();
 
-        let organization;
-        try {
-          organization = await transaction.organization.create({
-            data: {
-              name: input.name,
-              slug: input.slug,
-              description: input.description,
-            },
-            select: ORGANIZATION_SELECT,
-          });
-        } catch (error) {
-          if (isUniqueViolation(error)) {
-            throw new ApiError(
-              409,
-              "ORGANIZATION_SLUG_CONFLICT",
-              "Organization slug already exists",
-            );
-          }
-          throw error;
-        }
-        const membership = await transaction.organizationMembership.create({
-          data: {
-            userId: firstAdmin.id,
-            organizationId: organization.id,
-            role: OrganizationRole.ADMIN,
-          },
-          select: MEMBERSHIP_SELECT,
-        });
-        await transaction.platformAdministrativeAuditEvent.createMany({
-          data: [
-            {
-              type: PlatformAdministrativeAuditEventType.ORGANIZATION_CREATED,
-              actorUserId,
-              organizationId: organization.id,
-            },
-            {
-              type: PlatformAdministrativeAuditEventType.ORGANIZATION_MEMBERSHIP_CREATED,
-              actorUserId,
-              targetUserId: firstAdmin.id,
-              organizationId: organization.id,
-              role: OrganizationRole.ADMIN,
-              ...NO_INVOICE_PERMISSIONS,
-              actorIsTarget: actorUserId === firstAdmin.id,
-            },
-          ],
-        });
-        return {
-          organization: toOrganizationDto(organization),
-          membership: toMembershipDto(membership),
-        };
-      });
+            let organization;
+            try {
+              organization = await transaction.organization.create({
+                data: {
+                  name: input.name,
+                  slug: input.slug,
+                  description: input.description,
+                },
+                select: ORGANIZATION_SELECT,
+              });
+            } catch (error) {
+              if (isUniqueViolation(error)) {
+                throw new ApiError(
+                  409,
+                  "ORGANIZATION_SLUG_CONFLICT",
+                  "Organization slug already exists",
+                );
+              }
+              throw error;
+            }
+            const membership = await transaction.organizationMembership.create({
+              data: {
+                userId: firstAdmin.id,
+                organizationId: organization.id,
+                role: OrganizationRole.ADMIN,
+              },
+              select: MEMBERSHIP_SELECT,
+            });
+            await transaction.platformAdministrativeAuditEvent.createMany({
+              data: [
+                {
+                  type: PlatformAdministrativeAuditEventType.ORGANIZATION_CREATED,
+                  actorUserId,
+                  organizationId: organization.id,
+                },
+                {
+                  type: PlatformAdministrativeAuditEventType.ORGANIZATION_MEMBERSHIP_CREATED,
+                  actorUserId,
+                  targetUserId: firstAdmin.id,
+                  organizationId: organization.id,
+                  role: OrganizationRole.ADMIN,
+                  ...NO_INVOICE_PERMISSIONS,
+                  actorIsTarget: actorUserId === firstAdmin.id,
+                },
+              ],
+            });
+            return {
+              organization: toOrganizationDto(organization),
+              membership: toMembershipDto(membership),
+            };
+          }, TRANSACTION_TIMING),
+        "organization_create",
+      );
     },
 
     async getOrganization(actorUserId, organizationId) {
@@ -315,6 +328,7 @@ export function createOrganizationService(
                   name: true,
                   slug: true,
                   description: true,
+                  mlEnabled: true,
                   _count: {
                     select: {
                       memberships: true,
@@ -355,7 +369,13 @@ export function createOrganizationService(
             );
             const current = await transaction.organization.findUnique({
               where: { id: organizationId },
-              select: { id: true, name: true, slug: true, description: true },
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                description: true,
+                mlEnabled: true,
+              },
             });
             if (!current) throw new ApiError(404, "NOT_FOUND", "Not found");
             const data = {
@@ -366,24 +386,45 @@ export function createOrganizationService(
               input.description !== current.description
                 ? { description: input.description }
                 : {}),
+              ...(input.mlEnabled !== undefined &&
+              input.mlEnabled !== current.mlEnabled
+                ? { mlEnabled: input.mlEnabled }
+                : {}),
             };
             // Nothing differs: nothing is written or audited.
             if (Object.keys(data).length === 0)
-              return { organization: current, changed: false };
+              return {
+                organization: current,
+                previous: current,
+                changed: false,
+              };
 
             const organization = await transaction.organization.update({
               where: { id: organizationId },
               data,
-              select: { id: true, name: true, slug: true, description: true },
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                description: true,
+                mlEnabled: true,
+              },
             });
             await transaction.platformAdministrativeAuditEvent.create({
               data: {
                 type: PlatformAdministrativeAuditEventType.ORGANIZATION_UPDATED,
                 actorUserId,
                 organizationId,
+                // Durable record of the ML switch: its old and new value.
+                ...(data.mlEnabled !== undefined
+                  ? {
+                      mlEnabledFrom: current.mlEnabled,
+                      mlEnabledTo: data.mlEnabled,
+                    }
+                  : {}),
               },
             });
-            return { organization, changed: true };
+            return { organization, previous: current, changed: true };
           }, SERIALIZABLE),
         undefined,
         "organizations.updateOrganization",
@@ -655,10 +696,12 @@ export function createOrganizationService(
               data: permissions,
               select: MEMBERSHIP_SELECT,
             });
+            // Audited with the stored flags, so an omitted deployModels shows
+            // its unchanged value.
             await auditPermissionsChanged(
               transaction,
               { actorUserId, organizationId },
-              [{ userId, permissions }],
+              [{ userId, permissions: permissionsOf(updated) }],
             );
             return toMembershipDto(updated);
           }, SERIALIZABLE),
@@ -693,16 +736,21 @@ export function createOrganizationService(
               where: { organizationId, userId: { in: userIds } },
               data: permissions,
             });
-            await auditPermissionsChanged(
-              transaction,
-              { actorUserId, organizationId },
-              userIds.map((id) => ({ userId: id, permissions })),
-            );
             const rows = await transaction.organizationMembership.findMany({
               where: { organizationId, userId: { in: userIds } },
               select: MEMBERSHIP_SELECT,
             });
             const byUser = new Map(rows.map((row) => [row.userId, row]));
+            // Audited with the stored flags (an omitted deployModels shows
+            // its unchanged value).
+            await auditPermissionsChanged(
+              transaction,
+              { actorUserId, organizationId },
+              userIds.map((id) => ({
+                userId: id,
+                permissions: permissionsOf(byUser.get(id)!),
+              })),
+            );
             return userIds.map((id) => toMembershipDto(byUser.get(id)!));
           }, SERIALIZABLE),
         undefined,

@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../src/http/errors.js";
-import { runSerializable } from "../../src/transactions.js";
+import {
+  mapTransactionTimeout,
+  runSerializable,
+  TRANSACTION_TIMING,
+} from "../../src/transactions.js";
 
 function rawQueryFailure(originalCode: string) {
   return Object.assign(new Error("raw query failed"), {
@@ -245,5 +249,40 @@ describe("runSerializable conflict logging", () => {
       expect.objectContaining({ outcome: "retry", reason: "conflict" }),
       expect.objectContaining({ outcome: "gave_up", reason: "conflict" }),
     ]);
+  });
+});
+
+describe("mapTransactionTimeout (CR-524)", () => {
+  it("maps P2028 to the retryable 503 with Retry-After and does not retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let attempts = 0;
+    const outcome = await mapTransactionTimeout(async () => {
+      attempts += 1;
+      throw Object.assign(new Error("Unable to start a transaction"), {
+        code: "P2028",
+      });
+    }, "unit").catch((error: unknown) => error);
+    expect(attempts).toBe(1);
+    expect(outcome).toBeInstanceOf(ApiError);
+    expect(outcome).toMatchObject({
+      status: 503,
+      code: "RETRYABLE_CONFLICT",
+      headers: { "Retry-After": "1" },
+    });
+  });
+
+  it("passes the result and any other error through untouched", async () => {
+    expect(await mapTransactionTimeout(async () => "ok")).toBe("ok");
+    const failure = Object.assign(new Error("x"), { code: "P2002" });
+    await expect(
+      mapTransactionTimeout(async () => {
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+  });
+
+  it("declares an explicit maxWait and timeout", () => {
+    expect(TRANSACTION_TIMING.maxWait).toBeGreaterThan(0);
+    expect(TRANSACTION_TIMING.timeout).toBeGreaterThan(0);
   });
 });

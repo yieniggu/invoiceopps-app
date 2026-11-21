@@ -14,6 +14,7 @@ const flags = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 
 function harness(

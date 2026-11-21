@@ -87,6 +87,21 @@ describe("consolidated Prisma schema contract", () => {
     expect(followUp).not.toMatch(/\bDROP\b/i);
   });
 
+  it("adds the MLflow token scopes as an additive, idempotent follow-up (MLOPS-01)", async () => {
+    const followUp = await readFile(
+      `${migrationsPath}20261101000000_api_token_mlflow_scopes/migration.sql`,
+      "utf8",
+    );
+    expect(followUp).toContain(
+      `ALTER TYPE "ApiTokenScope" ADD VALUE IF NOT EXISTS 'mlflow:read'`,
+    );
+    expect(followUp).toContain(
+      `ALTER TYPE "ApiTokenScope" ADD VALUE IF NOT EXISTS 'mlflow:write'`,
+    );
+    expect(followUp).not.toMatch(/\b(DROP|DELETE|UPDATE|RENAME)\b/i);
+    expect((await readMigration()).includes("mlflow")).toBe(false);
+  });
+
   it("adds the invoice read indexes and the scope trigger idempotently in the same follow-up (CR-328, CR-336)", async () => {
     const followUp = await readFile(
       `${migrationsPath}20261029000000_invoice_events/migration.sql`,
@@ -275,6 +290,8 @@ describe("consolidated Prisma schema contract", () => {
       "invoices:create",
       "invoices:delete-own",
       "invoices:delete-others",
+      "mlflow:read",
+      "mlflow:write",
     ]) {
       expect(scopes).toContain(`@map("${scope}")`);
     }

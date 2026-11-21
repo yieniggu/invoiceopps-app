@@ -22,6 +22,7 @@ const NONE: InvoicePermissions = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const only = (flags: Partial<InvoicePermissions>): InvoicePermissions => ({
   ...NONE,
@@ -67,13 +68,17 @@ describe("decideInvoiceDeletion: organization-scope invoices (AC-09)", () => {
   });
 
   it("lets deleteOthers delete another invoice and not an own one without deleteOwn", () => {
-    const org = only({ deleteOthersInvoices: true });
+    const org = only({ deleteOthersInvoices: true, deployModels: false });
     expect(decide({ org, scope: "organization", own: false })).toBe("allowed");
     expect(decide({ org, scope: "organization", own: true })).toBe("forbidden");
   });
 
   it("allows both when both flags are on", () => {
-    const org = only({ deleteOwnInvoices: true, deleteOthersInvoices: true });
+    const org = only({
+      deleteOwnInvoices: true,
+      deleteOthersInvoices: true,
+      deployModels: false,
+    });
     for (const own of [true, false]) {
       expect(decide({ org, scope: "organization", own })).toBe("allowed");
     }
@@ -113,7 +118,7 @@ describe("decideInvoiceDeletion: group invoices with a group membership (AC-09)"
     expect(
       decide({
         org: NONE,
-        group: only({ deleteOthersInvoices: true }),
+        group: only({ deleteOthersInvoices: true, deployModels: false }),
         scope: "group",
         own: false,
       }),
@@ -123,7 +128,7 @@ describe("decideInvoiceDeletion: group invoices with a group membership (AC-09)"
   it("allows with the organization flag alone (organization OR group)", () => {
     expect(
       decide({
-        org: only({ deleteOthersInvoices: true }),
+        org: only({ deleteOthersInvoices: true, deployModels: false }),
         group: NONE,
         scope: "group",
         own: false,
@@ -136,7 +141,7 @@ describe("decideInvoiceDeletion: group invoices with a group membership (AC-09)"
     expect(decide({ org: NONE, group, scope: "group", own: false })).toBe(
       "forbidden",
     );
-    const others = only({ deleteOthersInvoices: true });
+    const others = only({ deleteOthersInvoices: true, deployModels: false });
     expect(
       decide({ org: NONE, group: others, scope: "group", own: true }),
     ).toBe("forbidden");
@@ -180,7 +185,7 @@ describe("decideInvoiceDeletion: group invoices without a group membership (AC-1
   it("is not-found when only the non-applicable delete flag is granted", () => {
     expect(
       decide({
-        org: only({ deleteOthersInvoices: true }),
+        org: only({ deleteOthersInvoices: true, deployModels: false }),
         scope: "group",
         own: true,
       }),
@@ -202,7 +207,11 @@ describe("decideInvoiceDeletion: group invoices without a group membership (AC-1
     }
     expect(
       decide({
-        org: only({ readInvoices: true, deleteOthersInvoices: true }),
+        org: only({
+          readInvoices: true,
+          deleteOthersInvoices: true,
+          deployModels: false,
+        }),
         scope: "group",
         own: true,
       }),
@@ -219,7 +228,7 @@ describe("decideInvoiceDeletion: group invoices without a group membership (AC-1
     ).toBe("allowed");
     expect(
       decide({
-        org: only({ deleteOthersInvoices: true }),
+        org: only({ deleteOthersInvoices: true, deployModels: false }),
         scope: "group",
         own: false,
       }),
@@ -229,7 +238,11 @@ describe("decideInvoiceDeletion: group invoices without a group membership (AC-1
   it("is allowed with organization read plus the applicable flag", () => {
     expect(
       decide({
-        org: only({ readInvoices: true, deleteOthersInvoices: true }),
+        org: only({
+          readInvoices: true,
+          deleteOthersInvoices: true,
+          deployModels: false,
+        }),
         scope: "group",
         own: false,
       }),
@@ -255,6 +268,7 @@ describe("decideInvoiceDeletion: exhaustive matrix against an independent oracle
                 createInvoices: Boolean(n & 2),
                 deleteOwnInvoices: Boolean(n & 4),
                 deleteOthersInvoices: Boolean(n & 8),
+                deployModels: false,
               });
               const org = flags(o);
               const group = member ? flags(g) : null;

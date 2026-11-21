@@ -70,6 +70,7 @@ async function storedFlags(userId: string, organizationId: string) {
     createInvoices: row.createInvoices,
     deleteOwnInvoices: row.deleteOwnInvoices,
     deleteOthersInvoices: row.deleteOthersInvoices,
+    deployModels: false,
   };
 }
 
@@ -82,6 +83,7 @@ async function storedGroupFlags(userId: string, groupId: string) {
     createInvoices: row.createInvoices,
     deleteOwnInvoices: row.deleteOwnInvoices,
     deleteOthersInvoices: row.deleteOthersInvoices,
+    deployModels: false,
   };
 }
 
@@ -104,12 +106,17 @@ describe("RP0-22 PUT organization membership permissions", () => {
 
     // Full replace, no implication between flags: read stays false.
     const second = await call("put", orgPath(s, s.member.id), cookie, {
-      permissions: { ...NO_FLAGS, deleteOthersInvoices: true },
+      permissions: {
+        ...NO_FLAGS,
+        deleteOthersInvoices: true,
+        deployModels: false,
+      },
     });
     expect(second.status).toBe(200);
     expect(await storedFlags(s.member.id, s.org.id)).toEqual({
       ...NO_FLAGS,
       deleteOthersInvoices: true,
+      deployModels: false,
     });
   });
 
@@ -679,6 +686,7 @@ describe("CR-103 administrative races", () => {
       ...NO_FLAGS,
       deleteOwnInvoices: true,
       deleteOthersInvoices: true,
+      deployModels: false,
     },
   };
 

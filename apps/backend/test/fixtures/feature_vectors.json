@@ -1,0 +1,151 @@
+{
+  "schema": "invoice-features-v2",
+  "about": "Shared feature vectors: invoice + priors in, the 8 expected features out. Python (invoiceops-ml) and JS (invoiceops-app worker payload) must agree on every case.",
+  "cases": [
+    {
+      "name": "new supplier",
+      "note": "No priors: is_new_supplier=1, amount_vs_median=1, ratio=0",
+      "invoice": {
+        "supplierName": "Acme Ltda",
+        "amountPesos": 250000,
+        "issuedOn": "2025-06-08",
+        "dueOn": "2025-07-08",
+        "createdAt": "2025-06-10T12:00:00+00:00",
+        "businessStatus": "PENDING"
+      },
+      "priors": [],
+      "expected": {
+        "amount_pesos": 250000.0,
+        "payment_term_days": 30.0,
+        "issued_weekday": 6.0,
+        "backdated_days": 2.0,
+        "is_new_supplier": 1.0,
+        "supplier_prior_count": 0.0,
+        "supplier_amount_vs_median": 1.0,
+        "supplier_prior_rejected_ratio": 0.0
+      }
+    },
+    {
+      "name": "mixed statuses",
+      "note": "4 priors: APPROVED, REJECTED, PENDING, CANCELLED. Median of amounts (100k,200k,300k,400k)=250k; ratio = 1 REJECTED / 2 resolved",
+      "invoice": {
+        "supplierName": "Acme Ltda",
+        "amountPesos": 500000,
+        "issuedOn": "2025-06-09",
+        "dueOn": "2025-06-09",
+        "createdAt": "2025-06-10T12:00:00+00:00",
+        "businessStatus": "PENDING"
+      },
+      "priors": [
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 100000,
+          "issuedOn": "2025-05-01",
+          "dueOn": "2025-05-31",
+          "createdAt": "2025-05-02T09:00:00+00:00",
+          "businessStatus": "APPROVED"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 200000,
+          "issuedOn": "2025-05-05",
+          "dueOn": "2025-06-04",
+          "createdAt": "2025-05-06T09:00:00+00:00",
+          "businessStatus": "REJECTED"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 300000,
+          "issuedOn": "2025-05-10",
+          "dueOn": "2025-06-09",
+          "createdAt": "2025-05-11T09:00:00+00:00",
+          "businessStatus": "PENDING"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 400000,
+          "issuedOn": "2025-05-15",
+          "dueOn": "2025-06-14",
+          "createdAt": "2025-05-16T09:00:00+00:00",
+          "businessStatus": "CANCELLED"
+        }
+      ],
+      "expected": {
+        "amount_pesos": 500000.0,
+        "payment_term_days": 0.0,
+        "issued_weekday": 0.0,
+        "backdated_days": 1.0,
+        "is_new_supplier": 0.0,
+        "supplier_prior_count": 4.0,
+        "supplier_amount_vs_median": 2.0,
+        "supplier_prior_rejected_ratio": 0.5
+      }
+    },
+    {
+      "name": "point in time and filtering",
+      "note": "Same-supplier name variant counts; other supplier, future invoice, equal createdAt and a prior decided after createdAt (decidedAt) do not change the ratio",
+      "invoice": {
+        "supplierName": "ACME   ltda ",
+        "amountPesos": 120000,
+        "issuedOn": "2025-06-10",
+        "dueOn": "2025-07-10",
+        "createdAt": "2025-06-10T12:00:00+00:00",
+        "businessStatus": "PENDING"
+      },
+      "priors": [
+        {
+          "supplierName": "acme ltda",
+          "amountPesos": 100000,
+          "issuedOn": "2025-05-01",
+          "dueOn": "2025-05-31",
+          "createdAt": "2025-05-02T09:00:00+00:00",
+          "businessStatus": "REJECTED",
+          "decidedAt": "2025-05-03T09:00:00+00:00"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 140000,
+          "issuedOn": "2025-06-01",
+          "dueOn": "2025-06-30",
+          "createdAt": "2025-06-02T09:00:00+00:00",
+          "businessStatus": "REJECTED",
+          "decidedAt": "2025-06-11T09:00:00+00:00"
+        },
+        {
+          "supplierName": "Other Co",
+          "amountPesos": 999999,
+          "issuedOn": "2025-05-01",
+          "dueOn": "2025-05-31",
+          "createdAt": "2025-05-02T09:00:00+00:00",
+          "businessStatus": "REJECTED"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 777777,
+          "issuedOn": "2025-06-11",
+          "dueOn": "2025-07-11",
+          "createdAt": "2025-06-11T09:00:00+00:00",
+          "businessStatus": "REJECTED"
+        },
+        {
+          "supplierName": "Acme Ltda",
+          "amountPesos": 555555,
+          "issuedOn": "2025-06-10",
+          "dueOn": "2025-07-10",
+          "createdAt": "2025-06-10T12:00:00+00:00",
+          "businessStatus": "REJECTED"
+        }
+      ],
+      "expected": {
+        "amount_pesos": 120000.0,
+        "payment_term_days": 30.0,
+        "issued_weekday": 1.0,
+        "backdated_days": 0.0,
+        "is_new_supplier": 0.0,
+        "supplier_prior_count": 2.0,
+        "supplier_amount_vs_median": 1.0,
+        "supplier_prior_rejected_ratio": 1.0
+      }
+    }
+  ]
+}

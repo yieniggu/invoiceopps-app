@@ -56,6 +56,16 @@ const TAGS = [
     description:
       "Emit, list and revoke operational API tokens (web session only). The secret is shown once.",
   },
+  {
+    name: "Models",
+    description:
+      "Registered MLflow models of a context and their deployments with the official gate (web session only; off until the organization enables mlEnabled).",
+  },
+  {
+    name: "MLflow",
+    description:
+      "Browser leg of the MLflow sign-in handoff (web session cookie): redirects to the gateway callback with a single-use code.",
+  },
 ];
 
 /** Generates the OpenAPI 3.1 document from the operation registry. */

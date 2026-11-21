@@ -7,6 +7,15 @@ export const SERIALIZABLE = {
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
 } as const;
 
+/**
+ * Explicit timing of the interactive transactions that do not run under
+ * runSerializable. `maxWait` bounds the wait for a pooled connection (Prisma
+ * P2028 "unable to start a transaction in the given time"); `timeout` bounds
+ * the transaction itself. Both end in the same retryable 503 through
+ * mapTransactionTimeout.
+ */
+export const TRANSACTION_TIMING = { maxWait: 5_000, timeout: 5_000 } as const;
+
 const MAX_SERIALIZABLE_RETRIES = 3;
 
 // Jittered pause between two attempts so conflicting transactions that failed
@@ -127,4 +136,23 @@ export async function runSerializable<T>(
   }
 
   throw conflictError();
+}
+
+/**
+ * For an interactive transaction that is not serializable (so it needs no
+ * retries): a P2028 (could not start in time, or timed out) answers the
+ * retryable 503 with Retry-After instead of an opaque 500; any other error
+ * passes through untouched. Pair it with TRANSACTION_TIMING.
+ */
+export async function mapTransactionTimeout<T>(
+  operation: () => Promise<T>,
+  operationName = "unnamed",
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isTransactionTimeout(error)) throw error;
+    logConflict(operationName, 1, "gave_up", "timeout");
+    throw retryableConflict();
+  }
 }

@@ -48,6 +48,49 @@ services:
       AUTH_TRUST_PROXY_HOPS: "1"
       # Browser-facing origin checked on cookie writes (TLS ends upstream).
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://invoiceops.aglai.dev}
+      # Service credential of POST /internal/api-tokens/introspect (MLflow
+      # gateway). Empty: the endpoint refuses every request. Set but weak
+      # (shorter than 32 characters, with whitespace, or not random-looking):
+      # the backend refuses to start.
+      INTERNAL_INTROSPECTION_SECRET: ${INTERNAL_INTROSPECTION_SECRET:-}
+      # The session cookie is always host-only (there is no setting for a parent
+      # domain): MLflow sign-in is a redirect handoff, not a shared cookie.
+      # The three service secrets below must each be random and DIFFERENT from
+      # one another (the backend refuses to start otherwise).
+      # Models section (MLOPS-05). All empty: the section's endpoints answer 503
+      # and nothing else changes. URLs are internal (compose network) except
+      # MLFLOW_PUBLIC_URL, the browser-facing MLflow origin (for example
+      # https://mlflow-invoiceops.aglai.dev; no path, https in production): it is
+      # also the only redirect_uri host of GET /api/v1/mlflow/authorize (callback
+      # <origin>/_gateway/callback). Empty: that endpoint answers 503. Secrets are >= 32
+      # characters; each URL needs its secret and vice versa.
+      MODEL_API_URL: ${MODEL_API_URL:-}
+      MODEL_API_SERVICE_TOKEN: ${MODEL_API_SERVICE_TOKEN:-}
+      MLFLOW_GATEWAY_INTERNAL_URL: ${MLFLOW_GATEWAY_INTERNAL_URL:-}
+      GATEWAY_SERVICE_READ_TOKEN: ${GATEWAY_SERVICE_READ_TOKEN:-}
+      MLFLOW_PUBLIC_URL: ${MLFLOW_PUBLIC_URL:-}
+      MODEL_DEPLOYMENT_MAX_ACTIVE_PER_SCOPE: ${MODEL_DEPLOYMENT_MAX_ACTIVE_PER_SCOPE:-3}
+      MODEL_DEPLOY_CHECK_MAX_PER_HOUR: ${MODEL_DEPLOY_CHECK_MAX_PER_HOUR:-10}
+      # Automatic invoice predictions (MLOPS-06). The worker runs inside the
+      # backend process and only starts when MODEL_API_URL is configured.
+      # PREDICTION_WORKER_DISABLED=true turns it off (jobs stay PENDING).
+      PREDICTION_WORKER_DISABLED: ${PREDICTION_WORKER_DISABLED:-false}
+      PREDICTION_WORKER_POLL_MS: ${PREDICTION_WORKER_POLL_MS:-2000}
+      PREDICTION_MAX_ATTEMPTS: ${PREDICTION_MAX_ATTEMPTS:-5}
+      PREDICTION_CONCURRENCY: ${PREDICTION_CONCURRENCY:-4}
+      PREDICTION_BATCH_SIZE: ${PREDICTION_BATCH_SIZE:-10}
+      PREDICTION_RETRY_BASE_MS: ${PREDICTION_RETRY_BASE_MS:-5000}
+      # An unavailable Model API costs no attempt: the job waits with a capped
+      # backoff and only fails past its maximum age (24 h by default).
+      PREDICTION_RETRY_MAX_MS: ${PREDICTION_RETRY_MAX_MS:-900000}
+      PREDICTION_MAX_JOB_AGE_MS: ${PREDICTION_MAX_JOB_AGE_MS:-86400000}
+      # Queue gauge in the log (prediction.queue) and the FAILED spike warning.
+      PREDICTION_METRICS_INTERVAL_MS: ${PREDICTION_METRICS_INTERVAL_MS:-60000}
+      PREDICTION_FAILED_WARN_THRESHOLD: ${PREDICTION_FAILED_WARN_THRESHOLD:-10}
+      PREDICTION_FAILED_WINDOW_MS: ${PREDICTION_FAILED_WINDOW_MS:-900000}
+      # Period of the models maintenance task (stale CHECKING rows, quarantines,
+      # orphan and switched-off models).
+      MODELS_RECONCILE_INTERVAL_MS: ${MODELS_RECONCILE_INTERVAL_MS:-30000}
     networks:
       api:
         aliases: [invoiceops-backend]
@@ -68,6 +111,11 @@ services:
       retries: 5
       start_period: 10s
     init: true
+    # `docker stop` sends SIGTERM and waits this long before SIGKILL. The
+    # backend's own hard deadline is SHUTDOWN_DEADLINE_MS (10 s, src/server.ts):
+    # keep this value above it so the process exits by itself and releases its
+    # database pool and prediction claims.
+    stop_grace_period: 20s
     restart: unless-stopped
 
   web:

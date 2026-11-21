@@ -79,11 +79,13 @@ const flagsOf = (row: {
   createInvoices: boolean | null;
   deleteOwnInvoices: boolean | null;
   deleteOthersInvoices: boolean | null;
+  deployModels: boolean | null;
 }) => ({
   readInvoices: row.readInvoices,
   createInvoices: row.createInvoices,
   deleteOwnInvoices: row.deleteOwnInvoices,
   deleteOthersInvoices: row.deleteOthersInvoices,
+  deployModels: row.deployModels,
 });
 
 describe("CR-209 permission changes are audited", () => {
@@ -329,6 +331,9 @@ describe("CR-209 permission changes are audited", () => {
         "createInvoices",
         "deleteOwnInvoices",
         "deleteOthersInvoices",
+        "deployModels",
+        "mlEnabledFrom",
+        "mlEnabledTo",
         "actorIsTarget",
         "createdAt",
       ].sort(),
@@ -417,6 +422,7 @@ describe("CR-210 self-grant is allowed and audited", () => {
         createInvoices: stored.createInvoices,
         deleteOwnInvoices: stored.deleteOwnInvoices,
         deleteOthersInvoices: stored.deleteOthersInvoices,
+        deployModels: false,
       }).toEqual(NO_FLAGS);
     }
   });

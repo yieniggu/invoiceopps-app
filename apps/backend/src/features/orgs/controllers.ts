@@ -122,16 +122,30 @@ export function createOrganizationController(
       "Invalid organization",
     );
     const organizationId = String(request.params.organizationId);
-    const { organization, changed } = await wired(
+    const { organization, previous, changed } = await wired(
       organizations,
     ).updateOrganization(actor.id, organizationId, input);
-    if (changed)
+    if (changed) {
+      const changedFields = (
+        ["name", "description", "mlEnabled"] as const
+      ).filter((field) => organization[field] !== previous[field]);
       logEvent("info", "audit.org_updated", {
         feature: "organizations",
         action: "updated",
         organizationId,
         actorUserId: actor.id,
+        changedFields,
+        // Name and description can be long free text: only the ML switch
+        // carries its old and new value.
+        ...(changedFields.includes("mlEnabled")
+          ? {
+              mlEnabled: organization.mlEnabled,
+              mlEnabledFrom: previous.mlEnabled,
+              mlEnabledTo: organization.mlEnabled,
+            }
+          : {}),
       });
+    }
     response.status(200).json({ organization });
   };
 

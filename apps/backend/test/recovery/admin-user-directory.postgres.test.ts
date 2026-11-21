@@ -551,6 +551,7 @@ describe("AC-02 GET /api/v1/admin/users/{userId}", () => {
     await join(target.id, orgA.id, "ADMIN", {
       readInvoices: true,
       deleteOthersInvoices: true,
+      deployModels: false,
     });
     const g2 = await makeGroup(orgA.id, "Beta group");
     const g1 = await makeGroup(orgA.id, "Alpha group");
@@ -581,6 +582,7 @@ describe("AC-02 GET /api/v1/admin/users/{userId}", () => {
           ...NO_FLAGS,
           readInvoices: true,
           deleteOthersInvoices: true,
+          deployModels: false,
         },
         groups: [
           { group: { id: g1.id, name: "Alpha group" }, permissions: NO_FLAGS },

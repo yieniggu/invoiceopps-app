@@ -330,6 +330,7 @@ const NO_FLAGS = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 describe("APP-03 profile HTTP contract", () => {
@@ -410,6 +411,7 @@ describe("APP-03 profile HTTP contract", () => {
               id: "organization-a",
               name: "Data Academy",
               slug: "data-academy",
+              mlEnabled: false,
             },
             role: "ADMIN",
             permissions: NO_FLAGS,
@@ -420,6 +422,7 @@ describe("APP-03 profile HTTP contract", () => {
               id: "organization-b",
               name: "AI Academy",
               slug: "ai-academy",
+              mlEnabled: false,
             },
             role: "USER",
             permissions: { ...NO_FLAGS, readInvoices: true },
@@ -595,6 +598,7 @@ describe("APP-04 groups HTTP contract", () => {
     createInvoices: false,
     deleteOwnInvoices: false,
     deleteOthersInvoices: false,
+    deployModels: false,
   };
   const group = {
     id: "group-2",

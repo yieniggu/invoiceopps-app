@@ -22,6 +22,33 @@ import {
 } from "./features/admin-users/services.js";
 import { BEARER_SECRET_LOCAL } from "./features/api-tokens/actor.js";
 import { createApiTokenAuthenticator } from "./features/api-tokens/bearer.js";
+import {
+  createSessionIntrospectionHandler,
+  createSessionIntrospectionService,
+  SESSION_INTROSPECTION_PATH,
+  type SessionIntrospectionService,
+} from "./features/api-tokens/session-introspection.js";
+import {
+  createApiTokenIntrospectionService,
+  createIntrospectionHandler,
+  createServiceCredentialGuard,
+  INTROSPECTION_PATH,
+  type ApiTokenIntrospectionService,
+} from "./features/api-tokens/introspection.js";
+import {
+  createExchangeHandler,
+  AUTHORIZE_MAX_PER_MINUTE,
+  AUTHORIZE_WINDOW_MS,
+  createMlflowSsoOperations,
+  AUTHORIZE_PATH,
+  createRevokeHandler,
+  EXCHANGE_PATH,
+  REVOKE_PATH,
+} from "./features/mlflow-sso/routes.js";
+import {
+  createMlflowSsoService,
+  type MlflowSsoService,
+} from "./features/mlflow-sso/service.js";
 import { createApiTokenOperations } from "./features/api-tokens/routes.js";
 import {
   createApiTokenService,
@@ -43,6 +70,11 @@ import {
   type InvoiceDeleteService,
   type InvoiceReadService,
 } from "./features/invoices/services.js";
+import { createModelsOperations } from "./features/models/routes.js";
+import {
+  createModelsService,
+  type ModelsService,
+} from "./features/models/services.js";
 import { createOrganizationOperations } from "./features/orgs/routes.js";
 import {
   createOrganizationService,
@@ -108,6 +140,7 @@ const IDENTIFIER_PARAMS = [
   "userId",
   "invoiceId",
   "tokenId",
+  "deploymentId",
 ];
 
 function rejectPathLikeIdentifier(
@@ -148,6 +181,14 @@ export interface AppOptions {
    * default). server.ts disables it together with the auth limiter.
    */
   apiTokenIssuanceLimiter?: AuthRateLimiter;
+  /** Per-session limiter of GET /api/v1/mlflow/authorize (30 per minute by default). */
+  mlflowAuthorizeLimiter?: AuthRateLimiter;
+  /**
+   * Per-IP limiter of the 401s of the private /internal routes (20 wrong
+   * credentials per minute by default). server.ts disables it together with
+   * the auth limiter.
+   */
+  internalAuthLimiter?: AuthRateLimiter;
   /** Backs the undocumented GET /api/v1/groups. */
   groups?: GroupCatalogService;
   /**
@@ -167,6 +208,26 @@ export interface AppOptions {
   businessPolicies?: BusinessPolicyService;
   /** Backs the documented /api/v1/api-tokens operations. */
   apiTokens?: ApiTokenService;
+  /** Backs the documented /api/v1/models and /api/v1/deployments operations (MLOPS-05). */
+  models?: ModelsService;
+  /** Backs the private POST /internal/api-tokens/introspect (MLOPS-01). */
+  apiTokenIntrospection?: ApiTokenIntrospectionService;
+  /** Backs the private POST /internal/sessions/introspect (MLOPS-02). */
+  sessionIntrospection?: SessionIntrospectionService;
+  /** Backs GET /api/v1/mlflow/authorize and the private exchange/revoke routes. */
+  mlflowSso?: MlflowSsoService;
+  /**
+   * The only redirect_uri the authorize endpoint accepts
+   * (MLFLOW_PUBLIC_URL + callback path). Unset: the endpoint answers 503.
+   */
+  mlflowCallbackUrl?: string;
+  /**
+   * Service credential of the private /internal routes
+   * (INTERNAL_INTROSPECTION_SECRET). Missing: every request to them is refused
+   * (fail closed). A set but weak value (too short, with whitespace or not
+   * random-looking) is rejected at startup, so it never reaches this option.
+   */
+  internalServiceSecret?: string;
   /**
    * Reverse-proxy hops trusted for `request.ip` (AUTH_TRUST_PROXY_HOPS).
    * Undefined keeps "trust proxy" off.
@@ -187,6 +248,11 @@ export function createApp(
     apiTokenIssuanceLimiter = createAuthRateLimiter({
       maxAttempts: TOKEN_ISSUANCE_MAX_PER_WINDOW,
     }),
+    mlflowAuthorizeLimiter = createAuthRateLimiter({
+      maxAttempts: AUTHORIZE_MAX_PER_MINUTE,
+      windowMs: AUTHORIZE_WINDOW_MS,
+    }),
+    internalAuthLimiter,
     groups,
     organizations,
     users,
@@ -197,6 +263,12 @@ export function createApp(
     invoiceDeletion,
     businessPolicies,
     apiTokens,
+    models,
+    apiTokenIntrospection,
+    sessionIntrospection,
+    mlflowSso,
+    mlflowCallbackUrl,
+    internalServiceSecret,
     trustProxyHops,
     publicOrigin,
   }: AppOptions = {},
@@ -215,6 +287,7 @@ export function createApp(
   // first because the body parser picks its limit from them.
   const { prisma } = database;
   const tokenAuthenticator = prisma && createApiTokenAuthenticator(prisma);
+  const ssoService = mlflowSso ?? (prisma && createMlflowSsoService(prisma));
   const operations = [
     ...createAuthOperations(auth, authRateLimiter),
     ...createOrganizationOperations(
@@ -244,6 +317,15 @@ export function createApp(
       auth,
       apiTokens ?? (prisma && createApiTokenService(prisma)),
       apiTokenIssuanceLimiter,
+    ),
+    ...createModelsOperations(
+      auth,
+      models ?? (prisma && createModelsService(prisma)),
+    ),
+    ...createMlflowSsoOperations(
+      ssoService,
+      mlflowCallbackUrl,
+      mlflowAuthorizeLimiter,
     ),
   ];
   const acceptsBearer = createBearerRouteMatcher(operations);
@@ -310,6 +392,8 @@ export function createApp(
     if (
       response.locals[BEARER_SECRET_LOCAL] !== undefined ||
       ONBOARDING_PATHS.has(request.path) ||
+      // Answers a missing, stale or onboarding session with a redirect itself.
+      request.path === AUTHORIZE_PATH ||
       !request.headers.cookie ||
       !auth
     ) {
@@ -434,6 +518,39 @@ export function createApp(
   });
 
   app.use(API_PREFIX, api);
+
+  // Private service-to-service routes: outside API_PREFIX, undocumented, not
+  // proxied by the public nginx and never reachable with a user session or a
+  // user API token (only the service credential passes the guard).
+  // One guard (one limiter) for every private route: a client cannot spread
+  // its wrong guesses across them.
+  const internalGuard = createServiceCredentialGuard(
+    internalServiceSecret,
+    internalAuthLimiter,
+  );
+
+  app.post(
+    INTROSPECTION_PATH,
+    internalGuard,
+    createIntrospectionHandler(
+      apiTokenIntrospection ??
+        (prisma && createApiTokenIntrospectionService(prisma)),
+    ),
+  );
+
+  app.post(
+    SESSION_INTROSPECTION_PATH,
+    internalGuard,
+    createSessionIntrospectionHandler(
+      sessionIntrospection ??
+        (prisma && createSessionIntrospectionService(prisma)),
+    ),
+  );
+
+  app.post(EXCHANGE_PATH, internalGuard, createExchangeHandler(ssoService));
+
+  app.post(REVOKE_PATH, internalGuard, createRevokeHandler(ssoService));
+
   app.use(notFoundHandler);
   app.use(errorHandler);
 

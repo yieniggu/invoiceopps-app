@@ -135,6 +135,7 @@ describe("AC-08 PATCH /organizations/{organizationId}", () => {
         name: "Renamed Org",
         slug: s.org.slug,
         description: "About us",
+        mlEnabled: false,
       },
     });
     const stored = await prisma.organization.findUniqueOrThrow({

@@ -40,6 +40,20 @@ export const retryableConflictResponse: OperationResponse = {
   },
 };
 
+/**
+ * 503 of an operation with two distinct causes: a dependency that is down
+ * (`unavailable`, a description starting with its public code) and the
+ * retryable conflict of runSerializable. Both share the error envelope; the
+ * Retry-After header applies to RETRYABLE_CONFLICT only.
+ */
+export const unavailableOrRetryableResponse = (
+  unavailable: string,
+): OperationResponse => ({
+  description: `${unavailable}; ${retryableConflictResponse.description}`,
+  schema: ERROR,
+  headers: retryableConflictResponse.headers,
+});
+
 /** Read variant of the 503: a snapshot read that timed out or lost its race. */
 export const retryableReadConflictResponse: OperationResponse = {
   description:

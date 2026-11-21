@@ -35,6 +35,10 @@ export const AuthProfileSchema = z
           id: z.string(),
           name: z.string(),
           slug: z.string(),
+          mlEnabled: z.boolean().meta({
+            description:
+              "Whether the Models section is turned on for the organization (MLOPS-05).",
+          }),
         }),
         role: z.enum(OrganizationRole),
         permissions: InvoicePermissionsSchema.meta({
@@ -68,13 +72,19 @@ export const AuthProfileSchema = z
         isPlatformAdministrator: false,
         memberships: [
           {
-            organization: { id: "org-1", name: "Acme", slug: "acme" },
+            organization: {
+              id: "org-1",
+              name: "Acme",
+              slug: "acme",
+              mlEnabled: false,
+            },
             role: "USER",
             permissions: {
               readInvoices: true,
               createInvoices: false,
               deleteOwnInvoices: false,
               deleteOthersInvoices: false,
+              deployModels: false,
             },
             groups: [
               {
@@ -84,12 +94,14 @@ export const AuthProfileSchema = z
                   createInvoices: true,
                   deleteOwnInvoices: false,
                   deleteOthersInvoices: false,
+                  deployModels: false,
                 },
                 effective: {
                   readInvoices: true,
                   createInvoices: true,
                   deleteOwnInvoices: false,
                   deleteOthersInvoices: false,
+                  deployModels: false,
                 },
               },
             ],

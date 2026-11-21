@@ -30,7 +30,11 @@ function harness(options: { mustChangePassword?: boolean } = {}) {
       pageSize: 20,
       total: 0,
     })),
-    updateOrganization: vi.fn(async () => ({ organization, changed: true })),
+    updateOrganization: vi.fn(async () => ({
+      organization,
+      previous: organization,
+      changed: true,
+    })),
     listMembers: vi.fn(async () => ({
       members: [],
       page: 1,

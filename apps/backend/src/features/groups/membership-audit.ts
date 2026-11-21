@@ -24,6 +24,7 @@ function flagsOf(permissions: InvoicePermissions) {
     createInvoices: permissions.createInvoices,
     deleteOwnInvoices: permissions.deleteOwnInvoices,
     deleteOthersInvoices: permissions.deleteOthersInvoices,
+    deployModels: permissions.deployModels,
   };
 }
 

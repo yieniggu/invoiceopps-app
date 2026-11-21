@@ -56,12 +56,21 @@ export const OrganizationCreateRequestSchema = z
   .meta({ id: "OrganizationCreateRequest" });
 
 export const OrganizationUpdateRequestSchema = z
-  .object({ name: name.optional(), description: description.optional() })
+  .object({
+    name: name.optional(),
+    description: description.optional(),
+    mlEnabled: z.boolean().optional().meta({
+      description:
+        "Turns the Models section (MLOPS-05) of the organization on or off; off by default.",
+    }),
+  })
   .strict()
   .refine(
     (request) =>
-      request.name !== undefined || request.description !== undefined,
-    { message: "At least one of name or description is required" },
+      request.name !== undefined ||
+      request.description !== undefined ||
+      request.mlEnabled !== undefined,
+    { message: "At least one of name, description or mlEnabled is required" },
   )
   .meta({
     id: "OrganizationUpdateRequest",
@@ -207,6 +216,7 @@ export const OrganizationBasicSchema = z
     name: z.string(),
     slug: z.string(),
     description: z.string().nullable(),
+    mlEnabled: z.boolean(),
   })
   .meta({ id: "OrganizationBasic" });
 

@@ -102,6 +102,7 @@ describe("RP0-06/RP0-08 organization OpenAPI contract", () => {
     expect(Object.keys(properties("OrganizationBasic")).sort()).toEqual([
       "description",
       "id",
+      "mlEnabled",
       "name",
       "slug",
     ]);

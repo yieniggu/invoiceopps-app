@@ -19,11 +19,22 @@ import {
 } from "../groups/invoice-permissions.js";
 import { lockMembershipsForInvoiceWrite } from "../groups/locks.js";
 import {
+  enqueueInvoicePredictions,
+  findEligibleDeployments,
+  skipPendingPredictions,
+  type EligibleDeployment,
+} from "../predictions/enqueue.js";
+import {
+  readInvoicePredictions,
+  type PredictionDto,
+} from "../predictions/reads.js";
+import {
   fingerprintInvoiceCreate,
   INVOICE_CREATE_FINGERPRINT_VERSION,
   INVOICE_CREATE_OPERATION,
   isSupportedFingerprintVersion,
 } from "./idempotency.js";
+import { supplierKey } from "../../supplier-key.js";
 import { InvoiceSchema } from "./schemas.js";
 import type {
   Invoice,
@@ -64,7 +75,7 @@ export interface InvoiceReadService {
     userId: string,
     target: { invoiceId: string; organizationId: string; groupId?: string },
     token: ApiTokenContext | null,
-  ): Promise<{ invoice: InvoiceView }>;
+  ): Promise<{ invoice: InvoiceView; predictions?: PredictionDto[] }>;
 }
 
 export interface InvoiceDeleteService {
@@ -197,48 +208,49 @@ export function createInvoiceCreateService(
   prisma: PrismaClient,
 ): InvoiceCreateService {
   /**
-   * One serializable attempt. Authorization comes first (rows locked FOR
-   * SHARE, so a concurrent permission change or removal serializes with it)
-   * and the idempotency record is read only afterwards: a revoked actor never
-   * sees a stored snapshot.
-   *
-   * The businessId is not pre-read on the first attempt: a read inside the
-   * SERIALIZABLE transaction adds predicate locks that could abort unrelated
-   * parallel creates. The unique (organizationId, businessId) index decides;
-   * only the attempt after a unique violation looks the businessId up.
+   * Authorization of one create. With `lock` (inside the SERIALIZABLE
+   * transaction) the token and membership rows are held FOR SHARE so a
+   * concurrent permission change or removal serializes with the write.
+   * Without it (the preflight that gates the Deployment read) the same checks
+   * run as plain reads; the locked pass remains the one that decides.
+   * Bearer: the token row is held before any membership lock, so a revocation
+   * serializes with this write (see api-tokens/bearer.ts).
    */
-  async function attempt(
-    transaction: Prisma.TransactionClient,
+  async function authorizeCreate(
+    database: Prisma.TransactionClient,
     actorUserId: string,
     request: InvoiceCreateRequest,
-    idempotencyKey: string,
-    afterUniqueViolation: boolean,
     token: ApiTokenContext | null,
-  ): Promise<InvoiceCreateResult> {
+    lock: boolean,
+  ): Promise<void> {
     const { organizationId, groupId } = request;
-    // Bearer: the token row is held FOR SHARE before any membership lock, so
-    // a revocation serializes with this write (see api-tokens/bearer.ts).
     if (token) {
-      await requireLiveApiToken(transaction, actorUserId, token, {
-        lock: true,
-      });
+      await requireLiveApiToken(database, actorUserId, token, { lock });
       requireTokenOrganization(token, organizationId);
     }
-    const { organizationMembership } = await lockMembershipsForInvoiceWrite(
-      transaction,
-      { userId: actorUserId, organizationId, groupId },
-    );
+    const organizationMembership = lock
+      ? (
+          await lockMembershipsForInvoiceWrite(database, {
+            userId: actorUserId,
+            organizationId,
+            groupId,
+          })
+        ).organizationMembership
+      : await database.organizationMembership.findFirst({
+          where: { userId: actorUserId, organizationId },
+          select: { id: true },
+        });
     // Nonexistent organization and non-member are indistinguishable; the
     // platform administrator has no implicit membership.
     if (!organizationMembership) throw notFound();
     if (groupId !== null) {
-      const group = await transaction.group.findFirst({
+      const group = await database.group.findFirst({
         where: { id: groupId, organizationId },
         select: { id: true },
       });
       if (!group) throw notFound();
     }
-    const permissions = await loadEffectivePermissions(transaction, {
+    const permissions = await loadEffectivePermissions(database, {
       userId: actorUserId,
       organizationId,
       groupId,
@@ -256,7 +268,30 @@ export function createInvoiceCreateService(
       permissions,
       (allowed) => allowed.createInvoices,
     );
+  }
 
+  /**
+   * One serializable attempt. Authorization comes first (rows locked FOR
+   * SHARE, so a concurrent permission change or removal serializes with it)
+   * and the idempotency record is read only afterwards: a revoked actor never
+   * sees a stored snapshot.
+   *
+   * The businessId is not pre-read on the first attempt: a read inside the
+   * SERIALIZABLE transaction adds predicate locks that could abort unrelated
+   * parallel creates. The unique (organizationId, businessId) index decides;
+   * only the attempt after a unique violation looks the businessId up.
+   */
+  async function attempt(
+    transaction: Prisma.TransactionClient,
+    actorUserId: string,
+    request: InvoiceCreateRequest,
+    idempotencyKey: string,
+    afterUniqueViolation: boolean,
+    token: ApiTokenContext | null,
+    eligibleDeployments: readonly EligibleDeployment[],
+  ): Promise<InvoiceCreateResult> {
+    const { organizationId, groupId } = request;
+    await authorizeCreate(transaction, actorUserId, request, token, true);
     const scopeKey = groupId ?? ORGANIZATION_SCOPE_KEY;
     const fingerprint = fingerprintInvoiceCreate(request);
     const record = await transaction.invoiceIdempotencyRecord.findUnique({
@@ -324,6 +359,7 @@ export function createInvoiceCreateService(
         scopeKey,
         businessId: request.businessId,
         supplierName: request.supplierName,
+        supplierKey: supplierKey(request.supplierName),
         amountPesos: request.amountPesos,
         currency: request.currency,
         issuedOn: toCivilDate(request.issuedOn),
@@ -333,6 +369,14 @@ export function createInvoiceCreateService(
       },
     });
     const invoice = toInvoiceDto(row);
+    // Outbox (MLOPS-06): inserts only, in this transaction; the eligible
+    // deployments were read before it (a read here would add predicate locks).
+    // The Model API is called later by the worker, never here.
+    await enqueueInvoicePredictions(
+      transaction,
+      { id: row.id, organizationId, scopeKey },
+      eligibleDeployments,
+    );
     await transaction.invoiceIdempotencyRecord.create({
       data: {
         userId: actorUserId,
@@ -352,6 +396,16 @@ export function createInvoiceCreateService(
 
   return {
     async createInvoice(actorUserId, request, idempotencyKey, token) {
+      // A rejected create (no access, no permission) reads no Deployment: the
+      // unlocked preflight runs first; the locked pass in the transaction
+      // still decides.
+      await authorizeCreate(prisma, actorUserId, request, token, false);
+      // Read once, outside the SERIALIZABLE transaction (see
+      // findEligibleDeployments); a retried attempt reuses it.
+      const eligibleDeployments = await findEligibleDeployments(prisma, {
+        organizationId: request.organizationId,
+        scopeKey: request.groupId ?? ORGANIZATION_SCOPE_KEY,
+      });
       // A unique violation aborts its PostgreSQL transaction, so it is never
       // continued: the next attempt is a new transaction that re-authorizes
       // and re-reads, finding either the winner's record (replay) or the
@@ -370,6 +424,7 @@ export function createInvoiceCreateService(
                     idempotencyKey,
                     race > 0,
                     token,
+                    eligibleDeployments,
                   ),
                 SERIALIZABLE,
               ),
@@ -590,7 +645,12 @@ export function createInvoiceReadService(
           effective,
           (allowed) => allowed.readInvoices,
         );
-        return { invoice: toInvoiceViewDto(row) };
+        const predictions = await readInvoicePredictions(transaction, row);
+        return {
+          invoice: toInvoiceViewDto(row),
+          // Present only while the organization's Models section is on.
+          ...(predictions ? { predictions } : {}),
+        };
       });
     },
   };
@@ -724,6 +784,8 @@ export function createInvoiceDeleteService(
       data: { deletedAt: now, deletedByUserId: actorUserId },
     });
     if (count !== 1) return { deleted: false, groupId: invoice.groupId };
+    // A deleted invoice is never scored: its waiting jobs are skipped.
+    await skipPendingPredictions(transaction, invoiceId);
     await transaction.invoiceEvent.create({
       data: {
         invoiceId,

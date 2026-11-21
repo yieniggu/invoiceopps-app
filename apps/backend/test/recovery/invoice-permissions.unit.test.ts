@@ -25,6 +25,7 @@ const COMBINATIONS: InvoicePermissions[] = Array.from(
     createInvoices: (bits & 2) !== 0,
     deleteOwnInvoices: (bits & 4) !== 0,
     deleteOthersInvoices: (bits & 8) !== 0,
+    deployModels: false,
   }),
 );
 
@@ -33,6 +34,7 @@ const ALL_FALSE: InvoicePermissions = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 function or(a: InvoicePermissions, b: InvoicePermissions): InvoicePermissions {
@@ -41,6 +43,7 @@ function or(a: InvoicePermissions, b: InvoicePermissions): InvoicePermissions {
     createInvoices: a.createInvoices || b.createInvoices,
     deleteOwnInvoices: a.deleteOwnInvoices || b.deleteOwnInvoices,
     deleteOthersInvoices: a.deleteOthersInvoices || b.deleteOthersInvoices,
+    deployModels: a.deployModels || b.deployModels,
   };
 }
 

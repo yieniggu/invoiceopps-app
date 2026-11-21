@@ -87,7 +87,7 @@ export function createInvoiceOperations(
       responses: {
         200: {
           description:
-            "The invoice with groupName (null in the organization scope). groupId is optional context: when given it must be the group of the invoice",
+            "The invoice with groupName (null in the organization scope), plus its automatic predictions while the organization's Models section (mlEnabled) is on. groupId is optional context: when given it must be the group of the invoice",
           schema: InvoiceViewResponseSchema,
         },
         400: validationResponse(

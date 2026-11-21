@@ -146,6 +146,7 @@ describe("AC-08/09/10/22/23 organization directory OpenAPI contract", () => {
     expect(body?.additionalProperties).toBe(false);
     expect(Object.keys((body?.properties ?? {}) as Json).sort()).toEqual([
       "description",
+      "mlEnabled",
       "name",
     ]);
     expect((body?.required ?? []) as string[]).toEqual([]);
