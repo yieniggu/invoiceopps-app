@@ -16,5 +16,6 @@ FROM nginx:1.30.6-alpine
 COPY --from=build /workspace/apps/frontend/dist /usr/share/nginx/html
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/frontend/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY apps/frontend/backend-proxy.conf /etc/nginx/snippets/backend-proxy.conf
 
 EXPOSE 80

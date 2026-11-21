@@ -49,9 +49,56 @@ describe("RP0 administration transport under /api/v1", () => {
     expect(source).not.toMatch(
       /\/platform\/|\/business-policies|\/organizations/,
     );
-    expect(source).not.toMatch(/location\s+~/);
+    // Only the deployments location is a regex one (CR-588).
+    expect(source.match(/location\s+~[^{]*/g)).toEqual([
+      "location ~ ^/api/v1/deployments(/[^/]+)?$ ",
+    ]);
     expect(source).not.toContain("$request_uri");
     expect(source).toMatch(/location\s+\/api\/\s*\{/);
+  });
+
+  it("gives the deployments routes a read timeout longer than the 120 s deploy (CR-588)", () => {
+    const source = readFileSync(
+      new URL("./nginx.conf", import.meta.url),
+      "utf8",
+    );
+    const match = source.match(/location\s+~\s+(\S+)\s*\{([^}]*)\}/);
+    const pattern = match?.[1];
+    const block = match?.[2];
+
+    expect(block, "regex location for the deployments routes").toBeDefined();
+    expect(block).toContain("proxy_pass http://invoiceops-backend:3000;");
+    const seconds = Number(
+      block?.match(/proxy_read_timeout\s+(\d+)s;/)?.[1] ?? 0,
+    );
+    expect(seconds).toBeGreaterThan(120);
+    // The same hop headers as the generic API location: both include the
+    // shared snippet (CR-535).
+    const snippet = "include /etc/nginx/snippets/backend-proxy.conf;";
+    expect(block).toContain(snippet);
+    expect(source.match(/location\s+\/api\/\s*\{([^}]*)\}/)?.[1]).toContain(
+      snippet,
+    );
+    // The list/deploy path and the PATCH of one deployment (it may reload).
+    const regex = new RegExp(pattern ?? "$^");
+    for (const path of [
+      "/api/v1/deployments",
+      "/api/v1/deployments/3f2a",
+      "/api/v1/deployments/3f2a-b",
+    ])
+      expect(regex.test(path), path).toBe(true);
+    for (const path of [
+      "/api/v1/deployments/",
+      "/api/v1/deployments/3f2a/extra",
+      "/api/v1/deploymentsx",
+      "/api/v1/models",
+      "/internal/deployments",
+      "/internal/api/v1/deployments",
+    ])
+      expect(regex.test(path), path).toBe(false);
+    // The generic location keeps the default timeout.
+    const generic = source.match(/location\s+\/api\/\s*\{([^}]*)\}/)?.[1];
+    expect(generic).not.toContain("proxy_read_timeout");
   });
 
   it("forwards real Vite POST/PATCH/DELETE under /api/v1 keeping encoded IDs, JSON, 204 and CSRF headers", async () => {

@@ -181,6 +181,18 @@ describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => 
     "utf8",
   );
   const SNIPPET_PATH = "/etc/nginx/snippets/security-headers.conf";
+  const PROXY_SNIPPET_PATH = "/etc/nginx/snippets/backend-proxy.conf";
+  const proxySnippet = readFileSync(
+    new URL("./backend-proxy.conf", import.meta.url),
+    "utf8",
+  );
+  const PROXIED = [
+    "/api/",
+    "~ ^/api/v1/deployments(/[^/]+)?$",
+    "= /openapi.json",
+    "= /docs",
+    "/docs/",
+  ];
 
   function block(header: string): string {
     const start = source.indexOf(`location ${header} {`);
@@ -203,7 +215,7 @@ describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => 
     );
   });
 
-  it("declares only /api/, /assets/, /docs/, = /docs, = /api, = /healthz, = /openapi.json and the SPA fallback", () => {
+  it("declares only /api/, the deployments regex, /assets/, /docs/, = /docs, = /api, = /healthz, = /openapi.json and the SPA fallback", () => {
     const locations = [...source.matchAll(/location\s+([^{]+?)\s*\{/g)].map(
       (match) => match[1],
     );
@@ -213,6 +225,7 @@ describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => 
         "/",
         "/api/",
         "/assets/",
+        "~ ^/api/v1/deployments(/[^/]+)?$",
         "/docs/",
         "= /api",
         "= /docs",
@@ -221,33 +234,46 @@ describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => 
       ].sort(),
     );
     expect(source).toContain("try_files $uri $uri/ /index.html;");
-    expect(source).not.toMatch(/location\s+~/);
+    // The deployments location is the only regex one (CR-588).
+    expect([...source.matchAll(/location\s+~/g)]).toHaveLength(1);
   });
 
   it("forwards the proxied locations to the project-specific upstream keeping the URI untouched", () => {
-    for (const header of ["/api/", "= /openapi.json", "= /docs", "/docs/"]) {
+    for (const header of PROXIED) {
       const body = block(header);
       expect(body, header).toMatch(
         /proxy_pass http:\/\/invoiceops-backend:3000;/,
       );
       expect(body, header).not.toMatch(/\/\/backend:3000/);
-      expect(body, header).toContain("proxy_set_header Host $http_host;");
-      expect(body, header).toContain(
-        "proxy_set_header X-Forwarded-Proto $scheme;",
-      );
       expect(body, header).not.toMatch(/rewrite|try_files/);
     }
+    expect(proxySnippet).toContain("proxy_set_header Host $http_host;");
+    expect(proxySnippet).toContain(
+      "proxy_set_header X-Forwarded-Proto $scheme;",
+    );
+  });
+
+  it("takes the hop headers from one shared snippet instead of repeating them per location (CR-535)", () => {
+    for (const header of PROXIED) {
+      const body = block(header);
+      expect(body, header).toContain(`include ${PROXY_SNIPPET_PATH};`);
+      expect(body, header).not.toContain("proxy_set_header");
+    }
+    // Exactly the proxied locations use it; nothing else.
+    expect(source.match(/^\s*include .*backend-proxy\.conf;/gm)).toHaveLength(
+      PROXIED.length,
+    );
+    expect(
+      readFileSync(new URL("./Dockerfile", import.meta.url), "utf8"),
+    ).toContain(`COPY apps/frontend/backend-proxy.conf ${PROXY_SNIPPET_PATH}`);
   });
 
   it("overwrites X-Forwarded-For with the real client and never forwards CF-Connecting-IP", () => {
-    for (const header of ["/api/", "= /openapi.json", "= /docs", "/docs/"]) {
-      const body = block(header);
-      expect(body, header).toContain(
-        "proxy_set_header X-Forwarded-For $remote_addr;",
-      );
-      expect(body, header).not.toContain("$proxy_add_x_forwarded_for");
-      expect(body, header).toContain('proxy_set_header CF-Connecting-IP "";');
-    }
+    expect(proxySnippet).toContain(
+      "proxy_set_header X-Forwarded-For $remote_addr;",
+    );
+    expect(proxySnippet).not.toContain("$proxy_add_x_forwarded_for");
+    expect(proxySnippet).toContain('proxy_set_header CF-Connecting-IP "";');
   });
 
   it("derives the client address from CF-Connecting-IP only for private ranges", () => {
@@ -337,6 +363,14 @@ describe("RP0 nginx surface is exactly /api/, = /openapi.json and /docs", () => 
     // would intersect with the docs one.
     expect(securityHeaders).not.toContain("Content-Security-Policy");
     expect(source).not.toContain("Content-Security-Policy");
+  });
+
+  it("documents that the Cloudflare edge may cut the deploy at ~100 s with a 524 (CR-582)", () => {
+    const start = source.indexOf("location ~ ^/api/v1/deployments(/[^/]+)?$ {");
+    const comment = source.slice(source.lastIndexOf("\n\n", start), start);
+    expect(comment).toMatch(/Cloudflare/);
+    expect(comment).toMatch(/524/);
+    expect(comment).toMatch(/~?100 s/);
   });
 
   it("serves /healthz from nginx itself", () => {
