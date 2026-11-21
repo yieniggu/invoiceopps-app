@@ -110,7 +110,8 @@ export function AdminUsersScreen() {
       </div>
       <QueryFeedback
         query={users}
-        loading="Cargando usuarios..."
+        skeleton={3}
+        loadingLabel="Cargando usuarios"
         error="No fue posible cargar los usuarios."
         staleError="No fue posible actualizar la lista de usuarios; lo que ves puede estar desactualizado."
         retryLabel="Reintentar usuarios"

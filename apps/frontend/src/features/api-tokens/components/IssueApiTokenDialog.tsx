@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { Dialog } from "../../../components/Dialog";
+import { PendingButton } from "../../../components/PendingButton";
 import { FieldMessage } from "../../../components/FieldMessage";
 import {
   describeExpiry,
@@ -329,17 +330,15 @@ export function IssueApiTokenDialog({
           <button type="button" className="secondary-button" onClick={onClose}>
             Cancelar
           </button>
-          <button
+          <PendingButton
             type="submit"
+            pending={pending}
             aria-disabled={pending || undefined}
-            aria-busy={pending}
+            announce={{ pending: "Emitiendo token" }}
           >
-            {pending ? "Emitiendo token…" : "Emitir token"}
-          </button>
+            Emitir token
+          </PendingButton>
         </div>
-        <p role="status" className="visually-hidden">
-          {pending ? "Emitiendo el token…" : ""}
-        </p>
       </form>
     </Dialog>
   );

@@ -27,6 +27,29 @@ export interface Invoice {
   createdAt: string;
 }
 
+/**
+ * Automatic prediction of an invoice by one deployment (MLOPS-06). The API
+ * sends them only while the organization's Models section is on.
+ */
+export interface InvoicePrediction {
+  id: string;
+  deploymentId: string;
+  /** Scope of the model: an organization model or a group model. */
+  deploymentScope: "ORGANIZATION" | "GROUP";
+  registeredModel: string;
+  modelVersion: string;
+  runId: string | null;
+  /** Probability that the invoice is rejected (0 to 1); `null` until SUCCEEDED. */
+  probability: number | null;
+  status: "PENDING" | "SUCCEEDED" | "FAILED" | "SKIPPED";
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** An invoice as GET /invoices/{id} answers it: `predictions` only when the API sent them. */
+export type InvoiceDetail = Invoice & { predictions?: InvoicePrediction[] };
+
 /** One page of GET /invoices. */
 export interface InvoicePage {
   items: Invoice[];

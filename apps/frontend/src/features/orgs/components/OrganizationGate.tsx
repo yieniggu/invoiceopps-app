@@ -1,3 +1,4 @@
+import { Skeleton } from "../../../components/Skeleton";
 import type { ReactNode } from "react";
 import { useParams } from "react-router";
 
@@ -50,7 +51,7 @@ export function OrganizationGate({
             </button>
           </>
         ) : (
-          <p role="status">Cargando organización...</p>
+          <Skeleton rows={3} label="Cargando organización" />
         )}
       </div>
     );

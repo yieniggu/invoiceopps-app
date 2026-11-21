@@ -1,3 +1,4 @@
+import { DeployModelsIndicator } from "../../permissions/components/DeployModelsIndicator";
 import { describePermissions } from "../../permissions/types";
 import type { OrganizationOption, UserDraft } from "./draft";
 import { memberRoleLabel } from "../../orgs/types/roles";
@@ -45,6 +46,7 @@ export function WizardSummary({
               <p className="muted">
                 En la organización:{" "}
                 {describePermissions(organization.permissions)}
+                <DeployModelsIndicator permissions={organization.permissions} />
               </p>
               {organization.groups.length === 0 ? (
                 <p className="muted">Sin grupos.</p>
@@ -54,6 +56,7 @@ export function WizardSummary({
                     <li key={group.key}>
                       Grupo {group.groupName}:{" "}
                       {describePermissions(group.permissions)}
+                      <DeployModelsIndicator permissions={group.permissions} />
                     </li>
                   ))}
                 </ul>

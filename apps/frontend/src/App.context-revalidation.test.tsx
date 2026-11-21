@@ -102,6 +102,7 @@ function http(initial: ReturnType<typeof profileOf> = orgReader) {
               createInvoices: false,
               deleteOwnInvoices: false,
               deleteOthersInvoices: false,
+              deployModels: false,
             },
           },
         ],

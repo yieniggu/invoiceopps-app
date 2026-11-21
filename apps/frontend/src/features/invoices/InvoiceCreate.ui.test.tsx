@@ -311,12 +311,14 @@ describe("creating an invoice (AC-01, AC-02)", () => {
     fireEvent.submit(button.closest("form")!);
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Creando factura…" }),
-      ).toBeTruthy(),
+        screen
+          .getByRole("button", { name: "Crear factura" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
     );
     expect(
       screen
-        .getByRole("button", { name: "Creando factura…" })
+        .getByRole("button", { name: "Crear factura" })
         .getAttribute("aria-disabled"),
     ).toBe("true");
     expect(posts(transport)).toHaveLength(1);
@@ -516,7 +518,13 @@ describe("focus around a request (CR-328)", () => {
     const supplier = screen.getByLabelText("Proveedor") as HTMLInputElement;
     supplier.focus();
     fireEvent.submit(supplier.closest("form")!);
-    await screen.findByRole("button", { name: "Creando factura…" });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Crear factura" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
+    );
     expect(document.activeElement).toBe(supplier);
     expect(supplier.readOnly).toBe(true);
     expect(supplier.disabled).toBe(false);
@@ -1222,11 +1230,12 @@ describe("automation contract: state and outcome", () => {
     expect(document.querySelector("[data-failure-kind]")).toBeNull();
     // The slot keeps its place with a neutral status, not the stale failure.
     const retrying = screen.getByTestId("invoice-create-retrying");
-    // The submit label is the single visible progress signal: no slot text.
+    // The submit button is the single visible progress signal (spinner over
+    // its label, busy): no slot text, and no «Creando…» text.
     expect(retrying.textContent).toBe("");
-    expect(screen.getByTestId("invoice-create-submit").textContent).toBe(
-      "Creando factura…",
-    );
+    const submit = screen.getByTestId("invoice-create-submit");
+    expect(submit.textContent).toBe("Crear factura");
+    expect(submit.getAttribute("aria-busy")).toBe("true");
     // Neutral, not error-styled, on the same node that held the failure.
     expect(retrying.parentElement).toBe(box);
     expect(
@@ -1237,7 +1246,7 @@ describe("automation contract: state and outcome", () => {
     expect(retrying.closest("[role='status'], [aria-live]")).toBeNull();
     const regions = speaking();
     expect(regions).toHaveLength(1);
-    expect(regions[0].textContent).toBe("Creando la factura…");
+    expect(regions[0].textContent).toBe("Creando factura");
     expect(retrying.hasAttribute("data-error-status")).toBe(false);
     expect(retrying.hasAttribute("data-error-code")).toBe(false);
     // The button the person activated stays, so the focus is not lost.
@@ -1405,7 +1414,7 @@ describe("automation contract: state and outcome", () => {
     expect(screen.queryByTestId("invoice-create-retrying")).toBeNull();
     const regions = speaking();
     expect(regions).toHaveLength(1);
-    expect(regions[0].textContent).toBe("Creando la factura…");
+    expect(regions[0].textContent).toBe("Creando factura");
     await act(async () => answer.resolve(await created()));
     await screen.findByTestId("invoice-create-created");
     expect(screen.queryByTestId("invoice-create-sending")).toBeNull();
@@ -1442,7 +1451,7 @@ describe("automation contract: state and outcome", () => {
     expect(document.querySelector("[data-failure-kind]")).toBeNull();
     const regions = speaking();
     expect(regions).toHaveLength(1);
-    expect(regions[0].textContent).toBe("Creando la factura…");
+    expect(regions[0].textContent).toBe("Creando factura");
     await act(async () => answer.resolve(await created()));
     await screen.findByTestId("invoice-create-created");
     expect(screen.queryByTestId("invoice-create-sending")).toBeNull();

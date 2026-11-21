@@ -1,3 +1,4 @@
+import { Skeleton } from "../../../components/Skeleton";
 import { useSearchParams } from "react-router";
 
 import { PageHeader } from "../../../components/PageHeader";
@@ -64,7 +65,7 @@ export function CreateUserScreen() {
           initialOrganization={looked}
         />
       ) : organizations.isError ? null : (
-        <p role="status">Cargando organizaciones...</p>
+        <Skeleton rows={3} label="Cargando organizaciones" />
       )}
     </div>
   );

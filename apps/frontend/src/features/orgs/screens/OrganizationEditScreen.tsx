@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useNavigate } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
@@ -39,7 +40,8 @@ function EditLoader({ organizationId }: { organizationId: string }) {
         <PageHeader title="Editar organización" />
         <QueryFeedback
           query={query}
-          loading="Cargando organización..."
+          skeleton={3}
+          loadingLabel="Cargando organización"
           error="No fue posible cargar la organización."
           retryLabel="Reintentar organización"
         />
@@ -92,9 +94,18 @@ function EditView({
         nameInput={form.nameInput}
         onSubmit={form.submit}
       >
-        <button type="submit" disabled={update.isPending}>
-          {update.isPending ? "Guardando..." : "Guardar cambios"}
-        </button>
+        <PendingButton
+          type="submit"
+          disabled={update.isPending}
+          pending={update.isPending}
+          announce={{
+            pending: "Guardando organización",
+            done: "Organización guardada",
+            succeeded: update.isSuccess,
+          }}
+        >
+          Guardar cambios
+        </PendingButton>
         <MutationFeedback
           isError={update.isError}
           error={update.error}

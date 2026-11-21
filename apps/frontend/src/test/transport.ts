@@ -224,12 +224,14 @@ export const ALL_PERMISSIONS = {
   createInvoices: true,
   deleteOwnInvoices: true,
   deleteOthersInvoices: true,
+  deployModels: false,
 };
 export const NO_PERMISSIONS = {
   readInvoices: false,
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 
 /** Spread into raw profile memberships that do not care about v2 flags. */
@@ -241,7 +243,12 @@ export const ACCESS_NONE = {
 /** Profile membership (v2): organization flags plus the groups with their
  * direct and effective flags. */
 export function membership(
-  organization: { id: string; name: string; slug?: string },
+  organization: {
+    id: string;
+    name: string;
+    slug?: string;
+    mlEnabled?: boolean;
+  },
   role: "ADMIN" | "USER" = "USER",
   extra: {
     permissions?: typeof NO_PERMISSIONS;
@@ -253,7 +260,7 @@ export function membership(
   } = {},
 ) {
   return {
-    organization: { slug: organization.id, ...organization },
+    organization: { slug: organization.id, mlEnabled: false, ...organization },
     role,
     permissions: extra.permissions ?? NO_PERMISSIONS,
     groups: (extra.groups ?? []).map((entry) => ({

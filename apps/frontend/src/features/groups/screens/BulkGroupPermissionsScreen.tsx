@@ -48,7 +48,8 @@ function BulkView({ organization, group }: GroupContext) {
       }))}
       save={save}
       messages={{
-        loading: "Cargando miembros del grupo...",
+        skeleton: 3,
+        loadingLabel: "Cargando miembros del grupo",
         error: "No fue posible cargar los miembros del grupo.",
         retryLabel: "Reintentar miembros del grupo",
       }}

@@ -6,6 +6,7 @@ import type { Profile } from "../../auth/types";
 import { paths } from "../../navigation/paths";
 import { Toast } from "../../../components/Toast";
 import { useRouteNotice } from "../../navigation/useRouteNotice";
+import { ModelsSectionToggle } from "../components/ModelsSectionToggle";
 import { OrganizationGate } from "../components/OrganizationGate";
 import { useOrganizationQuery } from "../hooks/useOrganizations";
 
@@ -83,7 +84,8 @@ function OrganizationSummaryView({
       <Toast message={notice.message} noticeId={notice.id} />
       <QueryFeedback
         query={query}
-        loading="Cargando organización..."
+        skeleton={3}
+        loadingLabel="Cargando organización"
         error="No fue posible cargar la información de la organización."
         staleError="No fue posible actualizar la información de la organización; lo que ves puede estar desactualizado."
         retryLabel="Reintentar organización"
@@ -114,6 +116,12 @@ function OrganizationSummaryView({
             </div>
           </dl>
         </section>
+      ) : null}
+      {canManage && detail ? (
+        <ModelsSectionToggle
+          organizationId={organization.id}
+          enabled={detail.organization.mlEnabled === true}
+        />
       ) : null}
     </div>
   );

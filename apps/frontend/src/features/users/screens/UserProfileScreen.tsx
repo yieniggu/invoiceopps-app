@@ -64,7 +64,8 @@ function UserProfileView({
       <PageHeader title={detail?.user.name ?? "Persona"} />
       <QueryFeedback
         query={query}
-        loading="Cargando persona..."
+        skeleton={3}
+        loadingLabel="Cargando persona"
         error="No fue posible cargar a la persona."
         staleError="No fue posible actualizar los datos de la persona; lo que ves puede estar desactualizado."
         retryLabel="Reintentar persona"

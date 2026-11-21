@@ -1,9 +1,11 @@
 import { useId, useState, type FormEvent } from "react";
 
+import { PendingButton } from "../../../components/PendingButton";
 import { MAX_BULK_MEMBERS } from "../../../lib/limits";
 import { describeError } from "../../auth/api/apiError";
 import {
   NO_PERMISSIONS,
+  type BulkPermissions,
   samePermissions,
   type InvoicePermissions,
 } from "../types";
@@ -39,10 +41,12 @@ export function BulkPermissionsForm({
   ignoredCount: number;
   isPending: boolean;
   error: unknown;
-  onApply: (userIds: string[], permissions: InvoicePermissions) => void;
+  onApply: (userIds: string[], permissions: BulkPermissions) => void;
 }) {
   const titleId = useId();
   const [draft, setDraft] = useState<InvoicePermissions>();
+  // `deployModels` travels only if the admin touched its toggle (CR-590).
+  const [deployTouched, setDeployTouched] = useState(false);
   // The editor starts from the flags everybody shares, or none when they differ.
   const first = people[0];
   const uniform = first
@@ -56,9 +60,10 @@ export function BulkPermissionsForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isPending || count === 0 || tooMany) return;
+    const { deployModels, ...invoiceFlags } = value;
     onApply(
       people.map(({ id }) => id),
-      { ...value },
+      deployTouched ? { ...invoiceFlags, deployModels } : invoiceFlags,
     );
   };
 
@@ -92,7 +97,10 @@ export function BulkPermissionsForm({
         level={level}
         scopeName={scopeName}
         value={value}
-        onChange={setDraft}
+        onChange={(next) => {
+          if (next.deployModels !== value.deployModels) setDeployTouched(true);
+          setDraft(next);
+        }}
         disabled={isPending}
       />
       {tooMany ? (
@@ -108,11 +116,14 @@ export function BulkPermissionsForm({
           )}
         </p>
       ) : null}
-      <button type="submit" disabled={isPending || count === 0 || tooMany}>
-        {isPending
-          ? "Aplicando..."
-          : `Aplicar a ${count} ${count === 1 ? "miembro" : "miembros"}`}
-      </button>
+      <PendingButton
+        type="submit"
+        disabled={isPending || count === 0 || tooMany}
+        pending={isPending}
+        announce={{ pending: "Aplicando permisos" }}
+      >
+        {`Aplicar a ${count} ${count === 1 ? "miembro" : "miembros"}`}
+      </PendingButton>
     </form>
   );
 }

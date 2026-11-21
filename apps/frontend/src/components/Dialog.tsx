@@ -70,7 +70,8 @@ export function Dialog({
       const target = returnFocusTo ? returnFocusTo.current : previous;
       // `body` is what holds focus when the opener vanished before the dialog
       // opened (the screen changed in the same render), and a disabled button
-      // (e.g. "Creando...", confirmed before the success screen rendered)
+      // (e.g. a pending submit button, confirmed before the success
+      // screen rendered)
       // cannot take focus: neither is a place to return to, so both fall back
       // to the page title like a removed opener.
       const reachable =

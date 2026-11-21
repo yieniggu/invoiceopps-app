@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 
+import { PendingButton } from "../../../components/PendingButton";
 import { BackLink } from "../../../components/BackLink";
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
@@ -54,11 +55,7 @@ function CreateInvoiceContainer({
   const retrying = form.uncertain && !confirming;
 
   // Persistent live region: it exists before it speaks.
-  const status = pending
-    ? "Creando la factura…"
-    : created
-      ? "Factura creada."
-      : "";
+  const status = pending ? "Creando factura" : created ? "Factura creada." : "";
 
   const confirmation = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -250,15 +247,15 @@ function CreateInvoiceContainer({
               </div>
             </div>
           ) : null}
-          <button
+          <PendingButton
             id="invoice-create-submit"
             data-testid="invoice-create-submit"
             type="submit"
             aria-disabled={pending || undefined}
-            aria-busy={pending}
+            pending={pending}
           >
-            {pending ? "Creando factura…" : "Crear factura"}
-          </button>
+            Crear factura
+          </PendingButton>
         </InvoiceCreateForm>
       )}
     </div>

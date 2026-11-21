@@ -117,12 +117,37 @@ describe("CR-021 temporary password submit", () => {
       screen.getByLabelText("Contraseña nueva").closest("form")!,
     );
 
-    const button = await screen.findByRole("button", { name: /cambiando/i });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    const button = await screen.findByRole("button", {
+      name: "Cambiar contraseña",
+    });
+    await waitFor(() =>
+      expect((button as HTMLButtonElement).disabled).toBe(true),
+    );
+    expect(button.getAttribute("aria-busy")).toBe("true");
     expect(passwordPosts(fetchMock)).toHaveLength(1);
 
     finish(new Response(null, { status: 204 }));
     await waitFor(() => expect(passwordPosts(fetchMock)).toHaveLength(1));
+  });
+
+  it("announces the pending state to screen readers while the request runs (CR-562)", async () => {
+    let finish: (response: Response) => void = () => {};
+    mockPending(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderForcedScreen();
+    fill(temporary, "a-new-password-123");
+    expect(screen.queryByText("Cambiando contraseña")).toBeNull();
+
+    submit();
+
+    const status = await screen.findByText("Cambiando contraseña");
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.className).toContain("visually-hidden");
+    finish(new Response(null, { status: 204 }));
   });
 
   it("shows a Spanish network error and re-enables the form", async () => {
@@ -221,6 +246,82 @@ describe("CR-022 temporary password accessibility", () => {
     await waitFor(() => expect(document.activeElement).toBe(field));
     expect(field.getAttribute("aria-invalid")).toBe("true");
     expect(field.getAttribute("aria-describedby")).toBe(alert.id);
+  });
+
+  it("shows how long to wait when the password change is rate limited (CR-574)", async () => {
+    mockPending(
+      () =>
+        new Response(
+          JSON.stringify({ error: { code: "RATE_LIMITED", message: "x" } }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": "300",
+            },
+          },
+        ),
+    );
+    await renderForcedScreen();
+    fill("temporary-pass-1", "a-new-password-123");
+    submit();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Demasiados intentos. Espera 5 min.");
+  });
+
+  it("falls back to a generic wait when the 429 carries no Retry-After (CR-574)", async () => {
+    mockPending(() => jsonResponse({ error: { code: "RATE_LIMITED" } }, 429));
+    await renderForcedScreen();
+    fill("temporary-pass-1", "a-new-password-123");
+    submit();
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Demasiados intentos. Espera un momento.",
+    );
+  });
+
+  it("tells a busy system from other failures on 503 RETRYABLE_CONFLICT (CR-574)", async () => {
+    mockPending(() =>
+      jsonResponse(
+        { error: { code: "RETRYABLE_CONFLICT", message: "x" } },
+        503,
+      ),
+    );
+    await renderForcedScreen();
+    fill("temporary-pass-1", "a-new-password-123");
+    submit();
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "El sistema está ocupado. Intenta nuevamente en unos segundos.",
+    );
+  });
+
+  it("shows an inline error and stays on the page for a wrong temporary password", async () => {
+    const fetchMock = mockPending(() =>
+      jsonResponse(
+        {
+          error: {
+            code: "INVALID_CURRENT_PASSWORD",
+            message: "The current password is incorrect.",
+          },
+        },
+        400,
+      ),
+    );
+    await renderForcedScreen();
+    fill("wrong-temporary-1", "a-new-password-123");
+
+    submit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("La contraseña temporal no es correcta.");
+    const field = screen.getByLabelText("Contraseña temporal");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(passwordPosts(fetchMock)).toHaveLength(1);
+    expect(
+      screen.getByRole("heading", { name: /cambia tu contraseña temporal/i }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/sesión no está disponible/i)).toBeNull();
   });
 
   it("focuses the new password on a server validation error", async () => {

@@ -134,6 +134,9 @@ function ApiTokensContainer({ profile }: { profile: Profile }) {
           ) : undefined
         }
       />
+      {options.length === 0 ? (
+        <p className="muted">Sin permisos para emitir tokens</p>
+      ) : null}
       <p role="status" className="visually-hidden">
         {notice}
       </p>
@@ -153,12 +156,6 @@ function ApiTokensContainer({ profile }: { profile: Profile }) {
         }
         noticeId={`abandoned-${abandoned.count}`}
       />
-      {options.length === 0 ? (
-        <p role="status">
-          No tienes permisos sobre facturas en tus organizaciones, así que no
-          puedes emitir tokens. Pide a un administrador que te los otorgue.
-        </p>
-      ) : null}
       {profile.memberships.length > 1 ? (
         <div className="form-field">
           <label htmlFor="api-tokens-organization">Organización</label>
@@ -177,7 +174,8 @@ function ApiTokensContainer({ profile }: { profile: Profile }) {
       ) : null}
       <QueryFeedback
         query={tokens}
-        loading="Cargando tokens..."
+        skeleton={3}
+        loadingLabel="Cargando tokens"
         error="No fue posible cargar los tokens."
         staleError="No fue posible actualizar la lista de tokens; lo que ves puede estar desactualizado."
         retryLabel="Reintentar tokens"

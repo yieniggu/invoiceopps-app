@@ -53,7 +53,7 @@ describe("APP12 S3 invoice presentation HTTP boundary", () => {
     let rows: unknown[] = [];
     const api = http(() => (rows.length ? invoicePage(rows) : pending.promise));
     await start();
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     expect(screen.queryByText(/Todavía no hay facturas/)).toBeNull();
     await act(async () => pending.resolve(invoicePage([])));
     expect(await screen.findByText(/Todavía no hay facturas/)).toBeTruthy();

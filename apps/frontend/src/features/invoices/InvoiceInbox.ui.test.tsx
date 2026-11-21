@@ -464,7 +464,7 @@ describe("no data from another context (AC-15)", () => {
         : lateA.promise,
     );
     renderApp({ route: "/invoices" });
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     await selectContext("Contabilidad");
     expect(await screen.findByRole("link", { name: "FAC-2" })).toBeTruthy();
     await act(async () => {
@@ -486,7 +486,7 @@ describe("no data from another context (AC-15)", () => {
     renderApp({ route: "/invoices" });
     expect(await screen.findByRole("link", { name: "FAC-1" })).toBeTruthy();
     await selectContext("Contabilidad");
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "FAC-1" })).toBeNull();
     pendingB.resolve(invoicePage([]));
     expect(await screen.findByText(/Todavía no hay facturas/)).toBeTruthy();
@@ -499,7 +499,7 @@ describe("states (AC-16)", () => {
     inboxTransport(orgReader, () => pending.promise);
     renderApp({ route: "/invoices" });
     expect(
-      (await screen.findByText("Cargando facturas…")).getAttribute("role"),
+      (await screen.findByText("Cargando facturas")).getAttribute("role"),
     ).toBe("status");
     pending.resolve(invoicePage([]));
     await screen.findByText(/Todavía no hay facturas/);
@@ -698,7 +698,12 @@ describe("navigation entry (AC-18)", () => {
     ],
     [
       "organization delete others only",
-      { ...READ, readInvoices: false, deleteOthersInvoices: true },
+      {
+        ...READ,
+        readInvoices: false,
+        deleteOthersInvoices: true,
+        deployModels: false,
+      },
     ],
   ])("shows «Facturas» with %s", async (_name, permissions) => {
     inboxTransport(
@@ -856,7 +861,7 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
     );
     const route = `/invoices?organizationId=${norte.id}&groupId=${finanzas.id}`;
     renderApp({ route });
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     expect(transport.calls(LIST)).toHaveLength(0);
     expect(search().get("groupId")).toBe(finanzas.id);
 
@@ -1128,7 +1133,7 @@ describe("header, toolbar and states of the redesigned inbox", () => {
     const pending = deferred<Response>();
     inboxTransport(orgReader, () => pending.promise);
     const { container } = renderApp({ route: "/invoices" });
-    const status = await screen.findByText("Cargando facturas…");
+    const status = await screen.findByText("Cargando facturas");
     expect(status.getAttribute("role")).toBe("status");
     // The status region is persistent; the busy region holds the placeholders.
     expect(status.closest("[aria-busy]")).toBeNull();
@@ -1247,7 +1252,7 @@ describe("page and filter changes inside one scope (CR-350)", () => {
     renderApp({ route: "/invoices" });
     await screen.findByRole("link", { name: "FAC-1" });
     await selectContext("Sin grupo asignado");
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "FAC-1" })).toBeNull();
     pending.resolve(invoicePage([]));
     await screen.findByText(/Todavía no hay facturas/);
@@ -1488,7 +1493,8 @@ describe("re-review 2: stale page text and live regions (CR-380, CR-389)", () =>
     // live region does not announce the total of the data being replaced.
     expect(screen.queryByText(/Mostrando 21/)).toBeNull();
     expect(screen.queryByText(/Mostrando/)).toBeNull();
-    expect(region.textContent).toBe("Actualizando…");
+    // No «Actualizando…» text: the region goes quiet while the data is replaced.
+    expect(region.textContent).toBe("");
     expect(region.textContent).not.toContain("41");
     expect(screen.getByText("Página 1 de 3")).toBeTruthy();
     await act(async () => {
@@ -1514,7 +1520,7 @@ describe("re-review 2: stale page text and live regions (CR-380, CR-389)", () =>
     await waitFor(() => expect(search().get("businessStatus")).toBe("PENDING"));
     expect(screen.queryByText("57 facturas")).toBeNull();
     expect(screen.queryByText(/Mostrando/)).toBeNull();
-    expect(countRegion().textContent).toBe("Actualizando…");
+    expect(countRegion().textContent).toBe("");
     await act(async () => {
       next.resolve(invoicePage([invoice(2)], { total: 3 }));
       await Promise.resolve();
@@ -1542,7 +1548,7 @@ describe("re-review 2: stale page text and live regions (CR-380, CR-389)", () =>
     await screen.findByRole("link", { name: "FAC-1" });
     const before = screen.getAllByRole("status");
     await selectContext("Sin grupo asignado");
-    const loading = await screen.findByText("Cargando facturas…");
+    const loading = await screen.findByText("Cargando facturas");
     expect(before).toContain(loading);
     expect(loading.closest("[aria-busy]")).toBeNull();
     pending.resolve(invoicePage([]));
@@ -1879,7 +1885,9 @@ describe("re-review 3: retry of a failed page (CR-402, CR-407)", () => {
     hold = true;
     const retry = screen.getByRole("button", { name: "Reintentar" });
     fireEvent.click(retry);
-    await waitFor(() => expect(retry.textContent).toBe("Reintentando…"));
+    // No «Reintentando…» text: same name, busy, with the spinner.
+    await waitFor(() => expect(retry.getAttribute("aria-busy")).toBe("true"));
+    expect(retry.textContent).toBe("Reintentar");
     expect(screen.queryByRole("link", { name: "FAC-1" })).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByRole("alert").textContent).toBe(failure);
@@ -1904,7 +1912,13 @@ describe("re-review 3: retry of a failed page (CR-402, CR-407)", () => {
     await screen.findByRole("alert");
     hold = true;
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
-    await screen.findByRole("button", { name: "Reintentando…" });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Reintentar" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
+    );
     await act(async () => {
       window.history.pushState(null, "", "/invoices");
       window.dispatchEvent(new PopStateEvent("popstate"));
@@ -1932,7 +1946,13 @@ describe("re-review 3: retry of a failed page (CR-402, CR-407)", () => {
     await screen.findByRole("alert");
     hold = true;
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
-    await screen.findByRole("button", { name: "Reintentando…" });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Reintentar" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
+    );
     await selectContext("Sin grupo asignado");
     expect(await screen.findByRole("link", { name: "FAC-30" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -2001,7 +2021,7 @@ describe("re-review 3: focus (CR-403, CR-404, CR-405, CR-407)", () => {
     screen.getByRole("button", { name: "Siguiente" }).focus();
     // The scope changes: the footer goes away with the focus in it.
     await selectContext("Sin grupo asignado");
-    await screen.findByText("Cargando facturas…");
+    await screen.findByText("Cargando facturas");
     expect(screen.queryByRole("button", { name: "Siguiente" })).toBeNull();
     // That scope then fails: nobody had the focus in a footer any more.
     await act(async () => {
@@ -2177,7 +2197,7 @@ describe("automation contract: results state", () => {
     renderApp({
       route: `/invoices?organizationId=${norte.id}&groupId=${compras.id}`,
     });
-    await screen.findByText("Cargando facturas…");
+    await screen.findByText("Cargando facturas");
     expect(screen.getAllByTestId("invoices-results")).toHaveLength(1);
     expect(anchor().id).toBe("invoices-results");
     expect(stateOf()).toBe("loading");

@@ -19,7 +19,7 @@ import {
   usePageParam,
   useOutOfRangeRedirect,
 } from "../../navigation/useListParams";
-import { permissionRatio } from "../../permissions/types";
+import { PermissionRatio } from "../../permissions/components/DeployModelsIndicator";
 import { ActivityIndicator } from "../../users/components/ActivityIndicator";
 import { accountStatusLabel } from "../../users/presentation";
 import { OrganizationGate } from "../components/OrganizationGate";
@@ -102,7 +102,7 @@ function ManagementView({
     },
     {
       header: "Permisos",
-      cell: ({ permissions }) => `${permissionRatio(permissions)} permisos`,
+      cell: ({ permissions }) => <PermissionRatio permissions={permissions} />,
     },
     ...(isPlatformAdministrator
       ? [
@@ -140,7 +140,8 @@ function ManagementView({
         </LinkButton>
       }
       messages={{
-        loading: "Cargando miembros...",
+        skeleton: 3,
+        loadingLabel: "Cargando miembros",
         error: "No fue posible cargar los miembros.",
         staleError:
           "No fue posible actualizar la lista de miembros. Tus cambios ya se guardaron; no repitas la operación.",
@@ -222,7 +223,8 @@ function BasicMembersView({
       />
       <QueryFeedback
         query={members}
-        loading="Cargando miembros..."
+        skeleton={3}
+        loadingLabel="Cargando miembros"
         error="No fue posible cargar los miembros."
         staleError="No fue posible actualizar la lista de miembros; lo que ves puede estar desactualizado."
         retryLabel="Reintentar miembros"

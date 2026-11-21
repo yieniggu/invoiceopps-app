@@ -158,6 +158,7 @@ function mockHttp(anonymous = false) {
                   createInvoices: false,
                   deleteOwnInvoices: false,
                   deleteOthersInvoices: false,
+                  deployModels: false,
                 },
               })),
           });

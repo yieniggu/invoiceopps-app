@@ -1,6 +1,9 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router";
 
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { PageHeader } from "../../components/PageHeader";
+import { Skeleton } from "../../components/Skeleton";
 import type { Profile } from "../auth/types";
 import { AdminUserScreen } from "../admin/screens/AdminUserScreen";
 import { AdminUsersScreen } from "../admin/screens/AdminUsersScreen";
@@ -35,6 +38,13 @@ import type {
   ContextState,
   WorkspaceGroup,
 } from "../workspace/useWorkspaceGroups";
+
+// Models is the one screen few people open and the heaviest one: its own chunk.
+const ModelsScreen = lazy(() =>
+  import("../models/screens/ModelsScreen").then((module) => ({
+    default: module.ModelsScreen,
+  })),
+);
 
 export interface WorkspaceState {
   state: ContextState;
@@ -76,6 +86,18 @@ export function AppRoutes({
         element={<InvoiceDetailScreen profile={profile} />}
       />
       <Route path="policies" element={<PoliciesUnavailableScreen />} />
+      <Route
+        path="models"
+        element={
+          // A chunk that fails to load (a redeploy replaced it) would otherwise
+          // blank the whole app; the boundary keeps the shell and offers a reload.
+          <ErrorBoundary message="No fue posible cargar los modelos.">
+            <Suspense fallback={<Skeleton rows={3} label="Cargando modelos" />}>
+              <ModelsScreen profile={profile} />
+            </Suspense>
+          </ErrorBoundary>
+        }
+      />
       <Route
         path="api-tokens"
         element={<ApiTokensScreen profile={profile} />}

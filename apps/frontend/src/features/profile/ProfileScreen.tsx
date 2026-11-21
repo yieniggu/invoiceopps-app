@@ -1,3 +1,4 @@
+import { PendingButton } from "../../components/PendingButton";
 import { useState, type FormEvent } from "react";
 import { fromApiRut } from "../../lib/rut";
 import { isApiError } from "../auth/api/apiError";
@@ -101,12 +102,15 @@ export function ProfileScreen({ profile }: { profile: Profile }) {
             onChange={(event) => setUsername(event.target.value)}
           />
         </label>
-        <button type="submit" disabled={isSaving}>
-          {isSaving ? "Guardando cambios..." : "Guardar cambios"}
-        </button>
-        {isSaving ? (
-          <p role="status">Guardando cambios del perfil...</p>
-        ) : message ? (
+        <PendingButton
+          type="submit"
+          disabled={isSaving}
+          pending={isSaving}
+          announce={{ pending: "Guardando perfil" }}
+        >
+          Guardar cambios
+        </PendingButton>
+        {message ? (
           <p role={update.isError ? "alert" : "status"}>{message}</p>
         ) : null}
       </form>

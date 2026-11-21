@@ -1,3 +1,4 @@
+import { PendingLabel } from "../../../components/PendingLabel";
 import { ReceiptText, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
@@ -155,11 +156,7 @@ function InvoiceInbox({
       : query.isFetching || page === undefined || stale || outOfRange
         ? "loading"
         : "ready";
-  const countText = stale
-    ? "Actualizando…"
-    : page
-      ? invoiceCountText(page.total)
-      : "";
+  const countText = !stale && page ? invoiceCountText(page.total) : "";
 
   return (
     <>
@@ -234,11 +231,18 @@ function InvoiceInbox({
               <button
                 ref={retry}
                 type="button"
-                className="secondary-button"
+                className={
+                  query.isFetching
+                    ? "secondary-button is-pending"
+                    : "secondary-button"
+                }
                 aria-disabled={query.isFetching || undefined}
+                aria-busy={query.isFetching || undefined}
                 onClick={retryList}
               >
-                {query.isFetching ? "Reintentando…" : "Reintentar"}
+                <PendingLabel pending={query.isFetching}>
+                  Reintentar
+                </PendingLabel>
               </button>
             </div>
           ) : null}
@@ -251,7 +255,7 @@ function InvoiceInbox({
             role="status"
             className="visually-hidden"
           >
-            {loadingRows ? "Cargando facturas…" : ""}
+            {loadingRows ? "Cargando facturas" : ""}
           </p>
           {loadingRows ? (
             <div aria-busy="true">
@@ -388,9 +392,13 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
             data-testid="invoices-results"
             data-state="loading"
             role="status"
+            className="visually-hidden"
           >
-            Cargando facturas…
+            Cargando facturas
           </p>
+          <div aria-busy="true">
+            <InvoiceTableSkeleton />
+          </div>
         </>
       ) : selected === undefined ? (
         <>

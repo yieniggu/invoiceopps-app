@@ -239,6 +239,20 @@ describe("AuthScreen automation contract", () => {
     );
   });
 
+  it("shows the wait the server asks for on a rate-limited login (CR-574)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "RATE_LIMITED" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "45" },
+      }),
+    );
+    renderWithClient(<AuthScreen onLogin={vi.fn()} />);
+    fillAndSubmit();
+    expect((await screen.findByTestId("login-error")).textContent).toBe(
+      "Demasiados intentos. Espera 45 s.",
+    );
+  });
+
   it("keeps the code empty when the API sends none", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("", { status: 502 }),

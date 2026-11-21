@@ -61,6 +61,12 @@ function detailTransport(
 const definition = (term: string) =>
   screen.getByText(term, { selector: "dt" }).nextElementSibling?.textContent;
 
+// Hidden announcements (CR-587) are not visible loading text.
+const visibleText = (pattern: RegExp) =>
+  screen
+    .queryAllByText(pattern)
+    .filter((element) => !element.closest(".visually-hidden"));
+
 describe("invoice detail (AC-19)", () => {
   it("shows the business data and keeps both statuses apart", async () => {
     const found = invoice(7, {
@@ -222,9 +228,10 @@ describe("invoice detail (AC-19)", () => {
       found.id,
     );
     renderApp({ route: `/invoices/${found.id}?organizationId=${norte.id}` });
-    expect(
-      (await screen.findByText("Cargando factura...")).getAttribute("role"),
-    ).toBe("status");
+    expect((await screen.findAllByTestId("skeleton")).length).toBeGreaterThan(
+      0,
+    );
+    expect(visibleText(/Cargando/)).toEqual([]);
     pending.resolve(errorResponse(500, "INTERNAL"));
     expect((await screen.findByRole("alert")).textContent).toBe(
       "No fue posible cargar la factura.",
@@ -359,7 +366,11 @@ describe("invoice detail (AC-19)", () => {
 
 // --- Deletion (RP0-15: AC-20, AC-21) ---
 
-const DELETE_OTHERS = { ...READ, deleteOthersInvoices: true };
+const DELETE_OTHERS = {
+  ...READ,
+  deleteOthersInvoices: true,
+  deployModels: false,
+};
 const DELETE_OWN = { ...READ, deleteOwnInvoices: true };
 
 const profileWith = (permissions: typeof READ) => () =>
@@ -480,9 +491,11 @@ describe("invoice deletion (AC-20)", () => {
     await waitFor(() =>
       expect(confirm.getAttribute("aria-disabled")).toBe("true"),
     );
-    expect(confirm.textContent).toBe("Eliminando…");
+    // No «Eliminando…» text: same label, busy, spinner, hidden announcement.
+    expect(confirm.textContent).toBe("Eliminar factura");
+    expect(confirm.getAttribute("aria-busy")).toBe("true");
     expect(within(dialog).getByRole("status").textContent).toBe(
-      "Eliminando la factura…",
+      "Eliminando factura",
     );
     expect(document.activeElement).toBe(confirm);
     expect(transport.calls(`DELETE ${detailPath(found.id)}`)).toHaveLength(1);
@@ -758,7 +771,7 @@ describe("returning from a deletion (CR-353)", () => {
     await screen.findByText(/Factura eliminada/);
     // The list answers later; until then the old page is not on screen.
     expect(screen.queryByRole("link", { name: "FAC-12" })).toBeNull();
-    expect(await screen.findByText("Cargando facturas…")).toBeTruthy();
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
     await act(async () => lateList.resolve(invoicePage([])));
     expect(await screen.findByText(/Todavía no hay facturas/)).toBeTruthy();
     expect(screen.queryByRole("link", { name: "FAC-12" })).toBeNull();
@@ -787,5 +800,240 @@ describe("returning from a deletion (CR-353)", () => {
       screen.queryByRole("heading", { name: "Factura no encontrada" }),
     ).toBeNull();
     expect(screen.queryByRole("heading", { name: "FAC-13" })).toBeNull();
+  });
+});
+
+describe("invoice detail: automatic predictions (MLOPS-06)", () => {
+  const prediction = (n: number, overrides: Record<string, unknown> = {}) => ({
+    id: `00000000-0000-4000-8000-0000000009${String(n).padStart(2, "0")}`,
+    deploymentId: `00000000-0000-4000-8000-0000000008${String(n).padStart(2, "0")}`,
+    deploymentScope: "GROUP",
+    registeredModel: "invoice-risk",
+    modelVersion: String(n),
+    runId: "run-1",
+    probability: 0.37,
+    status: "SUCCEEDED",
+    errorCode: null,
+    createdAt: "2026-11-20T12:00:00.000Z",
+    updatedAt: "2026-11-20T12:00:05.000Z",
+    ...overrides,
+  });
+
+  async function open(detailBody: Record<string, unknown>) {
+    const found = invoice(31);
+    detailTransport(
+      () => jsonResponse({ invoice: found, ...detailBody }),
+      found.id,
+    );
+    renderApp({ route: `/invoices/${found.id}?organizationId=${norte.id}` });
+    await screen.findByRole("heading", { level: 1, name: "FAC-31" });
+  }
+
+  it("shows the probability of rejection as a percentage with model and version", async () => {
+    await open({ predictions: [prediction(3, { probability: 0.372 })] });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    expect(within(panel).getByText("invoice-risk · versión 3")).toBeTruthy();
+    expect(within(panel).getByText("Probabilidad de rechazo")).toBeTruthy();
+    expect(panel.textContent).toMatch(/37\s?%/);
+    // The invoice summary stays intact.
+    expect(
+      screen.getByRole("group", { name: "Resumen de la factura" }),
+    ).toBeTruthy();
+  });
+
+  it("never shows a tiny probability as zero", async () => {
+    await open({ predictions: [prediction(3, { probability: 0.001 })] });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    expect(panel.textContent).toContain("menos de 1%");
+  });
+
+  it("labels each prediction as coming from an organization or a group model", async () => {
+    await open({
+      predictions: [
+        prediction(3, { deploymentScope: "ORGANIZATION" }),
+        prediction(4, { deploymentScope: "GROUP" }),
+      ],
+    });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    const [org, group] = within(panel).getAllByRole("listitem");
+    expect(within(org!).getByText("Organización")).toBeTruthy();
+    expect(within(group!).getByText("Grupo")).toBeTruthy();
+  });
+
+  it("shows pending and failed predictions without breaking the view", async () => {
+    await open({
+      predictions: [
+        prediction(3, { status: "PENDING", probability: null }),
+        prediction(4, {
+          status: "FAILED",
+          probability: null,
+          errorCode: "MODEL_API_ERROR",
+        }),
+      ],
+    });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    expect(within(panel).getByText("Pendiente")).toBeTruthy();
+    // One signal for pending: the badge with its spinner, no skeleton.
+    expect(within(panel).queryByTestId("skeleton")).toBeNull();
+    expect(panel.getAttribute("aria-busy")).toBe("true");
+    expect(within(panel).getByText("Fallida")).toBeTruthy();
+    expect(within(panel).queryByText(/No se pudo calcular/)).toBeNull();
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(2);
+    // The error code is for operators, not shown to people.
+    expect(panel.textContent).not.toContain("MODEL_API_ERROR");
+    expect(definition("Emisión")).toBeTruthy();
+  });
+
+  it("refetches the detail while a prediction is PENDING and stops once it settles", async () => {
+    // Fake timers drive the poll: no real waiting, every fetch is counted.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const found = invoice(32);
+      let reads = 0;
+      detailTransport(() => {
+        reads += 1;
+        return jsonResponse({
+          invoice: found,
+          predictions: [
+            reads < 2
+              ? prediction(3, { status: "PENDING", probability: null })
+              : prediction(3, { probability: 0.372 }),
+          ],
+        });
+      }, found.id);
+      renderApp({ route: `/invoices/${found.id}?organizationId=${norte.id}` });
+      const panel = await screen.findByRole("region", { name: "Predicciones" });
+      expect(within(panel).getByText("Pendiente")).toBeTruthy();
+      expect(reads).toBe(1);
+      // First poll after 2 s, no reload needed.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      await waitFor(() => expect(panel.textContent).toMatch(/37\s?%/));
+      const settledReads = reads;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(reads).toBe(settledReads);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops the animation and offers a refresh when polling gives up (CR-552)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const found = invoice(34);
+      let reads = 0;
+      detailTransport(() => {
+        reads += 1;
+        return jsonResponse({
+          invoice: found,
+          predictions: [
+            prediction(3, { status: "PENDING", probability: null }),
+          ],
+        });
+      }, found.id);
+      renderApp({ route: `/invoices/${found.id}?organizationId=${norte.id}` });
+      const panel = await screen.findByRole("region", { name: "Predicciones" });
+      expect(panel.querySelector(".icon-spin")).not.toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150_000);
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Actualizar predicciones" }),
+        ).toBeTruthy(),
+      );
+      expect(panel.querySelector(".icon-spin")).toBeNull();
+      expect(within(panel).getByText("Pendiente")).toBeTruthy();
+      const stopped = reads;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(reads).toBe(stopped);
+
+      // Refreshing reads again and the section polls on from there.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Actualizar predicciones" }),
+      );
+      await waitFor(() => expect(reads).toBe(stopped + 1));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "Actualizar predicciones" }),
+        ).toBeNull(),
+      );
+      expect(panel.querySelector(".icon-spin")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers a single refresh control when polling stopped because of an error (CR-591)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const found = invoice(35);
+      let reads = 0;
+      let failing = false;
+      detailTransport(() => {
+        reads += 1;
+        if (failing) return errorResponse(500, "INTERNAL");
+        return jsonResponse({
+          invoice: found,
+          predictions: [
+            prediction(3, { status: "PENDING", probability: null }),
+          ],
+        });
+      }, found.id);
+      renderApp({ route: `/invoices/${found.id}?organizationId=${norte.id}` });
+      await screen.findByRole("region", { name: "Predicciones" });
+      failing = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await screen.findByRole("alert");
+      // «Reintentar» is the one control; the stalled icon is not shown too.
+      expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: "Actualizar predicciones" }),
+      ).toBeNull();
+      failing = false;
+      const before = reads;
+      fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+      await waitFor(() => expect(reads).toBeGreaterThan(before));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows an explicit state for a SUCCEEDED prediction without probability (CR-571)", async () => {
+    await open({
+      predictions: [prediction(3, { status: "SUCCEEDED", probability: null })],
+    });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    expect(within(panel).getByText("Sin resultado")).toBeTruthy();
+    expect(within(panel).getByRole("list").getAttribute("aria-live")).toBe(
+      "polite",
+    );
+  });
+
+  it("is hidden when the API sends no predictions or an empty list", async () => {
+    await open({});
+    expect(screen.queryByRole("region", { name: "Predicciones" })).toBeNull();
+    cleanup();
+    await open({ predictions: [] });
+    expect(screen.queryByRole("region", { name: "Predicciones" })).toBeNull();
+  });
+
+  it("shows a skipped prediction with one neutral «Omitida» badge (CR-581)", async () => {
+    await open({
+      predictions: [prediction(3, { status: "SKIPPED", probability: null })],
+    });
+    const panel = await screen.findByRole("region", { name: "Predicciones" });
+    const badge = within(panel).getByText("Omitida");
+    expect(badge.classList.contains("is-neutral")).toBe(true);
+    expect(within(panel).queryByText("Probabilidad de rechazo")).toBeNull();
+    expect(panel.getAttribute("aria-busy")).toBeNull();
   });
 });

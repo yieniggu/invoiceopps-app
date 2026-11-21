@@ -272,22 +272,30 @@ async function savePermissions(id: string) {
     screen.getByRole("button", { name: `Guardar permisos de Member ${id}` }),
   );
 }
-function expectB() {
+/**
+ * B's data is the only data on screen. Every read waits for what the previous
+ * navigation renders (event-based, never a sync read right after a click), so a
+ * slow machine only makes it wait longer instead of reading a half-rendered
+ * page.
+ */
+async function expectB() {
   navigate("Mi perfil");
-  expect(screen.getByText("Person B")).toBeTruthy();
+  expect(await screen.findByText("Person B")).toBeTruthy();
   expect(screen.queryByText("Person A")).toBeNull();
   expect(screen.queryByText("Group A")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Guardar cambios" }),
-  ).toHaveProperty("disabled", false);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Guardar cambios" }),
+    ).toHaveProperty("disabled", false),
+  );
   navigate("Grupos");
-  expect(screen.getByText("Group B")).toBeTruthy();
+  expect(await screen.findByText("Group B")).toBeTruthy();
   expect(screen.queryByText("Group A")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   openGroup("B");
   expect(
-    screen.getByRole("heading", { name: "Group B", level: 1 }),
+    await screen.findByRole("heading", { name: "Group B", level: 1 }),
   ).toBeTruthy();
   navigate("Mi perfil");
 }
@@ -409,7 +417,7 @@ describe("CR007 App-owned protected reads", () => {
         // The late answer of A starts no request of its own...
         expect(api.fetchMock).toHaveBeenCalledTimes(count);
         // ...and leaves B untouched (re-opening a screen may refetch by itself).
-        expectB();
+        await expectB();
       });
     }
 
@@ -454,7 +462,7 @@ describe("CR007 App-owned protected reads", () => {
             );
         });
         expect(api.fetchMock).toHaveBeenCalledTimes(count);
-        expectB();
+        await expectB();
       },
     );
 
@@ -536,9 +544,11 @@ describe("CR-001 mounted session isolation", () => {
         if (status === "network") pending.reject(new Error("Old failure"));
         else pending.resolve(json({ profile: profile("A") }, status));
       });
-      expectB();
+      await expectB();
       navigate("Facturas");
-      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
+      expect(
+        await screen.findByRole("option", { name: /Group B/ }),
+      ).toBeTruthy();
       await waitFor(() =>
         expect(
           api.fetchMock.mock.calls
@@ -583,7 +593,7 @@ describe("CR-001 mounted session isolation", () => {
       const count = api.fetchMock.mock.calls.length;
       await act(async () => pending.resolve(json({}, status)));
       expect(api.fetchMock).toHaveBeenCalledTimes(count);
-      expectB();
+      await expectB();
     },
   );
 
@@ -601,13 +611,15 @@ describe("CR-001 mounted session isolation", () => {
       await act(async () =>
         pending.resolve(json({ groups: [group("A")] }, status)),
       );
-      expectB();
+      await expectB();
       navigate("Grupos");
-      expect(screen.getByText("Group B")).toBeTruthy();
+      expect(await screen.findByText("Group B")).toBeTruthy();
       expect(screen.queryByText("Group A")).toBeNull();
       navigate("Facturas");
       expect(screen.queryByRole("option", { name: /Group A/ })).toBeNull();
-      expect(screen.getByRole("option", { name: /Group B/ })).toBeTruthy();
+      expect(
+        await screen.findByRole("option", { name: /Group B/ }),
+      ).toBeTruthy();
     },
   );
 
@@ -627,7 +639,7 @@ describe("CR-001 mounted session isolation", () => {
     await signOut();
     await signInB();
     await act(async () => completeBody({ profile: profile("A") }));
-    expectB();
+    await expectB();
   });
 
   it("does not let A's stale finally release B's pending save flag", async () => {
@@ -643,13 +655,15 @@ describe("CR-001 mounted session isolation", () => {
     await signInB();
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await act(async () => old.resolve(json({}, 500)));
-    expect(
-      await screen.findByRole("button", { name: "Guardando cambios..." }),
-    ).toHaveProperty("disabled", true);
+    const saving = await screen.findByRole("button", {
+      name: "Guardar cambios",
+    });
+    await waitFor(() => expect(saving.getAttribute("aria-busy")).toBe("true"));
+    expect(saving).toHaveProperty("disabled", true);
     expect(screen.queryByRole("alert")).toBeNull();
     await act(async () => current.resolve(json({ profile: profile("B") })));
     expect(await screen.findByText("Perfil actualizado.")).toBeTruthy();
-    expectB();
+    await expectB();
   });
 
   it("does not continue a stale organization summary reload with another identity's data", async () => {
@@ -685,7 +699,7 @@ describe("CR-001 mounted session isolation", () => {
     expect(api.groups).toHaveBeenCalledTimes(count);
     expect(screen.queryByText("old-summary")).toBeNull();
     expect(screen.queryByText("Old description")).toBeNull();
-    expectB();
+    await expectB();
   });
 
   it("invalidates pending profile work at logout start even when logout fails", async () => {
@@ -758,7 +772,7 @@ describe("CR-001 mounted session isolation", () => {
         );
         await screen.findByText("Group B");
       }
-      expectB();
+      await expectB();
     },
   );
 });

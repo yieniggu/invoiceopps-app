@@ -1,3 +1,4 @@
+import { Skeleton } from "../../../components/Skeleton";
 import { useGroupsQuery } from "../hooks/useGroups";
 import type { GroupMembershipProfile } from "../../auth/types";
 import { GroupRow } from "./GroupRow";
@@ -30,7 +31,7 @@ export function GroupsList({
       ) : null}
       {!groups.data ? (
         groups.isPending ? (
-          <p role="status">Cargando grupos...</p>
+          <Skeleton rows={3} label="Cargando grupos" />
         ) : null
       ) : groups.data.length === 0 ? (
         <p>

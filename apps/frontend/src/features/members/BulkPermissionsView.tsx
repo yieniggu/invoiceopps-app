@@ -52,7 +52,12 @@ export function BulkPermissionsView({
   /** The people of the list, undefined until it loads. */
   people: readonly BulkPerson[] | undefined;
   save: BulkSavePermissions;
-  messages: { loading: string; error: string; retryLabel: string };
+  messages: {
+    skeleton: number;
+    loadingLabel: string;
+    error: string;
+    retryLabel: string;
+  };
   /** Said when none of the selected people is in the list any more. */
   noneFoundMessage: string;
   successNotice: (count: number) => string;
@@ -81,7 +86,8 @@ export function BulkPermissionsView({
       />
       <QueryFeedback
         query={query}
-        loading={messages.loading}
+        skeleton={messages.skeleton}
+        loadingLabel={messages.loadingLabel}
         error={messages.error}
         retryLabel={messages.retryLabel}
       />

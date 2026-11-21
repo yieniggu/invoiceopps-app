@@ -62,7 +62,8 @@ export function MembersTableScreen<Member extends Person>({
   /** The "add" link button of the header. */
   action: ReactNode;
   messages: {
-    loading: string;
+    skeleton: number;
+    loadingLabel: string;
     error: string;
     staleError: string;
     retryLabel: string;
@@ -118,7 +119,8 @@ export function MembersTableScreen<Member extends Person>({
       <Toast message={notice.message} noticeId={notice.id} />
       <QueryFeedback
         query={query}
-        loading={messages.loading}
+        skeleton={messages.skeleton}
+        loadingLabel={messages.loadingLabel}
         error={messages.error}
         staleError={messages.staleError}
         retryLabel={messages.retryLabel}

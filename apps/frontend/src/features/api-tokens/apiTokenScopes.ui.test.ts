@@ -7,15 +7,17 @@ import {
 } from "../../test/transport";
 import { uuid } from "../../test/ids";
 import type { Profile } from "../auth/types";
+import { ApiError } from "../auth/api/apiError";
 import {
+  describeTokenFailure,
   retainAllowed,
   tokenScopeOptions,
   tokenStatus,
 } from "./apiTokenScopes";
 import { MAX_EXPIRY_DAYS, resolveExpiry, expiryBounds } from "./apiTokenExpiry";
 
-const norte = { id: uuid(101), name: "Academia Norte" };
-const sur = { id: uuid(102), name: "Instituto Sur" };
+const norte = { id: uuid(101), name: "Academia Norte", mlEnabled: true };
+const sur = { id: uuid(102), name: "Instituto Sur", mlEnabled: true };
 const contabilidad = { id: uuid(201), name: "Contabilidad" };
 const compras = { id: uuid(202), name: "Compras" };
 const finanzas = { id: uuid(203), name: "Finanzas" };
@@ -58,13 +60,19 @@ describe("tokenScopeOptions", () => {
       [norte.name, "Toda la organización", null],
       [norte.name, "Contabilidad", contabilidad.id],
       [norte.name, "Finanzas", finanzas.id],
+      [sur.name, "Toda la organización", null],
       [sur.name, "Compras", compras.id],
     ]);
   });
 
   it("limits organization tokens to organization flags", () => {
     const [organization] = tokenScopeOptions(profile);
-    expect(organization.allowed).toEqual(["invoices:read", "invoices:create"]);
+    expect(organization.allowed).toEqual([
+      "invoices:read",
+      "invoices:create",
+      "mlflow:read",
+      "mlflow:write",
+    ]);
   });
 
   it("limits group tokens to organization OR group effective flags", () => {
@@ -79,13 +87,52 @@ describe("tokenScopeOptions", () => {
       "invoices:read",
       "invoices:create",
       "invoices:delete-own",
+      "mlflow:read",
+      "mlflow:write",
     ]);
-    // Finanzas is only reachable through the organization flags.
+    // Finanzas is only reachable through the organization flags and the
+    // person is not a member of it: no MLflow scopes.
     expect(byGroup(finanzas.id)).toEqual(["invoices:read", "invoices:create"]);
-    expect(byGroup(compras.id)).toEqual(["invoices:read"]);
+    expect(byGroup(compras.id)).toEqual([
+      "invoices:read",
+      "mlflow:read",
+      "mlflow:write",
+    ]);
   });
 
-  it("skips scopes without any effective invoice permission", () => {
+  it("offers no MLflow scope while the organization has Models off (CR-577)", () => {
+    const off = { ...norte, mlEnabled: false };
+    const mixed = profileFixture({
+      memberships: [
+        membership(off, "USER", {
+          permissions: flags("readInvoices"),
+          groups: [{ group: contabilidad, effective: flags("readInvoices") }],
+        }),
+      ],
+    }) as unknown as Profile;
+    expect(
+      tokenScopeOptions(mixed).map(({ groupId, allowed }) => [
+        groupId,
+        allowed,
+      ]),
+    ).toEqual([
+      [null, ["invoices:read"]],
+      [contabilidad.id, ["invoices:read"]],
+    ]);
+  });
+
+  it("offers nothing to a member without invoice permissions when Models is off (CR-577)", () => {
+    const none = profileFixture({
+      memberships: [
+        membership({ ...norte, mlEnabled: false }, "ADMIN", {
+          groups: [{ group: contabilidad, effective: NO_PERMISSIONS }],
+        }),
+      ],
+    }) as unknown as Profile;
+    expect(tokenScopeOptions(none)).toEqual([]);
+  });
+
+  it("offers only the MLflow scopes to a member without invoice permissions", () => {
     const none = profileFixture({
       memberships: [
         membership(norte, "ADMIN", {
@@ -93,7 +140,14 @@ describe("tokenScopeOptions", () => {
         }),
       ],
     }) as unknown as Profile;
-    expect(tokenScopeOptions(none)).toEqual([]);
+    expect(
+      tokenScopeOptions(none, new Map([[norte.id, [finanzas]]])).map(
+        ({ groupId, allowed }) => [groupId, allowed],
+      ),
+    ).toEqual([
+      [null, ["mlflow:read", "mlflow:write"]],
+      [contabilidad.id, ["mlflow:read", "mlflow:write"]],
+    ]);
   });
 });
 
@@ -170,5 +224,21 @@ describe("resolveExpiry", () => {
         "error",
       );
     }
+  });
+});
+
+describe("describeTokenFailure rate limit (CR-574)", () => {
+  it("shows the wait the server asked for", () => {
+    const error = new ApiError(429, "RATE_LIMITED", "x", undefined, 600);
+    expect(describeTokenFailure(error, "issue")).toBe(
+      "Emitiste demasiados tokens seguidos. Espera 10 min.",
+    );
+  });
+
+  it("falls back to a generic wait without Retry-After", () => {
+    const error = new ApiError(429, "RATE_LIMITED", "x");
+    expect(describeTokenFailure(error, "issue")).toBe(
+      "Emitiste demasiados tokens seguidos. Espera un momento.",
+    );
   });
 });

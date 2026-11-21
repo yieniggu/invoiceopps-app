@@ -103,6 +103,7 @@ test.describe("the paginator is always at the bottom", () => {
                 createInvoices: false,
                 deleteOwnInvoices: false,
                 deleteOthersInvoices: false,
+                deployModels: false,
               },
             },
           ],

@@ -5,11 +5,9 @@ import { CollapsibleSection } from "../../../components/CollapsibleSection";
 import { ConfirmAction } from "../../../components/ConfirmAction";
 import { MutationFeedback } from "../../../components/MutationFeedback";
 import { paths } from "../../navigation/paths";
+import { PermissionRatio } from "../../permissions/components/DeployModelsIndicator";
 import { SavedMemberPermissionsEditor } from "../../permissions/components/MemberPermissionsEditor";
-import {
-  permissionRatio,
-  type InvoicePermissions,
-} from "../../permissions/types";
+import { type InvoicePermissions } from "../../permissions/types";
 import type { useRemoveGroupMember } from "../hooks/useGroups";
 
 /**
@@ -42,7 +40,7 @@ export function MemberGroupCard({
   return (
     <CollapsibleSection
       title={group.name}
-      summary={`${permissionRatio(group.permissions)} permisos`}
+      summary={<PermissionRatio permissions={group.permissions} />}
       open={open}
       onToggle={() => setOpen((current) => !current)}
     >
@@ -66,7 +64,8 @@ export function MemberGroupCard({
         <ConfirmAction
           label={`Quitar del grupo ${group.name}`}
           confirmLabel={`Confirmar quitar del grupo ${group.name}`}
-          disabled={remove.isPending}
+          pending={remove.isPending}
+          announce="Quitando del grupo"
           onConfirm={() =>
             remove.mutate(
               { groupId: group.groupId, userId },

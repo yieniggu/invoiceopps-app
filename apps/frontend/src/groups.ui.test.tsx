@@ -31,6 +31,7 @@ const none = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const accounting = {
   id: "00000000-0000-4000-a000-000000000097",
@@ -580,6 +581,7 @@ describe("group member permissions editor (v2)", () => {
         createInvoices: true,
         deleteOwnInvoices: true,
         deleteOthersInvoices: false,
+        deployModels: false,
       },
     });
     await waitFor(() =>
@@ -728,7 +730,12 @@ describe("bulk group permissions", () => {
         "00000000-0000-4000-8000-000000000003",
         "00000000-0000-4000-8000-000000000001",
       ],
-      permissions: { ...none, readInvoices: true },
+      permissions: {
+        readInvoices: true,
+        createInvoices: false,
+        deleteOwnInvoices: false,
+        deleteOthersInvoices: false,
+      },
     });
     expect(window.location.pathname).toBe(
       `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
@@ -890,6 +897,31 @@ describe("adding members to a group", () => {
     ).toBeTruthy();
   });
 
+  it("marks the card of a person picked to be added when the flag is on (AddMembersForm)", async () => {
+    mockTransport(routes());
+    renderApp({ route: NEW_MEMBERS });
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Ada Lovelace/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "1 persona seleccionada · Ajustar permisos",
+      }),
+    );
+    const card = screen.getByRole("region", { name: "Ada Lovelace" });
+    fireEvent.click(within(card).getByRole("button", { name: "Ada Lovelace" }));
+    expect(
+      within(card).queryByRole("img", { name: "Despliega modelos" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(card).getByRole("button", { name: "Desplegar modelos" }),
+    );
+    // Folded summary and the live line both carry it.
+    expect(
+      within(card).getAllByRole("img", { name: "Despliega modelos" }).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("adds everybody in one atomic request, each with their own permissions", async () => {
     const transport = mockTransport({
       ...routes(),
@@ -897,35 +929,39 @@ describe("adding members to a group", () => {
         jsonResponse({ memberships: [adaInGroup(), adaInGroup()] }, 201),
     });
     renderApp({ route: NEW_MEMBERS });
+    // Both rows of the page, not just the first one that rendered.
     await screen.findByRole("checkbox", { name: /Ada Lovelace/ });
-    const submit = screen.getByRole("button", {
+    await screen.findByRole("checkbox", { name: /Diego Peña/ });
+    const submit = await screen.findByRole("button", {
       name: "Agregar personas al grupo",
     });
     expect(submit).toHaveProperty("disabled", true);
     fireEvent.click(
-      screen.getByRole("checkbox", {
+      await screen.findByRole("checkbox", {
         name: "Seleccionar todos en esta página",
       }),
     );
-    expect(screen.getByText("2 personas seleccionadas.")).toBeTruthy();
+    expect(await screen.findByText("2 personas seleccionadas.")).toBeTruthy();
     // The picked people live in a block that is folded until asked for.
     expect(screen.queryByRole("region", { name: "Ada Lovelace" })).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "2 personas seleccionadas · Ajustar permisos",
       }),
     );
     // Each chosen person gets a card with a one-line summary and an editor.
-    const adaCard = screen.getByRole("region", { name: "Ada Lovelace" });
+    const adaCard = await screen.findByRole("region", {
+      name: "Ada Lovelace",
+    });
     fireEvent.click(
-      within(adaCard).getByRole("button", { name: "Ada Lovelace" }),
+      await within(adaCard).findByRole("button", { name: "Ada Lovelace" }),
     );
     fireEvent.click(
-      within(adaCard).getByRole("button", { name: "Leer facturas" }),
+      await within(adaCard).findByRole("button", { name: "Leer facturas" }),
     );
-    expect(within(adaCard).getByText("1 de 4 permisos")).toBeTruthy();
+    expect(await within(adaCard).findByText("1 de 4 permisos")).toBeTruthy();
     // The same permissions can be copied to everybody selected.
-    const shared = screen.getByRole("region", {
+    const shared = await screen.findByRole("region", {
       name: "Aplicar los mismos permisos a todos",
     });
     fireEvent.click(
@@ -936,12 +972,16 @@ describe("adding members to a group", () => {
         name: "Aplicar a todos los seleccionados",
       }),
     );
-    const diegoCard = screen.getByRole("region", { name: "Diego Peña" });
-    expect(within(diegoCard).getAllByText("1 de 4 permisos")).not.toHaveLength(
-      0,
-    );
+    const diegoCard = await screen.findByRole("region", {
+      name: "Diego Peña",
+    });
+    expect(
+      await within(diegoCard).findAllByText("1 de 4 permisos"),
+    ).not.toHaveLength(0);
     fireEvent.click(
-      screen.getByRole("button", { name: "Agregar 2 personas al grupo" }),
+      await screen.findByRole("button", {
+        name: "Agregar 2 personas al grupo",
+      }),
     );
     await screen.findByText("2 personas agregadas al grupo.");
     expect(window.location.pathname).toBe(
@@ -1039,11 +1079,10 @@ describe("adding members to a group", () => {
     });
     submit.focus();
     fireEvent.click(submit);
-    const sending = await screen.findByRole("button", {
-      name: "Agregando...",
-    });
-    // The same button, still focused, inert but not `disabled`.
-    expect(sending).toBe(submit);
+    await waitFor(() => expect(submit.getAttribute("aria-busy")).toBe("true"));
+    // The same button (label unchanged, spinner over it), still focused, inert
+    // but not `disabled`.
+    expect(submit.textContent).toBe("Agregar 1 persona al grupo");
     expect(document.activeElement).toBe(submit);
     expect(submit.getAttribute("aria-disabled")).toBe("true");
     expect(submit).toHaveProperty("disabled", false);
@@ -1090,7 +1129,13 @@ describe("adding members to a group", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Agregar 1 persona al grupo" }),
     );
-    await screen.findByRole("button", { name: "Agregando..." });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Agregar 1 persona al grupo" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
+    );
     expect(apply.getAttribute("aria-disabled")).toBe("true");
     expect(apply).toHaveProperty("disabled", false);
     const create = within(shared).getByRole("button", {
@@ -1155,5 +1200,91 @@ describe("adding members to a group", () => {
         "Todas las personas de esta página ya están en el grupo.",
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("«Despliega modelos» in permission summaries (CR-566)", () => {
+  const indicator = (within_: HTMLElement) =>
+    within(within_).queryByRole("img", { name: "Despliega modelos" });
+
+  it("marks my group in the group list when I may deploy there (GroupRow)", async () => {
+    const member = profileFixture({
+      memberships: [
+        membership(north, "USER", {
+          groups: [
+            {
+              group: {
+                id: "00000000-0000-4000-a000-000000000098",
+                name: "Ventas",
+              },
+              effective: { ...none, readInvoices: true, deployModels: true },
+            },
+          ],
+        }),
+      ],
+    });
+    mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: member }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [sales] }),
+    });
+    renderApp({ route: "/groups" });
+    const row = (await screen.findByText("Ventas")).closest(
+      "li",
+    ) as HTMLElement;
+    expect(within(row).getByText("Puede leer facturas")).toBeTruthy();
+    expect(indicator(row)).toBeTruthy();
+  });
+
+  it("shows no indicator in the group list without the flag", async () => {
+    const member = profileFixture({
+      memberships: [
+        membership(north, "USER", {
+          groups: [
+            {
+              group: {
+                id: "00000000-0000-4000-a000-000000000098",
+                name: "Ventas",
+              },
+              effective: { ...none, readInvoices: true },
+            },
+          ],
+        }),
+      ],
+    });
+    mockTransport({
+      "GET /api/v1/auth/profile": () => jsonResponse({ profile: member }),
+      "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
+      "GET /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups":
+        () => jsonResponse({ groups: [sales] }),
+    });
+    renderApp({ route: "/groups" });
+    await screen.findByText("Puede leer facturas");
+    expect(screen.queryByRole("img", { name: "Despliega modelos" })).toBeNull();
+  });
+
+  it("marks the member rows of the group table that may deploy (GroupMembersScreen)", async () => {
+    mockTransport({
+      ...baseRoutes(),
+      [MEMBERS_A]: () =>
+        jsonResponse(
+          groupMembershipsPage([
+            carlaInGroup({ ...none, readInvoices: true, deployModels: true }),
+            adaInGroup({ ...none, readInvoices: true }),
+          ]),
+        ),
+    });
+    renderApp({
+      route: `${DETAIL}/00000000-0000-4000-a000-000000000097/members`,
+    });
+    const carla = (await screen.findByText("Carla Soto")).closest(
+      "tr",
+    ) as HTMLElement;
+    const ada = screen.getByText("Ada Lovelace").closest("tr") as HTMLElement;
+    expect(within(carla).getByText("1 de 4 permisos")).toBeTruthy();
+    expect(indicator(carla)).toBeTruthy();
+    expect(within(ada).getByText("1 de 4 permisos")).toBeTruthy();
+    expect(indicator(ada)).toBeNull();
   });
 });

@@ -25,7 +25,7 @@ const membership = (
     effective: typeof CREATE;
   }> = [],
 ) => ({
-  organization: { ...organization, slug: organization.id },
+  organization: { ...organization, slug: organization.id, mlEnabled: false },
   role: "USER",
   permissions,
   groups: groups.map(({ group, effective }) => ({

@@ -337,6 +337,7 @@ describe("FULLAPP12 authorized findings", () => {
             createInvoices: false,
             deleteOwnInvoices: false,
             deleteOthersInvoices: false,
+            deployModels: false,
           },
         }),
       ],

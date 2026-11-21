@@ -1,13 +1,15 @@
 import type { RefObject } from "react";
 
 import { Dialog } from "../../../components/Dialog";
+import { PendingButton } from "../../../components/PendingButton";
 import { describeTokenFailure } from "../apiTokenScopes";
 import type { ApiToken } from "../types";
 
 /**
  * Asks before revoking. While the request runs nothing dismisses the dialog;
- * the confirm button is `aria-disabled` (not `disabled`, which would drop the
- * focus it holds) and its click is ignored, so a double click sends one DELETE.
+ * the confirm button shows a spinner, is `aria-disabled` (not `disabled`, which
+ * would drop the focus it holds) and its click is ignored, so a double click
+ * sends one DELETE.
  */
 export function RevokeApiTokenDialog({
   token,
@@ -46,18 +48,19 @@ export function RevokeApiTokenDialog({
           >
             Cancelar
           </button>
-          <button
+          <PendingButton
             type="button"
             className="danger-button"
+            pending={pending}
             aria-disabled={pending || undefined}
+            announce={{ pending: "Revocando token" }}
             onClick={() => {
               if (!pending) onConfirm();
             }}
           >
-            {pending ? "Revocando…" : "Revocar token"}
-          </button>
+            Revocar token
+          </PendingButton>
         </div>
-        <p role="status">{pending ? "Revocando el token…" : ""}</p>
       </div>
     </Dialog>
   );

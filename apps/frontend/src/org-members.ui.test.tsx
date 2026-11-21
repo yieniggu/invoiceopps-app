@@ -340,6 +340,7 @@ describe("organization members with permissions (v2)", () => {
         createInvoices: false,
         deleteOwnInvoices: true,
         deleteOthersInvoices: false,
+        deployModels: false,
       },
     });
     await waitFor(() =>
@@ -416,7 +417,7 @@ describe("organization members with permissions (v2)", () => {
       within(draft)
         .getAllByRole("button", { pressed: false })
         .filter((button) => !/todos/.test(button.textContent ?? "")),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     fireEvent.change(screen.getByLabelText(/RUT de la persona/), {
       target: { value: "190347907" },
     });
@@ -537,6 +538,10 @@ describe("bulk organization permissions", () => {
         deleteOthersInvoices: false,
       },
     });
+    expect(
+      transport.calls(BULK_PUT)[0].body,
+      "deployModels is not sent when its toggle was not touched (CR-590)",
+    ).not.toHaveProperty("permissions.deployModels");
     expect(window.location.pathname).toBe(
       "/organizations/00000000-0000-4000-9000-000000000001/members",
     );
@@ -544,6 +549,38 @@ describe("bulk organization permissions", () => {
     await waitFor(() =>
       expect(transport.calls("GET /api/v1/auth/profile").length).toBe(2),
     );
+  });
+
+  it("sends deployModels only when the admin touched that toggle, even if it ends up off (CR-590)", async () => {
+    const transport = mockTransport({
+      ...routes(adminProfile),
+      [BULK_PUT]: () => jsonResponse({ memberships: [] }),
+    });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/permissions?userIds=00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000001",
+    });
+    await screen.findByText("Carla Soto");
+    fireEvent.click(screen.getByRole("button", { name: "Marcar todos" }));
+    // «Marcar todos» never implies the model flag; now the admin decides it.
+    fireEvent.click(screen.getByRole("button", { name: "Desplegar modelos" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Aplicar a 2 miembros" }),
+    );
+    await screen.findByText("Permisos actualizados para 2 miembros.");
+    expect(transport.calls(BULK_PUT)[0].body).toEqual({
+      userIds: [
+        "00000000-0000-4000-8000-000000000003",
+        "00000000-0000-4000-8000-000000000001",
+      ],
+      permissions: {
+        readInvoices: true,
+        createInvoices: true,
+        deleteOwnInvoices: true,
+        deleteOthersInvoices: true,
+        deployModels: true,
+      },
+    });
   });
 
   it("keeps the draft on the screen when the server rejects the whole batch", async () => {
@@ -881,3 +918,63 @@ describe("paginated management table (AC-18, AC-23)", () => {
 function platformProfile() {
   return profileFixture({ isPlatformAdministrator: true, memberships: [] });
 }
+
+describe("«Despliega modelos» in permission summaries (CR-566)", () => {
+  const withDeploy = async (run: () => Promise<void>) => {
+    const original = [members[1].permissions, members[1].groups[1].permissions];
+    members[1].permissions = {
+      ...NO_PERMISSIONS,
+      readInvoices: true,
+      deployModels: true,
+    };
+    members[1].groups[1].permissions = {
+      ...NO_PERMISSIONS,
+      createInvoices: true,
+      deployModels: true,
+    };
+    try {
+      await run();
+    } finally {
+      members[1].permissions = original[0]!;
+      members[1].groups[1].permissions = original[1]!;
+    }
+  };
+  const flag = (element: HTMLElement) =>
+    within(element).queryByRole("img", { name: "Despliega modelos" });
+
+  it("marks the member row in the organization table (OrganizationMembersScreen)", async () => {
+    await withDeploy(async () => {
+      mockTransport(routes(adminProfile));
+      renderApp({
+        route: "/organizations/00000000-0000-4000-9000-000000000001/members",
+      });
+      const row = (await screen.findByText("Carla Soto")).closest(
+        "tr",
+      ) as HTMLElement;
+      expect(within(row).getByText("1 de 4 permisos")).toBeTruthy();
+      expect(flag(row)).toBeTruthy();
+      const adminRow = screen
+        .getByText("Ada Lovelace")
+        .closest("tr") as HTMLElement;
+      expect(flag(adminRow)).toBeNull();
+    });
+  });
+
+  it("marks the folded card of a group where the person may deploy (MemberGroupCard)", async () => {
+    await withDeploy(async () => {
+      mockTransport(routes(adminProfile));
+      renderApp({
+        route:
+          "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000003",
+      });
+      const ventas = (
+        await screen.findByRole("button", { name: /Ventas/ })
+      ).closest("section") as HTMLElement;
+      const contabilidad = screen
+        .getByRole("button", { name: /Contabilidad/ })
+        .closest("section") as HTMLElement;
+      expect(flag(ventas)).toBeTruthy();
+      expect(flag(contabilidad)).toBeNull();
+    });
+  });
+});

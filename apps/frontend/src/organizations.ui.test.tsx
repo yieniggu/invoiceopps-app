@@ -56,6 +56,12 @@ function fillForm(values: {
   });
 }
 
+// Hidden announcements (CR-587) are not visible loading text.
+const visibleText = (pattern: RegExp) =>
+  screen
+    .queryAllByText(pattern)
+    .filter((element) => !element.closest(".visually-hidden"));
+
 describe("organization list (only my memberships)", () => {
   it("shows a card per membership with name, slug, role and a detail link", async () => {
     const transport = mockTransport({
@@ -305,7 +311,10 @@ describe("create organization screen (AC-11)", () => {
         detail.promise,
     });
     renderApp({ route: "/organizations/00000000-0000-4000-9000-000000000002" });
-    expect(await screen.findByText("Cargando organización...")).toBeTruthy();
+    expect((await screen.findAllByTestId("skeleton")).length).toBeGreaterThan(
+      0,
+    );
+    expect(visibleText(/Cargando/)).toEqual([]);
     expect(
       screen.queryByRole("heading", { name: "Página no encontrada" }),
     ).toBeNull();

@@ -10,7 +10,7 @@ import {
 } from "../../members/MembersTableScreen";
 import { paths } from "../../navigation/paths";
 import { usePageParam } from "../../navigation/useListParams";
-import { permissionRatio } from "../../permissions/types";
+import { PermissionRatio } from "../../permissions/components/DeployModelsIndicator";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
 import { useGroupMembersPageQuery } from "../hooks/useGroups";
 import type { GroupMember } from "../types";
@@ -51,7 +51,7 @@ function MembersView({ organization, group }: GroupContext) {
     { header: "RUT", cell: ({ user }) => fromApiRut(user.rut) },
     {
       header: "Permisos",
-      cell: ({ permissions }) => `${permissionRatio(permissions)} permisos`,
+      cell: ({ permissions }) => <PermissionRatio permissions={permissions} />,
     },
   ];
 
@@ -74,7 +74,8 @@ function MembersView({ organization, group }: GroupContext) {
         </LinkButton>
       }
       messages={{
-        loading: "Cargando miembros del grupo...",
+        skeleton: 3,
+        loadingLabel: "Cargando miembros del grupo",
         error: "No fue posible cargar los miembros del grupo.",
         staleError:
           "No fue posible actualizar los miembros del grupo. Tus cambios ya se guardaron; no repitas la operación.",

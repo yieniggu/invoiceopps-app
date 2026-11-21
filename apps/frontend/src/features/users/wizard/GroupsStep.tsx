@@ -1,3 +1,4 @@
+import { Skeleton } from "../../../components/Skeleton";
 import { Trash2 } from "lucide-react";
 import { useId } from "react";
 
@@ -12,6 +13,7 @@ import {
   type OrganizationDraft,
   type OrganizationOption,
 } from "./draft";
+import { DeployModelsIndicator } from "../../permissions/components/DeployModelsIndicator";
 import { groupCountLabel, groupSummary } from "./summaries";
 
 /**
@@ -153,9 +155,7 @@ function OrganizationGroups({
           </>
         ) : null}
         {groups.isPending ? (
-          <p role="status" className="muted">
-            Cargando grupos...
-          </p>
+          <Skeleton rows={2} label="Cargando grupos" />
         ) : null}
         {noGroupsAtAll ? (
           <p className="muted">Esta organización no tiene grupos.</p>
@@ -246,7 +246,12 @@ function GroupDraftCard({
   return (
     <CollapsibleSection
       title={`Grupo ${index + 1}`}
-      summary={groupSummary(draft.groupName, draft.permissions)}
+      summary={
+        <>
+          {groupSummary(draft.groupName, draft.permissions)}
+          <DeployModelsIndicator permissions={draft.permissions} />
+        </>
+      }
       open={open}
       onToggle={onToggle}
       headingLevel={4}

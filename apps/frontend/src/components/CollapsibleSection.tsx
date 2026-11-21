@@ -24,7 +24,7 @@ export function CollapsibleSection({
   children,
 }: {
   title: string;
-  summary: string;
+  summary: ReactNode;
   open: boolean;
   onToggle: () => void;
   collapsible?: boolean;

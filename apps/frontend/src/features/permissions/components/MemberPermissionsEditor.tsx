@@ -1,16 +1,17 @@
 import { useId, useState } from "react";
 import { ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
 
+import { PendingButton } from "../../../components/PendingButton";
 import { describeError } from "../../auth/api/apiError";
+import { PermissionRatio } from "./DeployModelsIndicator";
 import {
   useSavePermissions,
   type PermissionsTarget,
 } from "../hooks/useSavePermissions";
 import {
-  ALL_PERMISSIONS,
-  NO_PERMISSIONS,
+  MODEL_PERMISSION_LABEL,
+  withInvoiceFlags,
   PERMISSION_LABELS,
-  permissionRatio,
   samePermissions,
   type InvoicePermissions,
 } from "../types";
@@ -56,7 +57,7 @@ function PermissionToggle({
 }
 
 /**
- * Four independent invoice flags at one level. This is the controlled "draft"
+ * The independent flags at one level (four invoice flags and the model flag). This is the controlled "draft"
  * mode: no network, the parent owns the value (forms that create things).
  * `SavedMemberPermissionsEditor` adds the save flow for existing members.
  * With `collapsible` the editor folds behind a chevron and shows "n de 4
@@ -89,7 +90,7 @@ export function MemberPermissionsEditor({
   const scope = scopeName ? ` «${scopeName}»` : "";
   const legend = `${LEVEL_LABEL[level]}${scope} — ${memberName}`;
   const expanded = !collapsible || open;
-  const summary = `${permissionRatio(value)} permisos`;
+  const summary = <PermissionRatio permissions={value} />;
 
   const body = (
     <>
@@ -99,7 +100,7 @@ export function MemberPermissionsEditor({
           className="secondary-button"
           aria-disabled={disabled || undefined}
           onClick={() => {
-            if (!disabled) onChange({ ...ALL_PERMISSIONS });
+            if (!disabled) onChange(withInvoiceFlags(value, true));
           }}
         >
           Marcar todos
@@ -109,7 +110,7 @@ export function MemberPermissionsEditor({
           className="secondary-button"
           aria-disabled={disabled || undefined}
           onClick={() => {
-            if (!disabled) onChange({ ...NO_PERMISSIONS });
+            if (!disabled) onChange(withInvoiceFlags(value, false));
           }}
         >
           Desmarcar todos
@@ -125,6 +126,14 @@ export function MemberPermissionsEditor({
             onToggle={() => onChange({ ...value, [flag]: !value[flag] })}
           />
         ))}
+        <PermissionToggle
+          label={MODEL_PERMISSION_LABEL[1]}
+          on={value.deployModels}
+          locked={disabled}
+          onToggle={() =>
+            onChange({ ...value, deployModels: !value.deployModels })
+          }
+        />
       </div>
     </>
   );
@@ -191,16 +200,14 @@ export function SavedMemberPermissionsEditor({
     );
   };
 
-  const status = save.isPending
-    ? "Guardando…"
-    : save.isError
-      ? describeError(
-          save.error,
-          "No fue posible guardar los permisos. Tus cambios siguen en pantalla; intenta nuevamente.",
-        )
-      : save.isSuccess && !dirty
-        ? "Permisos guardados"
-        : "";
+  const status = save.isError
+    ? describeError(
+        save.error,
+        "No fue posible guardar los permisos. Tus cambios siguen en pantalla; intenta nuevamente.",
+      )
+    : save.isSuccess && !dirty
+      ? "Permisos guardados"
+      : "";
 
   return (
     <div className="permission-editor">
@@ -219,14 +226,16 @@ export function SavedMemberPermissionsEditor({
         }}
       />
       <div className="action-row">
-        <button
+        <PendingButton
           type="button"
           disabled={!dirty || save.isPending}
+          pending={save.isPending}
+          announce={{ pending: "Guardando permisos" }}
           aria-label={`Guardar permisos de ${memberName}`}
           onClick={submit}
         >
           Guardar
-        </button>
+        </PendingButton>
         <p
           role="status"
           aria-live="polite"

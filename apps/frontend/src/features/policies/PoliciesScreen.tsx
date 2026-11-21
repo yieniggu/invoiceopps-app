@@ -1,3 +1,5 @@
+import { PendingButton } from "../../components/PendingButton";
+import { Skeleton } from "../../components/Skeleton";
 import {
   useCallback,
   useEffect,
@@ -335,14 +337,8 @@ function PolicyContext({
           ) : null}
         </section>
       ) : null}
-      {pending ? (
-        <p role="status">
-          Guardando política. Navegar no cancela una escritura ya recibida por
-          el servidor.
-        </p>
-      ) : null}
       {list.kind === "loading" ? (
-        <p role="status">Cargando políticas...</p>
+        <Skeleton rows={3} label="Cargando políticas" />
       ) : null}
       {list.kind === "error" ? (
         <>
@@ -454,13 +450,16 @@ function PolicyContext({
                 role="group"
                 aria-label="Acciones de política"
               >
-                <button type="submit" disabled={pending || unknown}>
-                  {pending
-                    ? "Guardando política..."
-                    : selected === undefined
-                      ? "Crear política"
-                      : "Guardar política"}
-                </button>
+                <PendingButton
+                  type="submit"
+                  disabled={pending || unknown}
+                  pending={pending}
+                  announce={{ pending: "Guardando política" }}
+                >
+                  {selected === undefined
+                    ? "Crear política"
+                    : "Guardar política"}
+                </PendingButton>
                 {selected !== undefined ? (
                   <button
                     type="button"

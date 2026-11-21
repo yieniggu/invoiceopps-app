@@ -48,6 +48,7 @@ export const paths = {
   },
   policies: "/policies",
   apiTokens: "/api-tokens",
+  models: "/models",
   profile: "/profile",
   changePassword: "/change-password",
   organizations: "/organizations",

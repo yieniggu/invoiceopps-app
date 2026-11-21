@@ -29,6 +29,7 @@ const none = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const north = {
   id: "00000000-0000-4000-9000-000000000001",

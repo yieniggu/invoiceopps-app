@@ -69,12 +69,15 @@ export interface OrganizationBasic {
   name: string;
   slug: string;
   description: string | null;
+  /** Models section (MLOPS-05); an ADMIN turns it on or off. */
+  mlEnabled: boolean;
 }
 
 /** The slug is immutable; a null or blank description clears it. */
 export interface UpdateOrganizationInput {
   name?: string;
   description?: string | null;
+  mlEnabled?: boolean;
 }
 
 export interface UserBasic {
@@ -107,6 +110,7 @@ export interface OrganizationSummary {
     name: string;
     slug: string;
     description: string | null;
+    mlEnabled: boolean;
   };
   summary: { memberCount: number; groupCount: number };
 }

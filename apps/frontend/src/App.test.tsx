@@ -118,8 +118,11 @@ describe("APP-03 profile", () => {
     // The pending state is derived from the mutation, so it paints a tick
     // after the click rather than synchronously.
     const savingButton = await screen.findByRole("button", {
-      name: "Guardando cambios...",
+      name: "Guardar cambios",
     });
+    await waitFor(() =>
+      expect(savingButton.getAttribute("aria-busy")).toBe("true"),
+    );
     expect(savingButton.hasAttribute("disabled")).toBe(true);
     patchGate.resolve(
       jsonResponse({
@@ -134,11 +137,9 @@ describe("APP-03 profile", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toContain(
-        "Perfil actualizado",
-      );
-    });
+    expect(
+      (await screen.findByText("Perfil actualizado.")).getAttribute("role"),
+    ).toBe("status");
     // Not "the last call": once the save settles the app may read the profile
     // again, and when that read starts relative to this line depends on load.
     expect(
@@ -258,9 +259,17 @@ describe("APP-03 profile", () => {
     });
     fireEvent.click(logoutButton);
 
-    expect(
-      await screen.findByRole("button", { name: "Saliendo..." }),
-    ).toHaveProperty("disabled", true);
+    const leaving = await screen.findByRole("button", { name: "Salir" });
+    await waitFor(() => expect(leaving.getAttribute("aria-busy")).toBe("true"));
+    expect(leaving).toHaveProperty("disabled", true);
+    // One signal (CR-750): the button spinner. The main area keeps its content
+    // instead of swapping to a «Cerrando sesión» skeleton.
+    const main = screen.getByRole("main");
+    expect(within(main).queryByText("Cerrando sesión")).toBeNull();
+    expect(within(main).queryByTestId("skeleton")).toBeNull();
+    expect(within(main).getAllByText("Próximamente.").length).toBeGreaterThan(
+      0,
+    );
     // The request starts once the identity's in-flight reads are cancelled.
     await waitFor(() => expect(completeLogout).toBeDefined());
 

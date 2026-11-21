@@ -1,9 +1,10 @@
 import { LogOut } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { PendingButton } from "../../../components/PendingButton";
 import { PasswordInput } from "../../../components/PasswordInput";
 import { ThemeToggle } from "../../../components/ThemeToggle";
-import { isApiError } from "../api/apiError";
+import { describeWait, isApiError } from "../api/apiError";
 import { useChangePasswordMutation } from "../hooks/useAuthMutations";
 import { useLogoutMutation } from "../hooks/useAuthMutations";
 
@@ -29,6 +30,12 @@ function serverFailure(error: unknown): Omit<PasswordError, "nonce"> {
       text: "No fue posible conectar con el servidor. Revisa tu conexión e intenta nuevamente.",
     };
   }
+  if (error.status === 400 && error.code === "INVALID_CURRENT_PASSWORD") {
+    return {
+      field: "currentPassword",
+      text: "La contraseña temporal no es correcta.",
+    };
+  }
   if (error.status === 400 && error.code === "PASSWORD_REUSE") {
     return {
       field: "newPassword",
@@ -42,6 +49,15 @@ function serverFailure(error: unknown): Omit<PasswordError, "nonce"> {
     "newPassword" in error.fields
   ) {
     return { field: "newPassword", text: NEW_PASSWORD_LENGTH_MESSAGE };
+  }
+  if (error.status === 429 || error.code === "RATE_LIMITED") {
+    return { field: null, text: `Demasiados intentos. ${describeWait(error)}` };
+  }
+  if (error.code === "RETRYABLE_CONFLICT") {
+    return {
+      field: null,
+      text: "El sistema está ocupado. Intenta nuevamente en unos segundos.",
+    };
   }
   return {
     field: null,
@@ -155,9 +171,14 @@ export function ChangePasswordScreen() {
               : undefined
           }
         />
-        <button type="submit" disabled={pending}>
-          {pending ? "Cambiando contraseña..." : "Cambiar contraseña"}
-        </button>
+        <PendingButton
+          type="submit"
+          pending={pending}
+          disabled={pending}
+          announce={{ pending: "Cambiando contraseña" }}
+        >
+          Cambiar contraseña
+        </PendingButton>
       </form>
       {passwordError ? (
         <p role="alert" id={PASSWORD_ERROR_ID}>

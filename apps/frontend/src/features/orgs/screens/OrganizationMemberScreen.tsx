@@ -87,7 +87,8 @@ function MemberLoader({
         <PageHeader title="Miembro" />
         <QueryFeedback
           query={members}
-          loading="Cargando miembro..."
+          skeleton={3}
+          loadingLabel="Cargando miembro"
           error="No fue posible cargar al miembro."
           retryLabel="Reintentar miembro"
         />
@@ -104,7 +105,6 @@ function MemberLoader({
       />
       <QueryFeedback
         query={members}
-        loading=""
         error=""
         staleError="No fue posible actualizar los datos del miembro. Tus cambios ya se guardaron; no repitas la operación."
         retryLabel="Reintentar miembro"
@@ -285,7 +285,8 @@ function MemberDetail({
           <ConfirmAction
             label={`Quitar a ${user.name} de la organización`}
             confirmLabel={`Confirmar quitar a ${user.name}`}
-            disabled={remove.isPending}
+            pending={remove.isPending}
+            announce="Quitando de la organización"
             onConfirm={() => {
               onDeparting(member);
               remove.mutate(

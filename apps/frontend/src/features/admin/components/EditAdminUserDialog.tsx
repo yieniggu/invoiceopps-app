@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import {
   useEffect,
   useId,
@@ -129,9 +130,18 @@ export function EditAdminUserDialog({
           />
         )}
         <div className="action-row">
-          <button type="submit" disabled={update.isPending}>
-            {update.isPending ? "Guardando..." : "Guardar cambios"}
-          </button>
+          <PendingButton
+            type="submit"
+            disabled={update.isPending}
+            pending={update.isPending}
+            announce={{
+              pending: "Guardando cambios",
+              done: "Cambios guardados",
+              succeeded: update.isSuccess,
+            }}
+          >
+            Guardar cambios
+          </PendingButton>
           <button
             type="button"
             className="secondary-button"

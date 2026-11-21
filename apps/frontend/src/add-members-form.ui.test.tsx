@@ -39,6 +39,7 @@ const NO_FLAGS = {
   createInvoices: false,
   deleteOwnInvoices: false,
   deleteOthersInvoices: false,
+  deployModels: false,
 };
 const PEOPLE = Array.from({ length: 5 }, (_unused, index) => ({
   id: uuid(index + 1),
@@ -123,7 +124,13 @@ describe("AddMembersForm pre-check (CR-312/CR-313)", () => {
     const view = renderApp({ route: NEW_MEMBERS });
     await pick(1);
     submit("Agregar 1 persona al grupo");
-    await screen.findByRole("button", { name: /Comprobando/ });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Agregar 1 persona al grupo" })
+          .getAttribute("aria-busy"),
+      ).toBe("true"),
+    );
     view.unmount();
     hold.open();
     await act(async () => {
@@ -132,7 +139,7 @@ describe("AddMembersForm pre-check (CR-312/CR-313)", () => {
     expect(transport.calls(BULK_POST)).toHaveLength(0);
   });
 
-  it("shows Comprobando and disables the submit while checking", async () => {
+  it("shows a spinner, not text, and locks the submit while checking", async () => {
     const hold = gate();
     mockTransport(
       routes({
@@ -149,12 +156,20 @@ describe("AddMembersForm pre-check (CR-312/CR-313)", () => {
     renderApp({ route: NEW_MEMBERS });
     await pick(1);
     submit("Agregar 1 persona al grupo");
-    const button = await screen.findByRole("button", { name: /Comprobando/ });
+    const button = await screen.findByRole("button", {
+      name: "Agregar 1 persona al grupo",
+    });
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+    // The label never turns into «Comprobando…»; a hidden region says it.
+    expect(button.textContent).toBe("Agregar 1 persona al grupo");
+    expect(screen.getByText("Comprobando personas").className).toContain(
+      "visually-hidden",
+    );
     // Inert, but not `disabled`: a focused button must keep its focus.
     expect(button.getAttribute("aria-disabled")).toBe("true");
     expect((button as HTMLButtonElement).disabled).toBe(false);
     hold.open();
-    await waitFor(() => expect(screen.queryByText(/Comprobando/)).toBeNull());
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBeNull());
   });
 
   it("goes ahead with the request when the check itself fails", async () => {

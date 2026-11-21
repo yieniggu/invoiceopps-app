@@ -221,6 +221,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Hidden announcements (CR-587) are not visible loading text.
+const visibleText = (pattern: RegExp) =>
+  screen
+    .queryAllByText(pattern)
+    .filter((element) => !element.closest(".visually-hidden"));
+
 describe("APP12 S2 identity and authorized workspace presentation", () => {
   it("shows actual identity, memberships and existing dashboard entry points without loading invoice KPIs", async () => {
     const api = http();
@@ -267,9 +273,15 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
       { target: { value: "nuevo" } },
     );
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    expect((await screen.findByRole("status")).textContent).toBe(
-      "Guardando cambios del perfil...",
-    );
+    // No text state: the hidden live region says it, the button is busy.
+    expect(
+      (await screen.findByText("Guardando perfil")).getAttribute("role"),
+    ).toBe("status");
+    expect(
+      screen
+        .getByRole("button", { name: "Guardar cambios" })
+        .getAttribute("aria-busy"),
+    ).toBe("true");
     expect(
       screen.getByRole("textbox", { name: "Correo electrónico" }),
     ).toHaveProperty("disabled", true);
@@ -431,9 +443,10 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     const read = pending<Response>();
     api.readOrgGroups.mockReturnValueOnce(read.promise);
     await start("Grupos");
-    expect(
-      (await screen.findByText("Cargando grupos...")).getAttribute("role"),
-    ).toBe("status");
+    expect((await screen.findAllByTestId("skeleton")).length).toBeGreaterThan(
+      0,
+    );
+    expect(visibleText(/Cargando/)).toEqual([]);
     expect(
       screen.queryByText(
         "No perteneces a ningún grupo de esta organización todavía.",
@@ -472,9 +485,10 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     fireEvent.click(create);
     expect(save).toHaveProperty("disabled", false);
     fireEvent.click(save);
-    expect((await screen.findByText("Guardando…")).getAttribute("role")).toBe(
-      "status",
-    );
+    expect(
+      (await screen.findByText("Guardando permisos")).getAttribute("role"),
+    ).toBe("status");
+    expect(save.getAttribute("aria-busy")).toBe("true");
     expect(save).toHaveProperty("disabled", true);
     await act(async () => change.resolve(json({}, 403)));
     expect(
@@ -495,6 +509,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
             createInvoices: true,
             deleteOwnInvoices: false,
             deleteOthersInvoices: false,
+            deployModels: false,
           },
         }),
       }),
@@ -524,6 +539,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
               createInvoices: false,
               deleteOwnInvoices: false,
               deleteOthersInvoices: false,
+              deployModels: false,
             },
           },
         ],
@@ -721,7 +737,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     api.readGroups.mockReturnValueOnce(read.promise);
     await start();
     expect(screen.getByRole("status").textContent).toBe(
-      "Validando tu espacio de trabajo...",
+      "Validando tu espacio de trabajo",
     );
     expect(
       screen.queryByText("Elige una organización o grupo para empezar."),

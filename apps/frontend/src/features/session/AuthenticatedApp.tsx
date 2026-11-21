@@ -3,6 +3,7 @@ import { ProtectedSessionProvider } from "../auth/components/ProtectedSession";
 import { useSessionSnapshot, useSessionStore } from "../auth/hooks/useSession";
 import type { Profile } from "../auth/types";
 import { hasInvoiceAccess } from "../invoices/invoiceScopes";
+import { hasModelsAccess } from "../models/modelsContexts";
 import { AppShell } from "../navigation/AppShell";
 import { IssuedCredentialProvider } from "../users/components/IssuedCredentialProvider";
 import { WorkspaceProvider } from "../workspace/WorkspaceContext";
@@ -16,8 +17,9 @@ export function AuthenticatedApp({ profile }: { profile: Profile }) {
   const logout = useLogoutMutation();
   const workspace = useWorkspaceGroups(profile);
 
+  // The only signal of a logout in flight is the spinner of the «Salir»
+  // button; the content stays as it is until the session ends.
   const isLoggingOut = logout.isPending;
-
   return (
     <AppShell
       onLogout={() => logout.mutate()}
@@ -25,6 +27,7 @@ export function AuthenticatedApp({ profile }: { profile: Profile }) {
       isPlatformAdministrator={profile.isPlatformAdministrator}
       showInvoices={hasInvoiceAccess(profile)}
       showApiTokens={profile.memberships.length > 0}
+      showModels={hasModelsAccess(profile)}
     >
       {/* A stale 401 from a retired partition is ignored because `end`
           compares clients. Políticas is disabled, so its mutation ledger is
@@ -42,11 +45,7 @@ export function AuthenticatedApp({ profile }: { profile: Profile }) {
           ) : null}
           {/* In-memory only; the key drops it on logout or identity swap. */}
           <IssuedCredentialProvider key={`${generation}:${profile.id}`}>
-            {!isLoggingOut ? (
-              <AppRoutes profile={profile} workspace={workspace} />
-            ) : (
-              <p role="status">Saliendo...</p>
-            )}
+            <AppRoutes profile={profile} workspace={workspace} />
           </IssuedCredentialProvider>
         </WorkspaceProvider>
       </ProtectedSessionProvider>

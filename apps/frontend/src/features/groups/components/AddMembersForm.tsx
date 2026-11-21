@@ -12,14 +12,15 @@ import {
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 
+import { PendingButton } from "../../../components/PendingButton";
 import { CollapsibleSection } from "../../../components/CollapsibleSection";
 import { describeError } from "../../auth/api/apiError";
 import { MAX_BULK_MEMBERS } from "../../../lib/limits";
 import { fromApiRut } from "../../../lib/rut";
+import { PermissionRatio } from "../../permissions/components/DeployModelsIndicator";
 import { MemberPermissionsEditor } from "../../permissions/components/MemberPermissionsEditor";
 import {
   NO_PERMISSIONS,
-  permissionRatio,
   type InvoicePermissions,
 } from "../../permissions/types";
 import type { OrganizationUser } from "../../users/types";
@@ -461,22 +462,21 @@ export function AddMembersForm({
             : "ya no se pueden agregar al grupo (ya están en él o dejaron la organización) y se quitaron de la selección."}
         </p>
       ) : null}
-      <button
+      <PendingButton
         type="submit"
         disabled={chosen.length === 0 || tooMany}
         aria-disabled={pending || undefined}
-        aria-busy={pending}
+        pending={pending}
+        announce={{
+          pending: checking ? "Comprobando personas" : "Agregando personas",
+        }}
       >
-        {pending
-          ? checking
-            ? "Comprobando..."
-            : "Agregando..."
-          : chosen.length === 0
-            ? "Agregar personas al grupo"
-            : chosen.length === 1
-              ? "Agregar 1 persona al grupo"
-              : `Agregar ${chosen.length} personas al grupo`}
-      </button>
+        {chosen.length === 0
+          ? "Agregar personas al grupo"
+          : chosen.length === 1
+            ? "Agregar 1 persona al grupo"
+            : `Agregar ${chosen.length} personas al grupo`}
+      </PendingButton>
     </form>
   );
 }
@@ -539,7 +539,7 @@ const SelectedCard = memo(function SelectedCard({
   return (
     <CollapsibleSection
       title={user.name}
-      summary={`${permissionRatio(permissions)} permisos`}
+      summary={<PermissionRatio permissions={permissions} />}
       open={open}
       onToggle={() => onToggleOpen(user.id)}
       renderFolded={false}
@@ -557,7 +557,7 @@ const SelectedCard = memo(function SelectedCard({
       }
     >
       <p className="muted" aria-live="polite">
-        {permissionRatio(permissions)} permisos
+        <PermissionRatio permissions={permissions} />
       </p>
       <MemberPermissionsEditor
         memberName={user.name}

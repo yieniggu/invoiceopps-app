@@ -48,7 +48,8 @@ export function OrganizationDirectory({ profile }: { profile: Profile }) {
       />
       <QueryFeedback
         query={organizations}
-        loading="Cargando organizaciones..."
+        skeleton={3}
+        loadingLabel="Cargando organizaciones"
         error="No fue posible cargar las organizaciones."
         staleError="No fue posible actualizar las organizaciones; lo que ves puede estar desactualizado."
         retryLabel="Reintentar organizaciones"

@@ -4,6 +4,7 @@ import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
 import type { Profile } from "../../auth/types";
 import { paths } from "../../navigation/paths";
+import { DeployModelsIndicator } from "../../permissions/components/DeployModelsIndicator";
 import { describePermissions } from "../../permissions/types";
 import { GroupGate, type GroupContext } from "../components/GroupGate";
 import { useGroupMembersPageQuery } from "../hooks/useGroups";
@@ -89,14 +90,18 @@ function GroupSummary({
         {canManage ? (
           <QueryFeedback
             query={members}
-            loading="Cargando miembros del grupo..."
+            skeleton={3}
+            loadingLabel="Cargando miembros del grupo"
             error="No fue posible cargar los miembros del grupo."
             staleError="No fue posible actualizar los miembros del grupo."
             retryLabel="Reintentar miembros del grupo"
           />
         ) : null}
         {!canManage && effective ? (
-          <p className="muted">{describePermissions(effective)}</p>
+          <p className="muted">
+            {describePermissions(effective)}
+            <DeployModelsIndicator permissions={effective} />
+          </p>
         ) : null}
       </section>
     </div>

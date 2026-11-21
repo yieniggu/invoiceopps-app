@@ -242,6 +242,37 @@ describe("Admin entry and route authority", () => {
 });
 
 describe("platform create-user wizard", () => {
+  it("flags «Despliega modelos» in the summary where the person gets it (CR-566)", async () => {
+    mockTransport(
+      platformRoutes({ "POST /api/v1/admin/users": () => created() }),
+    );
+    renderApp({ route: NEW_USER });
+    await fillData();
+    await toStep2();
+    addOrganization(1, "00000000-0000-4000-9000-000000000001");
+    fireEvent.click(
+      within(
+        screen.getByRole("group", {
+          name: "Permisos en la organización «Academia Norte» — Diego Rojas",
+        }),
+      ).getByRole("button", { name: "Desplegar modelos" }),
+    );
+    await toStep3();
+    await addGroup("Academia Norte", "00000000-0000-4000-a000-000000000097");
+    await toSummary();
+    const organization = screen
+      .getByText(/En la organización:/)
+      .closest("li") as HTMLElement;
+    expect(
+      within(organization).getAllByRole("img", { name: "Despliega modelos" }),
+    ).toHaveLength(1);
+    // The group got nothing: its line carries no indicator.
+    const group = screen.getByText(/^Grupo Contabilidad:/);
+    expect(
+      within(group).queryByRole("img", { name: "Despliega modelos" }),
+    ).toBeNull();
+  });
+
   it("builds the exact POST body for several organizations and groups with permissions", async () => {
     const transport = mockTransport(
       platformRoutes({ "POST /api/v1/admin/users": () => created() }),
@@ -414,6 +445,52 @@ describe("platform create-user wizard", () => {
       expect(
         body.memberships.map(({ organizationId }) => organizationId),
       ).toEqual(["00000000-0000-4000-9000-000000000140"]);
+    });
+
+    it("shows a skeleton, not text, while the search runs (CR-579)", async () => {
+      const gate = deferred<Response>();
+      const routes = manyRoutes();
+      const first = routes["GET /api/v1/organizations"]!;
+      mockTransport({
+        ...routes,
+        "GET /api/v1/organizations": (request) =>
+          new URLSearchParams(request.search).get("search")
+            ? gate.promise
+            : (first as RouteHandler)(request),
+      });
+      renderApp({ route: NEW_USER });
+      await fillData();
+      await toStep2();
+      press("Agregar a una organización");
+      await within(card(1)).findByText(/Mostrando 100 de 150/);
+      fireEvent.change(within(card(1)).getByLabelText("Buscar organización"), {
+        target: { value: "organización 140" },
+      });
+      const status = await within(card(1)).findByText(
+        "Buscando organizaciones",
+      );
+      expect(status.getAttribute("role")).toBe("status");
+      expect(status.className).toContain("visually-hidden");
+      expect(within(card(1)).getByTestId("skeleton")).toBeTruthy();
+      expect(
+        within(card(1)).queryByText(/Buscando organizaciones\.\.\./),
+      ).toBeNull();
+      gate.resolve(
+        jsonResponse({
+          organizations: [],
+          total: 0,
+          page: 1,
+          pageSize: 100,
+        }),
+      );
+      await waitFor(() =>
+        expect(within(card(1)).queryByTestId("skeleton")).toBeNull(),
+      );
+      expect(
+        within(card(1)).getByText(
+          "Ninguna organización coincide con la búsqueda.",
+        ),
+      ).toBeTruthy();
     });
 
     it("keeps a chosen organization selectable when a later search leaves it out", async () => {
@@ -1255,9 +1332,13 @@ describe("temporary password choice", () => {
     expect(document.body.textContent).not.toContain(DEFINED);
 
     press("Crear usuario");
-    expect((await screen.findByRole("status")).textContent).toBe(
-      "Se creó a Diego Rojas. La persona deberá cambiarla al iniciar sesión.",
-    );
+    expect(
+      (
+        await screen.findByText(
+          "Se creó a Diego Rojas. La persona deberá cambiarla al iniciar sesión.",
+        )
+      ).getAttribute("role"),
+    ).toBe("status");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(transport.calls("POST /api/v1/admin/users")[0].body).toEqual({
       name: "Diego Rojas",

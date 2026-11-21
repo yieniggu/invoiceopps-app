@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useRef, useState, type FormEvent } from "react";
 
 import { MutationFeedback } from "../../../components/MutationFeedback";
@@ -79,9 +80,18 @@ export function AssignMemberForm({
         onChange={setPermissions}
         disabled={assign.isPending}
       />
-      <button type="submit" disabled={assign.isPending}>
-        {assign.isPending ? "Agregando..." : "Agregar persona"}
-      </button>
+      <PendingButton
+        type="submit"
+        disabled={assign.isPending}
+        pending={assign.isPending}
+        announce={{
+          pending: "Agregando persona",
+          done: "Persona agregada",
+          succeeded: assign.isSuccess,
+        }}
+      >
+        Agregar persona
+      </PendingButton>
       <MutationFeedback
         isError={assign.isError}
         error={assign.error}

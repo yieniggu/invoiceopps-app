@@ -45,6 +45,8 @@ export async function expectNoHorizontalOverflow(page: Page) {
 export async function expectSettled(page: Page) {
   await expect(page.locator(".session-skeleton")).toHaveCount(0);
   await expect(page.getByText(/^Cargando/)).toHaveCount(0);
+  // Reads show a skeleton, not text: a loading screen must not be shot.
+  await expect(page.locator('[data-testid="skeleton"]')).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
 }
 

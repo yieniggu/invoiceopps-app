@@ -149,6 +149,7 @@ function http({
                 createInvoices: false,
                 deleteOwnInvoices: false,
                 deleteOthersInvoices: false,
+                deployModels: false,
               },
             },
           ],

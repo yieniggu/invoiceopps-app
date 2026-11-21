@@ -173,6 +173,12 @@ function adminRoutes(
 const row = (name: string) =>
   screen.getByRole("link", { name }).closest("tr") as HTMLElement;
 
+// Hidden announcements (CR-587) are not visible loading text.
+const visibleText = (pattern: RegExp) =>
+  screen
+    .queryAllByText(pattern)
+    .filter((element) => !element.closest(".visually-hidden"));
+
 describe("admin users directory (AC-13)", () => {
   it("lists users with name, RUT, status and activity as text, and links to each profile", async () => {
     mockTransport(adminRoutes(makeDb()));
@@ -281,13 +287,20 @@ describe("admin users directory (AC-13)", () => {
     // Back restores the previous state from the URL alone.
     await act(async () => window.history.back());
     await waitFor(() => expect(window.location.search).toBe("?search=Bru"));
-    expect(
-      (screen.getByLabelText("Estado de la cuenta") as HTMLSelectElement).value,
-    ).toBe("all");
-    expect(
-      (screen.getByLabelText("Buscar por nombre o RUT") as HTMLInputElement)
-        .value,
-    ).toBe("Bru");
+    // The form follows the URL on a later render: wait for it, never read it
+    // in the same tick as the location change.
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Estado de la cuenta") as HTMLSelectElement)
+          .value,
+      ).toBe("all"),
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Buscar por nombre o RUT") as HTMLInputElement)
+          .value,
+      ).toBe("Bru"),
+    );
   });
 
   it("opens straight on a filtered, paged URL", async () => {
@@ -334,7 +347,10 @@ describe("admin users directory (AC-13)", () => {
       adminRoutes(makeDb(), { "GET /api/v1/admin/users": () => hold.promise }),
     );
     renderApp({ route: "/admin" });
-    expect(await screen.findByText("Cargando usuarios...")).toBeTruthy();
+    expect((await screen.findAllByTestId("skeleton")).length).toBeGreaterThan(
+      0,
+    );
+    expect(visibleText(/Cargando/)).toEqual([]);
   });
 
   it("keeps /admin and its sub-routes as not-found for everyone else", async () => {
@@ -709,6 +725,36 @@ describe("admin user profile (AC-13)", () => {
     expect(within(dialog).queryByLabelText("RUT")).toBeNull();
   });
 
+  it("announces the pending reset in a live region and spins the trigger (CR-562)", async () => {
+    let release: (response: Response) => void = () => undefined;
+    mockTransport(
+      adminRoutes(makeDb(), {
+        "POST /api/v1/admin/users/00000000-0000-4000-8000-000000000002/password-reset":
+          () =>
+            new Promise<Response>((resolve) => {
+              release = resolve;
+            }),
+      }),
+    );
+    renderApp({ route: "/admin/users/00000000-0000-4000-8000-000000000002" });
+    await screen.findByRole("heading", { level: 1, name: "Bruno Díaz" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restablecer contraseña" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirmar restablecimiento" }),
+    );
+    const status = await screen.findByText("Restableciendo contraseña");
+    expect(status.getAttribute("role")).toBe("status");
+    expect(
+      screen
+        .getByRole("button", { name: "Restablecer contraseña" })
+        .getAttribute("aria-busy"),
+    ).toBe("true");
+    release(errorResponse(409, "SELF_ACTION_FORBIDDEN"));
+    await screen.findByRole("alert");
+  });
+
   it("explains SELF_ACTION_FORBIDDEN if the server still refuses an action", async () => {
     mockTransport(
       adminRoutes(makeDb(), {
@@ -982,5 +1028,39 @@ describe("admin partition and identity switch", () => {
     ).toBe(false);
     expect(document.body.textContent).not.toContain("Bruno Díaz");
     expect(window.location.pathname).toBe("/dashboard");
+  });
+});
+
+describe("«Despliega modelos» in the admin user page (CR-566)", () => {
+  it("marks the organization and the groups where the person may deploy (AdminUserScreen)", async () => {
+    const key = "GET /api/v1/admin/users/00000000-0000-4000-8000-000000000002";
+    const routes = adminRoutes(makeDb());
+    const base = routes[key];
+    routes[key] = async (request) => {
+      const body = await (await base(request)).json();
+      body.memberships[0].permissions.deployModels = true;
+      body.memberships[0].groups[0].permissions.deployModels = true;
+      return jsonResponse(body);
+    };
+    mockTransport(routes);
+    renderApp({ route: "/admin/users/00000000-0000-4000-8000-000000000002" });
+    await screen.findByRole("heading", { level: 1, name: "Bruno Díaz" });
+    const table = screen.getByRole("table", {
+      name: "Organizaciones de la persona",
+    });
+    const row = within(table).getByText("Usuario").closest("tr") as HTMLElement;
+    // One for the organization flags and one for the group's.
+    expect(
+      within(row).getAllByRole("img", { name: "Despliega modelos" }),
+    ).toHaveLength(2);
+    expect(within(row).getByText("2 de 4 permisos")).toBeTruthy();
+    expect(row.textContent).toContain("Contabilidad (1 de 4");
+  });
+
+  it("shows no indicator without the flag", async () => {
+    mockTransport(adminRoutes(makeDb()));
+    renderApp({ route: "/admin/users/00000000-0000-4000-8000-000000000002" });
+    await screen.findByRole("heading", { level: 1, name: "Bruno Díaz" });
+    expect(screen.queryByRole("img", { name: "Despliega modelos" })).toBeNull();
   });
 });

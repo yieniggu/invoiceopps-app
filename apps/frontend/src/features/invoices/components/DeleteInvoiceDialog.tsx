@@ -1,11 +1,12 @@
 import type { RefObject } from "react";
 
 import { Dialog } from "../../../components/Dialog";
+import { PendingButton } from "../../../components/PendingButton";
 import type { Invoice } from "../types";
 
 /**
  * Asks before deleting. While the request runs nothing dismisses the dialog;
- * the confirm button says «Eliminando…», is announced as busy and is
+ * the confirm button shows a spinner, is announced as busy and is
  * `aria-disabled` (not `disabled`, which would drop the focus it holds), and
  * its click is ignored, so a double click sends one DELETE.
  */
@@ -45,19 +46,19 @@ export function DeleteInvoiceDialog({
           >
             Cancelar
           </button>
-          <button
+          <PendingButton
             type="button"
             className="danger-button"
+            pending={pending}
             aria-disabled={pending || undefined}
+            announce={{ pending: "Eliminando factura" }}
             onClick={() => {
               if (!pending) onConfirm();
             }}
           >
-            {pending ? "Eliminando…" : "Eliminar factura"}
-          </button>
+            Eliminar factura
+          </PendingButton>
         </div>
-        {/* Present from the start so the change is announced. */}
-        <p role="status">{pending ? "Eliminando la factura…" : ""}</p>
       </div>
     </Dialog>
   );

@@ -51,6 +51,27 @@ function renderDashboard(next: Profile = profile) {
 
 afterEach(cleanup);
 
+describe("DashboardScreen workspace validation (CR-561)", () => {
+  it("shows a skeleton with a hidden announcement, not loading text, while the context validates", () => {
+    render(
+      <MemoryRouter>
+        <WorkspaceProvider profile={profile} groups={[]}>
+          <DashboardScreen
+            profile={profile}
+            contextState="loading"
+            onRetry={vi.fn()}
+          />
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("skeleton")).toBeTruthy();
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("Validando tu espacio de trabajo");
+    expect(status.className).toContain("visually-hidden");
+    expect(screen.queryByText(/\.\.\./)).toBeNull();
+  });
+});
+
 describe("DashboardScreen cards", () => {
   it("puts Facturas first and keeps the agreed card order", () => {
     renderDashboard({ ...READER, isPlatformAdministrator: true });

@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useNavigate } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
@@ -80,9 +81,14 @@ function CreateOrganizationContainer({ profile }: { profile: Profile }) {
           Crear una organización no otorga acceso a sus facturas ni a sus
           grupos.
         </p>
-        <button type="submit" disabled={create.isPending}>
-          {create.isPending ? "Creando organización..." : "Crear organización"}
-        </button>
+        <PendingButton
+          type="submit"
+          disabled={create.isPending}
+          pending={create.isPending}
+          announce={{ pending: "Creando organización" }}
+        >
+          Crear organización
+        </PendingButton>
         <MutationFeedback
           isError={create.isError}
           error={create.error}

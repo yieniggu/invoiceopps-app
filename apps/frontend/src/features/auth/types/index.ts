@@ -19,7 +19,13 @@ export type Profile = {
   isPlatformAdministrator: boolean;
   mustChangePassword?: boolean;
   memberships: Array<{
-    organization: { id: string; name: string; slug: string };
+    organization: {
+      id: string;
+      name: string;
+      slug: string;
+      /** Whether the Models section is on for the organization (MLOPS-05). */
+      mlEnabled: boolean;
+    };
     role: string;
     permissions: InvoicePermissions;
     groups: GroupMembershipProfile[];

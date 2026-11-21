@@ -7,9 +7,11 @@ import {
 } from "react";
 import { Link, useLocation } from "react-router";
 import {
+  Boxes,
   Building2,
   KeyRound,
   LayoutDashboard,
+  Loader2,
   LogOut,
   ShieldCheck,
   Menu,
@@ -54,6 +56,8 @@ export const primaryDestinations: Destination[] = [
   { label: "Organizaciones", to: paths.organizations, icon: Building2 },
   { label: "Grupos", to: paths.groups, icon: Users },
   { label: "Tokens de API", to: paths.apiTokens, icon: KeyRound },
+  // Offered only when an organization of the person turned the section on.
+  { label: "Modelos", to: paths.models, icon: Boxes, testId: "nav-models" },
 ];
 const adminDestination: Destination = {
   label: "Admin",
@@ -108,6 +112,7 @@ export function AppShell({
   isPlatformAdministrator = false,
   showInvoices = true,
   showApiTokens = false,
+  showModels = false,
 }: {
   children: ReactNode;
   /**
@@ -117,6 +122,8 @@ export function AppShell({
   showInvoices?: boolean;
   /** «Tokens de API» is offered to people with an organization membership. */
   showApiTokens?: boolean;
+  /** «Modelos» is offered when an organization of the person enabled it (MLOPS-05). */
+  showModels?: boolean;
   /** Shows the Admin entry above the profile and logout items. */
   isPlatformAdministrator?: boolean;
   onLogout: () => void;
@@ -242,7 +249,6 @@ export function AppShell({
         </Link>
       </li>
     );
-  const logoutLabel = isLoggingOut ? "Saliendo..." : "Salir";
 
   return (
     <NoticeRegionProvider>
@@ -313,7 +319,8 @@ export function AppShell({
                 .filter(
                   ({ to }) =>
                     (showInvoices || to !== paths.invoices) &&
-                    (showApiTokens || to !== paths.apiTokens),
+                    (showApiTokens || to !== paths.apiTokens) &&
+                    (showModels || to !== paths.models),
                 )
                 .map(renderItem)}
             </ul>
@@ -331,11 +338,29 @@ export function AppShell({
                   className="nav-item"
                   title={collapsed ? "Salir" : undefined}
                   disabled={isLoggingOut}
+                  aria-busy={isLoggingOut || undefined}
                   onClick={logout}
                 >
-                  <LogOut aria-hidden="true" focusable="false" size={20} />
-                  <span className={labelClass}>{logoutLabel}</span>
+                  {isLoggingOut ? (
+                    <Loader2
+                      className="icon-spin"
+                      aria-hidden="true"
+                      focusable="false"
+                      size={20}
+                    />
+                  ) : (
+                    <LogOut aria-hidden="true" focusable="false" size={20} />
+                  )}
+                  <span className={labelClass}>Salir</span>
                 </button>
+                {/* The one spoken counterpart of the spinner. It exists only
+                    while the request runs, so no empty live region sits in
+                    the shell the rest of the time. */}
+                {isLoggingOut ? (
+                  <span role="status" className="visually-hidden">
+                    Cerrando sesión
+                  </span>
+                ) : null}
               </li>
             </ul>
           </nav>

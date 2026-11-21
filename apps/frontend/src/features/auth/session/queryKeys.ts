@@ -210,3 +210,25 @@ export const apiTokensKey = (
   params === undefined
     ? ([...identity(identityId), "api-tokens"] as const)
     : ([...identity(identityId), "api-tokens", params] as const);
+
+/**
+ * Registered models of one context (organization or group). Without a context
+ * it is the prefix of every catalogue of the person; it never overlaps the
+ * deployments prefix.
+ */
+export const modelsKey = (
+  identityId: string,
+  context?: { organizationId: string; groupId: string | null },
+) =>
+  context === undefined
+    ? ([...identity(identityId), "models"] as const)
+    : ([...identity(identityId), "models", context] as const);
+
+/** Deployments of one context; without a context the prefix of all of them. */
+export const deploymentsKey = (
+  identityId: string,
+  context?: { organizationId: string; groupId: string | null },
+) =>
+  context === undefined
+    ? ([...identity(identityId), "deployments"] as const)
+    : ([...identity(identityId), "deployments", context] as const);

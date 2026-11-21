@@ -1,3 +1,4 @@
+import { DeployModelsIndicator } from "../../permissions/components/DeployModelsIndicator";
 import { LinkButton } from "../../../components/LinkButton";
 import { paths } from "../../navigation/paths";
 import type { Group } from "../types";
@@ -22,7 +23,10 @@ export function GroupRow({
       <h3 className="card-title">{group.name}</h3>
       {group.description ? <p>{group.description}</p> : null}
       {effective ? (
-        <p className="muted">{describePermissions(effective)}</p>
+        <p className="muted">
+          {describePermissions(effective)}
+          <DeployModelsIndicator permissions={effective} />
+        </p>
       ) : null}
       <div className="action-row">
         <LinkButton

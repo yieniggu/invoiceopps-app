@@ -194,8 +194,21 @@ describe("AppShell sidebar", () => {
     view.unmount();
 
     renderShell({ isLoggingOut: true });
-    const pending = screen.getByRole("button", { name: "Saliendo..." });
+    // No text state: the name stays «Salir», the spinner replaces the icon.
+    const pending = screen.getByRole("button", { name: "Salir" });
     expect((pending as HTMLButtonElement).disabled).toBe(true);
+    expect(pending.getAttribute("aria-busy")).toBe("true");
+    expect(pending.querySelector(".icon-spin")).not.toBeNull();
+    expect(screen.queryByText("Saliendo...")).toBeNull();
+    // The spinner has one spoken counterpart, outside the main area.
+    const status = screen.getByText("Cerrando sesión");
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.closest("main")).toBeNull();
+  });
+
+  it("announces nothing while Salir is idle", () => {
+    renderShell();
+    expect(screen.queryByText("Cerrando sesión")).toBeNull();
   });
 
   it("moves the current mark when a sidebar link is followed", () => {

@@ -132,6 +132,7 @@ test.describe("groups", () => {
               createInvoices: false,
               deleteOwnInvoices: false,
               deleteOthersInvoices: false,
+              deployModels: false,
             },
           })),
         },

@@ -105,3 +105,36 @@ describe("expiry preview of an open emission dialog (CR-361)", () => {
     });
   });
 });
+
+describe("pending submit announcement (CR-562)", () => {
+  it("announces «Emitiendo token» in a live region while the emission is pending", () => {
+    const view = render(
+      <IssueApiTokenDialog
+        options={options}
+        pending={false}
+        failure={undefined}
+        onSubmit={() => undefined}
+        onClose={() => undefined}
+        returnFocusTo={createRef<HTMLElement>()}
+      />,
+    );
+    expect(screen.queryByText("Emitiendo token")).toBeNull();
+    view.rerender(
+      <IssueApiTokenDialog
+        options={options}
+        pending
+        failure={undefined}
+        onSubmit={() => undefined}
+        onClose={() => undefined}
+        returnFocusTo={createRef<HTMLElement>()}
+      />,
+    );
+    const status = screen.getByText("Emitiendo token");
+    expect(status.getAttribute("role")).toBe("status");
+    expect(
+      screen
+        .getByRole("button", { name: "Emitir token" })
+        .getAttribute("aria-busy"),
+    ).toBe("true");
+  });
+});

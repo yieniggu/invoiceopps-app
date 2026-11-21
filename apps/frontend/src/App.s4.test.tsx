@@ -188,7 +188,7 @@ describe("APP12 S4 session-owned policy writes", () => {
           screen.getByLabelText("Umbral de revisión manual (0 a 1)"),
         ).toHaveProperty("value", "1");
         expect(
-          screen.getByRole("button", { name: "Guardando política..." }),
+          screen.getByRole("button", { name: /^(Guardar|Crear) política$/ }),
         ).toHaveProperty("disabled", true);
       } finally {
         await act(async () =>
@@ -321,7 +321,7 @@ describe("APP12 S4 session-owned policy writes", () => {
         false,
       );
       expect(
-        screen.getByRole("button", { name: "Guardando política..." }),
+        screen.getByRole("button", { name: /^(Guardar|Crear) política$/ }),
       ).toHaveProperty("disabled", true);
     } finally {
       await act(async () =>
@@ -373,7 +373,7 @@ describe("APP12 S4 session-owned policy writes", () => {
       expect(screen.getByRole("navigation")).toBeTruthy();
       expect(screen.queryByText(/Política guardada/)).toBeNull();
       expect(
-        screen.getByRole("button", { name: "Guardando política..." }),
+        screen.getByRole("button", { name: /^(Guardar|Crear) política$/ }),
       ).toHaveProperty("disabled", true);
       await act(async () =>
         current.resolve(
@@ -412,7 +412,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     const pending = deferred<Response>();
     api.read.mockReturnValueOnce(pending.promise);
     await start();
-    await screen.findByText("Cargando políticas...");
+    await screen.findAllByTestId("skeleton");
     expect(
       screen.queryByText("No hay políticas para este propietario."),
     ).toBeNull();
@@ -483,7 +483,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
         outcome === "body" ? Promise.resolve(response) : pending.promise,
       );
       await start();
-      await screen.findByText("Cargando políticas...");
+      await screen.findAllByTestId("skeleton");
       if (outcome === "body")
         await waitFor(() => expect(parse).toHaveBeenCalled());
       group();
@@ -582,7 +582,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
     submit();
     await waitFor(() => expect(api.write).toHaveBeenCalledTimes(1));
     expect(
-      screen.getByRole("button", { name: "Guardando política..." }),
+      screen.getByRole("button", { name: /^(Guardar|Crear) política$/ }),
     ).toHaveProperty("disabled", true);
     await act(async () => pending.resolve(json({ message: "raw SQL" }, 409)));
     expect((await screen.findByRole("alert")).textContent).toContain(
@@ -788,7 +788,7 @@ describe("APP12 S4 policy HTTP workflow", () => {
       ),
     );
     expect(
-      screen.getByRole("button", { name: "Guardando política..." }),
+      screen.getByRole("button", { name: /^(Guardar|Crear) política$/ }),
     ).toHaveProperty("disabled", true);
     expect(screen.queryByText(/Política guardada/)).toBeNull();
     await act(async () =>

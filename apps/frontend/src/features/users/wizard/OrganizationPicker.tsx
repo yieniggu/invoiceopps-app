@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 
+import { Skeleton } from "../../../components/Skeleton";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import { MAX_PAGE_SIZE } from "../../../lib/pagination";
 import { useOrganizationsPageQuery } from "../../orgs/hooks/useOrganizations";
@@ -75,17 +76,23 @@ export function OrganizationPicker({
               if (event.key === "Enter") event.preventDefault();
             }}
           />
-          <p id={hintId} className="field-hint" role="status">
-            {searching && results.isError
-              ? "No fue posible buscar organizaciones. Intenta nuevamente."
-              : searching && (results.isFetching || text.trim() !== search)
-                ? "Buscando organizaciones..."
+          {searching &&
+          !results.isError &&
+          (results.isFetching || text.trim() !== search) ? (
+            <div id={hintId} className="field-hint">
+              <Skeleton rows={1} label="Buscando organizaciones" />
+            </div>
+          ) : (
+            <p id={hintId} className="field-hint" role="status">
+              {searching && results.isError
+                ? "No fue posible buscar organizaciones. Intenta nuevamente."
                 : searching && listed.length === 0
                   ? "Ninguna organización coincide con la búsqueda."
                   : listedTotal > listed.length
                     ? `Mostrando ${listed.length} de ${listedTotal} organizaciones. Escribe parte del nombre para encontrar otra.`
                     : `${listedTotal} organizaciones.`}
-          </p>
+            </p>
+          )}
         </>
       ) : null}
       <label>

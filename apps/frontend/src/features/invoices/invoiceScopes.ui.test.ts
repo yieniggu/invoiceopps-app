@@ -17,8 +17,18 @@ const READ = { ...NO_PERMISSIONS, readInvoices: true };
 const CREATE_ONLY = { ...NO_PERMISSIONS, createInvoices: true };
 const DELETE_OWN = { ...NO_PERMISSIONS, deleteOwnInvoices: true };
 
-const norte = { id: uuid(1), name: "Academia Norte", slug: "norte" };
-const sur = { id: uuid(2), name: "Instituto Sur", slug: "sur" };
+const norte = {
+  id: uuid(1),
+  name: "Academia Norte",
+  slug: "norte",
+  mlEnabled: false,
+};
+const sur = {
+  id: uuid(2),
+  name: "Instituto Sur",
+  slug: "sur",
+  mlEnabled: false,
+};
 const contabilidad = { id: uuid(11), name: "Contabilidad" };
 const compras = { id: uuid(12), name: "Compras" };
 const finanzas = { id: uuid(13), name: "Finanzas" };
@@ -365,7 +375,13 @@ describe("hasInvoiceAccess", () => {
     ["organization delete own", [membershipOf(norte, DELETE_OWN)]],
     [
       "organization delete others",
-      [membershipOf(norte, { ...NO_PERMISSIONS, deleteOthersInvoices: true })],
+      [
+        membershipOf(norte, {
+          ...NO_PERMISSIONS,
+          deleteOthersInvoices: true,
+          deployModels: false,
+        }),
+      ],
     ],
     [
       "an effective group flag",

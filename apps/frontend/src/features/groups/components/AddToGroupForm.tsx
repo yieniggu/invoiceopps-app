@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useState } from "react";
 
 import { MutationFeedback } from "../../../components/MutationFeedback";
@@ -51,7 +52,8 @@ export function AddToGroupForm({
       <h3 id="add-to-group-title">Agregar a un grupo</h3>
       <QueryFeedback
         query={groups}
-        loading="Cargando grupos..."
+        skeleton={3}
+        loadingLabel="Cargando grupos"
         error="No fue posible cargar los grupos."
         retryLabel="Reintentar grupos"
       />
@@ -84,16 +86,25 @@ export function AddToGroupForm({
             collapsible
             defaultOpen={false}
           />
-          <button type="submit" disabled={add.isPending || !selected}>
-            {add.isPending ? "Agregando..." : "Agregar al grupo"}
-          </button>
+          <PendingButton
+            type="submit"
+            disabled={add.isPending || !selected}
+            pending={add.isPending}
+            announce={{
+              pending: "Agregando al grupo",
+              done: "Agregado al grupo",
+              succeeded: add.isSuccess,
+            }}
+          >
+            Agregar al grupo
+          </PendingButton>
         </>
       ) : null}
       <MutationFeedback
         isError={add.isError}
         error={add.error}
-        isSuccess={add.isSuccess}
-        success="Persona agregada al grupo."
+        isSuccess={false}
+        success=""
         fallback="No fue posible agregar a la persona al grupo. Intenta nuevamente."
       />
     </form>

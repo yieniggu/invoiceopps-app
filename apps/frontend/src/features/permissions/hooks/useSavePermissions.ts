@@ -12,7 +12,7 @@ import {
   putGroupPermissions,
   putOrganizationPermissions,
 } from "../api/permissionsApi";
-import type { InvoicePermissions } from "../types";
+import type { BulkPermissions, InvoicePermissions } from "../types";
 import { useConflictRefresh } from "./useConflictRefresh";
 
 export type PermissionsTarget =
@@ -78,7 +78,7 @@ export type BulkPermissionsTarget =
   | { level: "group"; organizationId: string; groupId: string };
 
 /**
- * Bulk PUT of the same four flags for several members, atomic on the server.
+ * Bulk PUT of the same flags for several members, atomic on the server.
  * It refreshes the same lists as the single save, plus the profile (the actor
  * may be one of the members).
  */
@@ -90,10 +90,7 @@ export function useBulkSavePermissions(target: BulkPermissionsTarget) {
     target.level === "group" ? target.groupId : undefined,
   );
   return useMutation({
-    mutationFn: (input: {
-      userIds: string[];
-      permissions: InvoicePermissions;
-    }) =>
+    mutationFn: (input: { userIds: string[]; permissions: BulkPermissions }) =>
       target.level === "organization"
         ? putBulkOrganizationPermissions(
             target.organizationId,

@@ -126,7 +126,8 @@ function AddMembersView({ organization, group }: GroupContext) {
       />
       <QueryFeedback
         query={users}
-        loading="Cargando personas de la organización..."
+        skeleton={3}
+        loadingLabel="Cargando personas"
         error="No fue posible cargar las personas de la organización."
         retryLabel="Reintentar personas"
       />
@@ -134,7 +135,8 @@ function AddMembersView({ organization, group }: GroupContext) {
       {usersSettled && pageIds.length > 0 ? (
         <QueryFeedback
           query={members}
-          loading="Cargando miembros del grupo..."
+          skeleton={3}
+          loadingLabel="Cargando miembros del grupo"
           error="No fue posible cargar los miembros del grupo."
           retryLabel="Reintentar miembros del grupo"
         />

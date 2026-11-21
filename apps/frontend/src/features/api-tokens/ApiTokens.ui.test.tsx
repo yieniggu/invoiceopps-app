@@ -58,11 +58,11 @@ const GROUP_FLAGS = {
 const me = () =>
   profileFixture({
     memberships: [
-      membership(norte, "USER", {
+      membership({ ...norte, mlEnabled: true }, "USER", {
         permissions: CREATE_READ,
         groups: [{ group: contabilidad, effective: GROUP_FLAGS }],
       }),
-      membership(sur, "USER", {
+      membership({ ...sur, mlEnabled: true }, "USER", {
         groups: [{ group: compras, effective: READ }],
       }),
     ],
@@ -212,6 +212,12 @@ function expectSecretNowhere(client: Parameters<typeof serializeClient>[0]) {
   expect(JSON.stringify(consoleCalls)).not.toContain(SENTINEL);
 }
 
+// Hidden announcements (CR-587) are not visible loading text.
+const visibleText = (pattern: RegExp) =>
+  screen
+    .queryAllByText(pattern)
+    .filter((element) => !element.closest(".visually-hidden"));
+
 describe("entry point (AC-12)", () => {
   it("lists «Tokens de API» in the sidebar for someone with a membership", async () => {
     setup();
@@ -233,14 +239,46 @@ describe("entry point (AC-12)", () => {
     expect(screen.queryByRole("button", { name: "Emitir token" })).toBeNull();
   });
 
-  it("explains a membership without invoice permissions and offers no emission", async () => {
+  it("lets a membership without invoice permissions emit MLflow tokens only", async () => {
+    setup({
+      profile: () =>
+        profileFixture({
+          memberships: [membership({ ...norte, mlEnabled: true }, "ADMIN")],
+        }),
+    });
+    await open("/api-tokens");
+    const dialog = await openForm();
+    expect(
+      within(dialog)
+        .getAllByRole("checkbox")
+        .map((box) => (box as HTMLInputElement).labels?.[0]?.textContent),
+    ).toEqual([
+      "MLflow: leer experimentos y modelos",
+      "MLflow: registrar experimentos y modelos",
+    ]);
+  });
+
+  it("restores the no-issuance state for a member without invoice permissions when the organization has Models off (CR-577)", async () => {
     setup({
       profile: () =>
         profileFixture({ memberships: [membership(norte, "ADMIN")] }),
     });
     await open("/api-tokens");
-    expect(screen.getByText(/No tienes permisos sobre facturas/)).toBeTruthy();
+    expect(
+      await screen.findByText(`No tienes tokens en ${norte.name}.`),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Emitir token" })).toBeNull();
+    // One short line says why there is no button (CR-592).
+    expect(screen.getAllByText("Sin permisos para emitir tokens")).toHaveLength(
+      1,
+    );
+  });
+
+  it("does not show the no-permission line when the person can emit tokens (CR-592)", async () => {
+    setup();
+    await open("/api-tokens");
+    await screen.findByRole("button", { name: "Emitir token" });
+    expect(screen.queryByText("Sin permisos para emitir tokens")).toBeNull();
   });
 });
 
@@ -362,7 +400,8 @@ describe("token list (AC-12)", () => {
     expect(screen.queryByText("Del norte")).toBeNull();
     expect(screen.queryByRole("button", { name: /Revocar/ })).toBeNull();
     expect(screen.queryByText(/No tienes tokens en/)).toBeNull();
-    expect(screen.getByText("Cargando tokens...")).toBeTruthy();
+    expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
+    expect(visibleText(/Cargando/)).toEqual([]);
 
     await act(async () => {
       gate.resolve(
@@ -401,7 +440,7 @@ describe("emission form (AC-12)", () => {
       ),
     ).toEqual([
       ["Toda la organización", "Contabilidad", "Finanzas"],
-      ["Compras"],
+      ["Toda la organización", "Compras"],
     ]);
   });
 
@@ -413,7 +452,12 @@ describe("emission form (AC-12)", () => {
       within(dialog)
         .getAllByRole("checkbox")
         .map((box) => (box as HTMLInputElement).labels?.[0]?.textContent);
-    expect(names()).toEqual(["Leer facturas", "Crear facturas"]);
+    expect(names()).toEqual([
+      "Leer facturas",
+      "Crear facturas",
+      "MLflow: leer experimentos y modelos",
+      "MLflow: registrar experimentos y modelos",
+    ]);
 
     const select = within(dialog).getByLabelText("Alcance del token");
     await within(dialog).findByRole("option", { name: "Contabilidad" });
@@ -424,6 +468,8 @@ describe("emission form (AC-12)", () => {
       "Leer facturas",
       "Crear facturas",
       "Eliminar facturas propias",
+      "MLflow: leer experimentos y modelos",
+      "MLflow: registrar experimentos y modelos",
     ]);
     fireEvent.click(
       within(dialog).getByRole("checkbox", {
@@ -437,7 +483,11 @@ describe("emission form (AC-12)", () => {
     fireEvent.change(select, {
       target: { value: `group:${sur.id}:${compras.id}` },
     });
-    expect(names()).toEqual(["Leer facturas"]);
+    expect(names()).toEqual([
+      "Leer facturas",
+      "MLflow: leer experimentos y modelos",
+      "MLflow: registrar experimentos y modelos",
+    ]);
 
     fireEvent.change(select, {
       target: { value: `group:${norte.id}:${contabilidad.id}` },
@@ -447,7 +497,7 @@ describe("emission form (AC-12)", () => {
       within(dialog)
         .getAllByRole("checkbox")
         .map((box) => (box as HTMLInputElement).checked),
-    ).toEqual([false, false, false]);
+    ).toEqual([false, false, false, false, false]);
   });
 
   it("validates name and permissions accessibly before sending", async () => {
@@ -652,7 +702,11 @@ describe("a submit in flight (CR-323, CR-328)", () => {
     );
     name.focus();
     fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
-    await within(dialog).findByText("Emitiendo token…");
+    const issue = await within(dialog).findByRole("button", {
+      name: "Emitir token",
+    });
+    await waitFor(() => expect(issue.getAttribute("aria-busy")).toBe("true"));
+    expect(issue.getAttribute("aria-disabled")).toBe("true");
     expect(document.activeElement).toBe(name);
     expect(name.readOnly).toBe(true);
     expect(name.disabled).toBe(false);

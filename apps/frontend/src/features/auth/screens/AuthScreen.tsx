@@ -1,10 +1,11 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useRef, useState, type FormEvent } from "react";
 
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { PasswordInput } from "../../../components/PasswordInput";
 import { RutField } from "../../../components/RutField";
 import { isValidRut } from "../../../lib/rut";
-import { isApiError, isNetworkFailure } from "../api/apiError";
+import { describeWait, isApiError, isNetworkFailure } from "../api/apiError";
 import { useLoginMutation } from "../hooks/useAuthMutations";
 import type { SessionEnd } from "../session/sessionStore";
 
@@ -41,8 +42,7 @@ function describeAuthFailure(error: unknown): AuthFailure {
   if (error.status === 429)
     return {
       kind: "rate-limited",
-      message:
-        "Demasiados intentos. Espera unos minutos antes de intentar nuevamente.",
+      message: `Demasiados intentos. ${describeWait(error)}`,
       ...reply,
     };
   if (error.status === 403)
@@ -195,15 +195,16 @@ export function AuthScreen({
         >
           {passwordMissing ? "Ingresa tu contraseña" : ""}
         </p>
-        <button
+        <PendingButton
           id="login-submit"
           data-testid="login-submit"
           type="submit"
           disabled={pending}
+          pending={pending}
+          announce={{ pending: "Iniciando sesión" }}
         >
-          {pending ? "Iniciando sesión..." : "Iniciar sesión"}
-        </button>
-        {pending ? <p role="status">Iniciando sesión...</p> : null}
+          Iniciar sesión
+        </PendingButton>
         {failure ? (
           <p
             id="login-error"

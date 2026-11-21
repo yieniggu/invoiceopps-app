@@ -176,8 +176,9 @@ describe("MemberPermissionsEditor, draft mode", () => {
     );
     const group = screen.getByRole("group");
     const controls = within(group).getAllByRole("button");
-    // Four toggles plus "Marcar todos" and "Desmarcar todos".
-    expect(controls).toHaveLength(6);
+    // Five toggles (four invoice flags and «Desplegar modelos») plus
+    // "Marcar todos" and "Desmarcar todos".
+    expect(controls).toHaveLength(7);
     for (const control of controls) {
       expect(control.getAttribute("aria-disabled")).toBe("true");
       expect(control.matches(":disabled")).toBe(false);
@@ -223,9 +224,11 @@ describe("MemberPermissionsEditor, saved mode", () => {
     renderSaved();
     fireEvent.click(screen.getByRole("button", { name: "Crear facturas" }));
     fireEvent.click(save());
-    const status = await screen.findByText("Guardando…");
+    // No «Guardando…» text: the button is busy and a hidden region announces it.
+    const status = await screen.findByText("Guardando permisos");
     expect(status.getAttribute("role")).toBe("status");
-    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.className).toContain("visually-hidden");
+    expect(save().getAttribute("aria-busy")).toBe("true");
     expect(save()).toHaveProperty("disabled", true);
     expect(
       screen
@@ -240,7 +243,7 @@ describe("MemberPermissionsEditor, saved mode", () => {
     });
     await act(async () => gate.resolve(jsonResponse({ membership: {} })));
     expect(await screen.findByText("Permisos guardados")).toBeTruthy();
-    expect(screen.queryByText("Guardando…")).toBeNull();
+    expect(screen.queryByText("Guardando permisos")).toBeNull();
   });
 
   it("keeps the draft and says why when saving fails", async () => {

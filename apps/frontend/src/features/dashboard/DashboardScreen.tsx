@@ -8,6 +8,7 @@ import {
 
 import { LinkButton } from "../../components/LinkButton";
 import { PageHeader } from "../../components/PageHeader";
+import { Skeleton } from "../../components/Skeleton";
 import type { Profile } from "../profile/ProfileScreen";
 import { hasInvoiceAccess } from "../invoices/invoiceScopes";
 import { paths } from "../navigation/paths";
@@ -93,7 +94,7 @@ export function DashboardScreen({
         >
           {profile.memberships.length > 0 &&
           (contextState === "idle" || contextState === "loading") ? (
-            <p role="status">Validando tu espacio de trabajo...</p>
+            <Skeleton rows={2} label="Validando tu espacio de trabajo" />
           ) : contextState === "error" ? (
             <>
               <p role="alert">No fue posible validar tu espacio de trabajo.</p>

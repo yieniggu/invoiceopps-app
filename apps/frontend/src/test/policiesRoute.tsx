@@ -1,3 +1,4 @@
+import { Skeleton } from "../components/Skeleton";
 import { act } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { Route, Routes } from "react-router";
@@ -47,7 +48,7 @@ export function withPoliciesRoute(Original: ComponentType<Props>) {
                     </button>
                   </>
                 ) : (
-                  <p role="status">Cargando tu espacio de trabajo...</p>
+                  <Skeleton rows={3} label="Cargando políticas" />
                 )}
               </div>
             }

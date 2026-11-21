@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { Plus } from "lucide-react";
 import {
   useEffect,
@@ -556,9 +557,15 @@ export function CreateUserWizard({
             Siguiente
           </button>
         ) : (
-          <button key="create" type="submit" disabled={pending}>
-            {pending ? "Creando usuario..." : "Crear usuario"}
-          </button>
+          <PendingButton
+            key="create"
+            type="submit"
+            disabled={pending}
+            pending={pending}
+            announce={{ pending: "Creando usuario" }}
+          >
+            Crear usuario
+          </PendingButton>
         )}
       </div>
     </form>

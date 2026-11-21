@@ -6,13 +6,17 @@ import { NO_PERMISSIONS, type InvoicePermissions } from "../permissions/types";
 import { canDeleteInvoiceFromProfile } from "./invoiceDeletion";
 
 const ME = uuid(1);
-const norte = { id: uuid(101), name: "Norte", slug: "norte" };
+const norte = { id: uuid(101), name: "Norte", slug: "norte", mlEnabled: false };
 const sur = { id: uuid(102), name: "Sur", slug: "sur" };
 const contabilidad = { id: uuid(201), name: "Contabilidad" };
 const compras = { id: uuid(202), name: "Compras" };
 
 const OWN = { ...NO_PERMISSIONS, deleteOwnInvoices: true };
-const OTHERS = { ...NO_PERMISSIONS, deleteOthersInvoices: true };
+const OTHERS = {
+  ...NO_PERMISSIONS,
+  deleteOthersInvoices: true,
+  deployModels: false,
+};
 
 function profile(
   permissions: InvoicePermissions,

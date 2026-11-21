@@ -1,3 +1,4 @@
+import { Skeleton } from "../../../components/Skeleton";
 import type { ReactNode } from "react";
 import { useParams } from "react-router";
 
@@ -133,7 +134,7 @@ function GroupLoader({
     <div className="screen-stack">
       {back}
       <PageHeader title="Grupo" />
-      <p role="status">Cargando grupo...</p>
+      <Skeleton rows={3} label="Cargando grupo" />
     </div>
   );
 }

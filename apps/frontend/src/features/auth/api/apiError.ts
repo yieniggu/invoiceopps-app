@@ -6,6 +6,8 @@ export class ApiError extends Error {
     readonly code: string | undefined,
     message: string,
     readonly fields?: Record<string, unknown>,
+    /** Whole seconds of the `Retry-After` header, when it sent a usable one. */
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -50,7 +52,44 @@ export async function readApiError(response: Response): Promise<ApiError> {
   } catch {
     // An empty or non-JSON body still carries the HTTP status.
   }
-  return new ApiError(response.status, code, message, fields);
+  return new ApiError(
+    response.status,
+    code,
+    message,
+    fields,
+    parseRetryAfter(response.headers.get("Retry-After")),
+  );
+}
+
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
+
+/** `Retry-After` as whole seconds: delta-seconds or an HTTP date. */
+export function parseRetryAfter(
+  header: string | null,
+  now = Date.now(),
+): number | undefined {
+  const value = header?.trim();
+  if (!value) return undefined;
+  const seconds = /^\d+$/.test(value)
+    ? Number(value)
+    : Math.ceil((Date.parse(value) - now) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 1) return undefined;
+  return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
+}
+
+/** «30 s», «2 min», «1 h»: the wait of a rate limit, rounded up. */
+export function formatWait(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  return `${Math.ceil(seconds / 3600)} h`;
+}
+
+/** «Espera 2 min.» for a 429 that told how long, else a generic «Espera un momento.». */
+export function describeWait(error: unknown): string {
+  const seconds = isApiError(error) ? error.retryAfterSeconds : undefined;
+  return seconds === undefined
+    ? "Espera un momento."
+    : `Espera ${formatWait(seconds)}.`;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -77,6 +116,11 @@ const MESSAGES: Record<string, string> = {
 
 /** Spanish text for a failed request; the server message is never shown. */
 export function describeError(error: unknown, fallback: string) {
+  if (
+    isApiError(error) &&
+    (error.status === 429 || error.code === "RATE_LIMITED")
+  )
+    return `Demasiados intentos. ${describeWait(error)}`;
   if (isApiError(error) && error.code && MESSAGES[error.code])
     return MESSAGES[error.code];
   if (isApiError(error)) return fallback;

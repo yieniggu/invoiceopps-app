@@ -16,6 +16,7 @@ import { isUuid } from "../../../lib/uuid";
 import type { Profile } from "../../auth/types";
 import { paths, type RouteNotice } from "../../navigation/paths";
 import { DeleteInvoiceDialog } from "../components/DeleteInvoiceDialog";
+import { InvoicePredictions } from "../components/InvoicePredictions";
 import { InvoiceStatusBadge } from "../components/InvoiceStatusBadge";
 import { groupLabel } from "../components/InvoiceTable";
 import { useDeleteInvoice } from "../hooks/useDeleteInvoice";
@@ -89,7 +90,7 @@ export function InvoiceDetailScreen({ profile }: { profile: Profile }) {
     (groupId === undefined || isUuid(groupId));
   const remove = useDeleteInvoice(organizationId, groupId, invoiceId);
   // Once deleted, nothing may ask for the invoice again.
-  const { query, forbidden, notFound } = useInvoiceQuery(
+  const { query, forbidden, notFound, gaveUp, refresh } = useInvoiceQuery(
     organizationId,
     groupId,
     invoiceId,
@@ -164,7 +165,8 @@ export function InvoiceDetailScreen({ profile }: { profile: Profile }) {
             data: invoice,
             refetch: query.refetch,
           }}
-          loading="Cargando factura..."
+          skeleton={3}
+          loadingLabel="Cargando factura"
           error="No fue posible cargar la factura."
           staleError="No fue posible actualizar la factura; lo que ves puede estar desactualizado."
           retryLabel="Reintentar"
@@ -199,6 +201,14 @@ export function InvoiceDetailScreen({ profile }: { profile: Profile }) {
             </Definition>
           </dl>
         </div>
+      ) : null}
+      {invoice?.predictions ? (
+        <InvoicePredictions
+          predictions={invoice.predictions}
+          stalled={gaveUp}
+          // A failed read already offers «Reintentar»: one refresh control.
+          onRefresh={query.isError ? undefined : refresh}
+        />
       ) : null}
       {invoice && confirming ? (
         <DeleteInvoiceDialog

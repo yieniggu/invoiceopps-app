@@ -1,5 +1,5 @@
 import { apiRequest } from "../../auth/api/apiRequest";
-import type { InvoicePermissions } from "../types";
+import type { BulkPermissions, InvoicePermissions } from "../types";
 
 const org = (organizationId: string) =>
   `/api/v1/organizations/${encodeURIComponent(organizationId)}`;
@@ -31,7 +31,7 @@ export const putGroupPermissions = (
 export const putBulkOrganizationPermissions = (
   organizationId: string,
   userIds: string[],
-  permissions: InvoicePermissions,
+  permissions: BulkPermissions,
 ) =>
   apiRequest<unknown>(`${org(organizationId)}/memberships/permissions`, {
     method: "PUT",
@@ -43,7 +43,7 @@ export const putBulkGroupPermissions = (
   organizationId: string,
   groupId: string,
   userIds: string[],
-  permissions: InvoicePermissions,
+  permissions: BulkPermissions,
 ) =>
   apiRequest<unknown>(
     `${org(organizationId)}/groups/${encodeURIComponent(groupId)}/memberships/permissions`,

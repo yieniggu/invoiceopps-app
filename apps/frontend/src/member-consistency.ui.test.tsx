@@ -278,7 +278,9 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
 
     await waitFor(() => expect(transport.calls(DELETE)).toHaveLength(1));
@@ -330,7 +332,9 @@ describe("CR-216 flows navigate only after the lists are fresh", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
 
     await waitFor(() => expect(transport.calls(DELETE)).toHaveLength(1));
@@ -639,7 +643,12 @@ describe("CR-215 a conflict refreshes the people and names who is gone", () => {
     await screen.findByText("Permisos actualizados para 1 miembro.");
     expect(transport.calls(PUT)[1]?.body).toEqual({
       userIds: ["00000000-0000-4000-8000-000000000003"],
-      permissions: { ...NO_PERMISSIONS, readInvoices: true },
+      permissions: {
+        readInvoices: true,
+        createInvoices: false,
+        deleteOwnInvoices: false,
+        deleteOthersInvoices: false,
+      },
     });
   });
 
@@ -879,7 +888,9 @@ describe("CR-236 changing your own role or leaving", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Ada Lovelace" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Ada Lovelace",
+      }),
     );
 
     await screen.findByText("Saliste de la organización «Academia Norte».");
@@ -940,7 +951,9 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     );
     const watcher = watchNotFound();
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
     await waitFor(() => expect(transport.calls(MEMBERSHIPS)).toHaveLength(2));
     hold?.resolve(jsonResponse(orgMembershipsPage(people)));
@@ -979,7 +992,9 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     const watcher = watchNotFound();
     const profileReads = transport.calls("GET /api/v1/auth/profile").length;
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Ada Lovelace" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Ada Lovelace",
+      }),
     );
     await waitFor(() => expect(transport.calls(MEMBERSHIPS)).toHaveLength(2));
     // The profile that lost the organization is not read while the screen
@@ -1026,7 +1041,9 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
     );
     const watcher = watchNotFound();
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
     await waitFor(() =>
       expect(transport.calls(GROUP_A_MEMBERS)).toHaveLength(2),
@@ -1054,7 +1071,9 @@ describe("CR-254 removing a person never shows not-found or forbidden on the way
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
     await screen.findByText(
       "No fue posible quitar al miembro. Intenta nuevamente.",
@@ -1128,6 +1147,38 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
       }
       cleanup();
     }
+  });
+
+  it("adding to a group announces the success once, not in two status messages (CR-593)", async () => {
+    const POST =
+      "POST /api/v1/organizations/00000000-0000-4000-9000-000000000001/groups/00000000-0000-4000-a000-000000000097/memberships";
+    const gate = deferred<Response>();
+    const transport = mockTransport({
+      ...baseRoutes([ada, diego]),
+      [POST]: () => gate.promise,
+    });
+    renderApp({
+      route:
+        "/organizations/00000000-0000-4000-9000-000000000001/members/00000000-0000-4000-8000-000000000005",
+    });
+    const addButton = await screen.findByRole("button", {
+      name: "Agregar al grupo",
+    });
+    const form = screen.getByRole("form", { name: "Agregar a un grupo" });
+    fireEvent.click(addButton);
+    await waitFor(() => expect(transport.calls(POST)).toHaveLength(1));
+    // The request is in flight: the pending state is announced once.
+    await within(form).findByText("Agregando al grupo");
+    gate.resolve(jsonResponse({}, 201));
+    await waitFor(() =>
+      expect(within(form).getByText("Agregado al grupo")).toBeTruthy(),
+    );
+    const messages = within(form)
+      .getAllByRole("status")
+      .map((node) => node.textContent)
+      .filter(Boolean);
+    expect(messages).toEqual(["Agregado al grupo"]);
+    expect(within(form).queryByText("Persona agregada al grupo.")).toBeNull();
   });
 
   it("removing from a group: a 404 refreshes the people and that group", async () => {
@@ -1216,7 +1267,9 @@ describe("CR-215 single-person writes refresh after a 404 or 409", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
     await waitFor(() => expect(transport.calls(MEMBERSHIPS)).toHaveLength(2));
     expect(stale.users()).toBe(true);
@@ -1318,7 +1371,9 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Carla Soto" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Carla Soto",
+      }),
     );
 
     const notice = await screen.findByText(
@@ -1400,7 +1455,9 @@ describe("CR-263 a one-shot notice does not outlive its render", () => {
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirmar quitar a Ada Lovelace" }),
+      await screen.findByRole("button", {
+        name: "Confirmar quitar a Ada Lovelace",
+      }),
     );
 
     await screen.findByText("Saliste de la organización «Academia Norte».");

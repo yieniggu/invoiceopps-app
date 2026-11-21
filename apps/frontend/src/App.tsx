@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BrowserRouter } from "react-router";
 
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useTheme } from "./lib/theme";
 import { SessionProvider } from "./features/auth/components/SessionProvider";
 import { SessionStore } from "./features/auth/session/sessionStore";
@@ -16,11 +17,13 @@ export function App({ sessionStore }: { sessionStore?: SessionStore }) {
   useTheme();
   const [store] = useState(() => sessionStore ?? new SessionStore());
   return (
-    <BrowserRouter>
-      <IdentityRouteGuard store={store} />
-      <SessionProvider store={store}>
-        <SessionGate />
-      </SessionProvider>
-    </BrowserRouter>
+    <ErrorBoundary message="Algo salió mal.">
+      <BrowserRouter>
+        <IdentityRouteGuard store={store} />
+        <SessionProvider store={store}>
+          <SessionGate />
+        </SessionProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

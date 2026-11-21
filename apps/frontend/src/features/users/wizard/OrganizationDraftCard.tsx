@@ -8,6 +8,7 @@ import { MemberPermissionsEditor } from "../../permissions/components/MemberPerm
 import type { OrganizationDraft, OrganizationOption } from "./draft";
 import { OrganizationPicker } from "./OrganizationPicker";
 import { memberRoleLabel } from "../../orgs/types/roles";
+import { DeployModelsIndicator } from "../../permissions/components/DeployModelsIndicator";
 import { organizationSummary } from "./summaries";
 
 /**
@@ -64,11 +65,16 @@ export function OrganizationDraftCard({
   return (
     <CollapsibleSection
       title={title}
-      summary={organizationSummary(
-        organization?.name,
-        memberRoleLabel(draft.role),
-        draft.permissions,
-      )}
+      summary={
+        <>
+          {organizationSummary(
+            organization?.name,
+            memberRoleLabel(draft.role),
+            draft.permissions,
+          )}
+          <DeployModelsIndicator permissions={draft.permissions} />
+        </>
+      }
       open={open}
       onToggle={onToggle}
       collapsible={!fixed}

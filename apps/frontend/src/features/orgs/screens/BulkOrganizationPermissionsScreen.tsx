@@ -57,7 +57,8 @@ function BulkView({
       }))}
       save={save}
       messages={{
-        loading: "Cargando miembros...",
+        skeleton: 3,
+        loadingLabel: "Cargando miembros",
         error: "No fue posible cargar los miembros.",
         retryLabel: "Reintentar miembros",
       }}

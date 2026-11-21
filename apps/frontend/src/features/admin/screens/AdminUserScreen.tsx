@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { BackLink } from "../../../components/BackLink";
@@ -14,6 +14,10 @@ import { useIdentityId } from "../../auth/hooks/useSession";
 import { NotFoundScreen } from "../../navigation/NotFoundScreen";
 import { paths } from "../../navigation/paths";
 import { memberRoleLabel } from "../../orgs/types/roles";
+import {
+  DeployModelsIndicator,
+  PermissionRatio,
+} from "../../permissions/components/DeployModelsIndicator";
 import { permissionRatio } from "../../permissions/types";
 import { usePresentIssuedCredential } from "../../users/components/IssuedCredentialProvider";
 import { ActivityIndicator } from "../../users/components/ActivityIndicator";
@@ -62,7 +66,8 @@ function AdminUserLoader({ userId }: { userId: string }) {
         <PageHeader title="Usuario" />
         <QueryFeedback
           query={query}
-          loading="Cargando usuario..."
+          skeleton={3}
+          loadingLabel="Cargando usuario"
           error="No fue posible cargar al usuario."
           retryLabel="Reintentar usuario"
         />
@@ -96,18 +101,19 @@ const MEMBERSHIP_COLUMNS = (
   { header: "Rol", cell: ({ role }) => memberRoleLabel(role) },
   {
     header: "Permisos",
-    cell: ({ permissions }) => `${permissionRatio(permissions)} permisos`,
+    cell: ({ permissions }) => <PermissionRatio permissions={permissions} />,
   },
   {
     header: "Grupos",
     cell: ({ groups }) =>
       groups.length > 0
-        ? groups
-            .map(
-              ({ group, permissions }) =>
-                `${group.name} (${permissionRatio(permissions)})`,
-            )
-            .join(", ")
+        ? groups.map(({ group, permissions }, index) => (
+            <Fragment key={group.id}>
+              {index > 0 ? ", " : null}
+              {group.name} ({permissionRatio(permissions)}
+              <DeployModelsIndicator permissions={permissions} />)
+            </Fragment>
+          ))
         : "Sin grupos",
   },
 ];
@@ -154,7 +160,6 @@ function AdminUserView({
       />
       <QueryFeedback
         query={query}
-        loading=""
         error=""
         staleError="No fue posible actualizar los datos del usuario; lo que ves puede estar desactualizado."
         retryLabel="Reintentar usuario"
@@ -214,7 +219,8 @@ function AdminUserView({
                 label="Restablecer contraseña"
                 confirmLabel="Confirmar restablecimiento"
                 triggerRef={resetTrigger}
-                disabled={reset.isPending}
+                pending={reset.isPending}
+                announce="Restableciendo contraseña"
                 onConfirm={() => reset.mutate()}
               />
               <ConfirmAction
@@ -224,7 +230,10 @@ function AdminUserView({
                     ? "Confirmar reactivación"
                     : "Confirmar desactivación"
                 }
-                disabled={deactivation.isPending}
+                pending={deactivation.isPending}
+                announce={
+                  disabled ? "Reactivando cuenta" : "Desactivando cuenta"
+                }
                 onConfirm={() => deactivation.mutate(!disabled)}
               />
             </div>

@@ -3,6 +3,8 @@ export const API_TOKEN_SCOPES = [
   "invoices:create",
   "invoices:delete-own",
   "invoices:delete-others",
+  "mlflow:read",
+  "mlflow:write",
 ] as const;
 
 export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number];

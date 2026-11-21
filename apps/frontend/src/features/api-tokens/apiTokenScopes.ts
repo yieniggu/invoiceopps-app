@@ -1,4 +1,4 @@
-import { isApiError } from "../auth/api/apiError";
+import { describeWait, isApiError } from "../auth/api/apiError";
 import type { Profile } from "../auth/types";
 import {
   invoiceScopeValue,
@@ -17,13 +17,26 @@ const FLAG_BY_SCOPE = {
   "invoices:create": "createInvoices",
   "invoices:delete-own": "deleteOwnInvoices",
   "invoices:delete-others": "deleteOthersInvoices",
-} as const satisfies Record<ApiTokenScope, keyof InvoicePermissions>;
+} as const satisfies Record<
+  Exclude<ApiTokenScope, MlflowScope>,
+  keyof InvoicePermissions
+>;
+
+/**
+ * MLflow scopes do not depend on invoice flags: any member of the context may
+ * emit them (organization membership; group membership for a group token),
+ * but only while the organization has the Models section on (`mlEnabled`).
+ */
+const MLFLOW_SCOPES = ["mlflow:read", "mlflow:write"] as const;
+type MlflowScope = (typeof MLFLOW_SCOPES)[number];
 
 export const SCOPE_LABELS: Record<ApiTokenScope, string> = {
   "invoices:read": "Leer facturas",
   "invoices:create": "Crear facturas",
   "invoices:delete-own": "Eliminar facturas propias",
   "invoices:delete-others": "Eliminar facturas de otros",
+  "mlflow:read": "MLflow: leer experimentos y modelos",
+  "mlflow:write": "MLflow: registrar experimentos y modelos",
 };
 
 export const ORGANIZATION_TOKEN_LABEL = "Toda la organización";
@@ -40,16 +53,26 @@ export interface TokenScopeOption {
   allowed: ApiTokenScope[];
 }
 
+const isMlflowScope = (scope: ApiTokenScope): scope is MlflowScope =>
+  (MLFLOW_SCOPES as readonly string[]).includes(scope);
+
+/**
+ * `mlflow`: the person belongs to the context and its organization has the
+ * Models section on, which is all MLflow needs.
+ */
 const allowedBy = (
+  mlflow: boolean,
   ...levels: ReadonlyArray<InvoicePermissions | undefined>
 ): ApiTokenScope[] =>
   API_TOKEN_SCOPES.filter((scope) =>
-    levels.some((level) => level?.[FLAG_BY_SCOPE[scope]]),
+    isMlflowScope(scope)
+      ? mlflow
+      : levels.some((level) => level?.[FLAG_BY_SCOPE[scope]]),
   );
 
 /**
- * Scopes where the person holds at least one invoice permission, in profile
- * order: per organization the whole organization (organization flags) and its
+ * Scopes where the person holds at least one invoice permission or is a member
+ * of an organization with Models on (MLflow scopes), in profile order: per organization the whole organization (organization flags) and its
  * groups (organization OR group effective flags). With any organization flag
  * the groups the organization lists (`organizationGroups`) join the profile's,
  * deduplicated by id.
@@ -60,6 +83,7 @@ export function tokenScopeOptions(
 ): TokenScopeOption[] {
   return memberships.flatMap(({ organization, permissions, groups }) => {
     const { id: organizationId, name: organizationName } = organization;
+    const mlflow = organization.mlEnabled === true;
     const options: TokenScopeOption[] = [];
     const push = (
       groupId: string | null,
@@ -80,13 +104,13 @@ export function tokenScopeOptions(
         allowed,
       });
     };
-    push(null, ORGANIZATION_TOKEN_LABEL, allowedBy(permissions));
+    push(null, ORGANIZATION_TOKEN_LABEL, allowedBy(mlflow, permissions));
     const known = new Set(groups.map(({ group }) => group.id));
     for (const { group, effective } of groups)
-      push(group.id, group.name, allowedBy(permissions, effective));
+      push(group.id, group.name, allowedBy(mlflow, permissions, effective));
     for (const group of organizationGroups.get(organizationId) ?? [])
       if (!known.has(group.id))
-        push(group.id, group.name, allowedBy(permissions));
+        push(group.id, group.name, allowedBy(false, permissions));
     return options;
   });
 }
@@ -165,7 +189,7 @@ export function describeTokenFailure(error: unknown, action: TokenAction) {
   if (status === 409 && isApiError(error) && error.code === "TOKEN_LIMIT")
     return "Llegaste al máximo de 50 tokens activos en esta organización. Revoca uno para emitir otro.";
   if (status === 429)
-    return "Emitiste demasiados tokens seguidos. Espera unos minutos e inténtalo de nuevo.";
+    return `Emitiste demasiados tokens seguidos. ${describeWait(error)}`;
   if (status === 404)
     return "No encontramos la organización o el grupo elegido. Es posible que ya no exista o que no tengas acceso a él.";
   if (status === 503)

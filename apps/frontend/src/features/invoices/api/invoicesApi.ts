@@ -4,6 +4,8 @@ import type {
   CreatedInvoice,
   Invoice,
   InvoiceCreateInput,
+  InvoiceDetail,
+  InvoicePrediction,
   InvoiceScope,
   InvoiceListRequest,
   InvoicePage,
@@ -31,14 +33,18 @@ export const getInvoice = (
   organizationId: string,
   groupId: string | undefined,
   signal?: AbortSignal,
-) =>
-  apiRequest<{ invoice: Invoice }>(
+): Promise<InvoiceDetail> =>
+  apiRequest<{ invoice: Invoice; predictions?: InvoicePrediction[] }>(
     withQuery(`${base}/${encodeURIComponent(invoiceId)}`, {
       organizationId,
       groupId,
     }),
     { signal },
-  ).then((result) => result.invoice);
+  ).then((result) =>
+    result.predictions
+      ? { ...result.invoice, predictions: result.predictions }
+      : result.invoice,
+  );
 
 /** Logical delete; the API answers 204 and is idempotent for its own result. */
 export const deleteInvoice = (

@@ -1,3 +1,4 @@
+import { PendingButton } from "../../../components/PendingButton";
 import { useId, type FormEvent, type ReactNode, type RefObject } from "react";
 
 import { FieldMessage } from "../../../components/FieldMessage";
@@ -58,9 +59,14 @@ export function GroupForm({
           disabled={pending}
         />
       </label>
-      <button type="submit" disabled={pending}>
-        {pending ? "Creando grupo..." : "Crear grupo"}
-      </button>
+      <PendingButton
+        type="submit"
+        disabled={pending}
+        pending={pending}
+        announce={{ pending: "Creando grupo" }}
+      >
+        Crear grupo
+      </PendingButton>
       {feedback}
     </form>
   );
