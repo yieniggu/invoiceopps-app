@@ -1746,6 +1746,55 @@ input.secret-value {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
 }
 
+/* Copyable identifier: a shortened UUID next to its copy button. */
+.copyable-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Icon-only copy button: the copy icon cross-fades into a check. */
+.copyable-id-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.copyable-id-button:hover {
+  background: var(--color-primary-soft);
+}
+
+.copyable-id-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.copyable-id-button[data-copied="false"] .copyable-id-icon:last-child,
+.copyable-id-button[data-copied="true"] .copyable-id-icon:first-child {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.copyable-id-button[data-copied="true"] {
+  color: var(--color-status-approved-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copyable-id-icon {
+    transition: none;
+  }
+}
+
 /* Search form: the button lines up with the input, not with label + input. */
 .action-row.search-form {
   align-items: end;

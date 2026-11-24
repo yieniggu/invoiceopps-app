@@ -1,4 +1,5 @@
 import { BackLink } from "../../../components/BackLink";
+import { CopyableId } from "../../../components/CopyableId";
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
@@ -101,6 +102,15 @@ function OrganizationSummaryView({
             <div>
               <dt>Identificador</dt>
               <dd className="slug">{detail.organization.slug}</dd>
+            </div>
+            <div>
+              <dt>ID de la organización</dt>
+              <dd>
+                <CopyableId
+                  value={detail.organization.id}
+                  label="ID de la organización"
+                />
+              </dd>
             </div>
             <div>
               <dt>Descripción</dt>

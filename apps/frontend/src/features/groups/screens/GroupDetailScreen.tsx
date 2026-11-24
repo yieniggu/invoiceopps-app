@@ -1,4 +1,5 @@
 import { BackLink } from "../../../components/BackLink";
+import { CopyableId } from "../../../components/CopyableId";
 import { LinkButton } from "../../../components/LinkButton";
 import { PageHeader } from "../../../components/PageHeader";
 import { QueryFeedback } from "../../../components/QueryFeedback";
@@ -79,6 +80,12 @@ function GroupSummary({
           <div>
             <dt>Descripción</dt>
             <dd>{group.description ?? "Sin descripción"}</dd>
+          </div>
+          <div>
+            <dt>ID del grupo</dt>
+            <dd>
+              <CopyableId value={group.id} label="ID del grupo" />
+            </dd>
           </div>
           {canManage && members.data ? (
             <div>
