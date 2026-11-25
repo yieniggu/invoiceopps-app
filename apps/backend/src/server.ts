@@ -8,6 +8,7 @@ import {
 } from "./auth-rate-limit.js";
 import { createBusinessPolicyService } from "./business-policies.js";
 import { createDatabase } from "./database.js";
+import { loadExpectedMigrations } from "./migrations.js";
 import { mlflowCallbackUrlFromEnv } from "./features/mlflow-sso/config.js";
 import { internalServiceSecretFromEnv } from "./features/api-tokens/introspection.js";
 import { createGroupCatalogService } from "./features/groups/services.js";
@@ -41,7 +42,11 @@ const port = Number(process.env.PORT || 4380);
 // Loopback by default: a local run is never reachable from the network.
 // Containers set HOST=0.0.0.0 so the published port reaches the process.
 const host = process.env.HOST || "127.0.0.1";
-const database = createDatabase(databaseUrl);
+// The migration list is read once; readiness reports 503 while the database
+// lacks any of them.
+const database = createDatabase(databaseUrl, {
+  expectedMigrations: loadExpectedMigrations(),
+});
 const authRateLimitConfig = authRateLimitConfigFromEnv({
   AUTH_RATE_LIMIT_DISABLED: process.env.AUTH_RATE_LIMIT_DISABLED,
   AUTH_RATE_LIMIT_MAX_ATTEMPTS: process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,

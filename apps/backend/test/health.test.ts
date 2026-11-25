@@ -39,3 +39,43 @@ describe("health endpoints", () => {
     expect(response.body).toEqual({ status: "unavailable" });
   });
 });
+
+describe("readiness with pending migrations", () => {
+  it("returns 503 MIGRATIONS_PENDING without exposing details", async () => {
+    const app = createApp({
+      isReady: async () => true,
+      readiness: async () => "migrations_pending",
+    });
+
+    const response = await request(app).get("/health/ready");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      status: "unavailable",
+      code: "MIGRATIONS_PENDING",
+    });
+  });
+
+  it("returns ready when the rich probe says so", async () => {
+    const app = createApp({
+      isReady: async () => false,
+      readiness: async () => "ready",
+    });
+
+    expect((await request(app).get("/health/ready")).status).toBe(200);
+  });
+
+  it("returns the plain 503 when the rich probe is unavailable or throws", async () => {
+    for (const readiness of [
+      async () => "unavailable" as const,
+      async () => {
+        throw new Error("boom");
+      },
+    ]) {
+      const app = createApp({ isReady: async () => true, readiness });
+      const response = await request(app).get("/health/ready");
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ status: "unavailable" });
+    }
+  });
+});

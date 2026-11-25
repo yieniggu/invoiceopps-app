@@ -27,6 +27,9 @@ WORKDIR /workspace/apps/backend
 ENV NODE_ENV=production
 
 COPY --from=build /runtime ./
+# The server compares this list with the database at startup and reports
+# MIGRATIONS_PENDING on /health/ready; `pnpm deploy` does not ship it.
+COPY --from=build /workspace/apps/backend/prisma/migrations ./prisma/migrations
 
 ENV PORT=3000
 # Listen on every interface inside the container; compose publishes the port

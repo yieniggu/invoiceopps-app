@@ -6,6 +6,7 @@ import {
 } from "./auth-rate-limit.js";
 import { AuthError, type AuthService } from "./auth.js";
 import type { Database, DatabaseReadiness } from "./database.js";
+import type { Readiness } from "./migrations.js";
 import {
   ResourceContextSchema,
   type BusinessPolicyService,
@@ -422,15 +423,25 @@ export function createApp(
   });
 
   app.get("/health/ready", async (_request, response) => {
-    let databaseReady = false;
+    let state: Readiness = "unavailable";
 
     try {
-      databaseReady = await database.isReady();
+      state = database.readiness
+        ? await database.readiness()
+        : (await database.isReady())
+          ? "ready"
+          : "unavailable";
     } catch {
-      databaseReady = false;
+      state = "unavailable";
     }
 
-    if (!databaseReady) {
+    if (state === "migrations_pending") {
+      response
+        .status(503)
+        .json({ status: "unavailable", code: "MIGRATIONS_PENDING" });
+      return;
+    }
+    if (state !== "ready") {
       response.status(503).json({ status: "unavailable" });
       return;
     }
