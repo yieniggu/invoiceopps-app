@@ -108,6 +108,20 @@ function reconcileNow() {
   }).reconcile();
 }
 
+/**
+ * The recovery database is shared by every test of the run, and a reconcile
+ * pass is global (eager reloads of ACTIVE deployments with scoring on, capped
+ * per pass). Rows left by other tests would fill the cap or add loaded ids, so
+ * a test that asserts on a whole pass first turns scoring off elsewhere and
+ * keeps only its own organization's deployments in play.
+ */
+async function isolateReconcile(organizationId: string) {
+  await prisma.deployment.updateMany({
+    where: { organizationId: { not: organizationId }, inferenceEnabled: true },
+    data: { inferenceEnabled: false },
+  });
+}
+
 function use(next: ReturnType<typeof createApp>) {
   app = next;
   f = fixtures();
@@ -1027,6 +1041,7 @@ describe("MLOPS-05 orphaned models and audit trail", () => {
 
   it("unloads loaded ids whose row is FAILED, INACTIVE or missing, never ACTIVE or foreign ids", async () => {
     const s = await team();
+    await isolateReconcile(s.org.id);
     const make = (status: "FAILED" | "INACTIVE" | "ACTIVE", model: string) =>
       prisma.deployment.create({
         data: {
@@ -1675,6 +1690,7 @@ describe("MLOPS-05 review batch: interrupted deploys, retries and reconcile", ()
 
   it("eagerly reloads ACTIVE deployments with scoring on that the Model API lost (CR-621)", async () => {
     const s = await team();
+    await isolateReconcile(s.org.id);
     const on = await deployed(s, "1");
     const off = await deployed(s, "2");
     await toggle(s, on, true);
@@ -1730,6 +1746,7 @@ describe("MLOPS-05 review batch: interrupted deploys, retries and reconcile", ()
 
   it("reloads several lost deployments in one pass (CR-621)", async () => {
     const s = await team();
+    await isolateReconcile(s.org.id);
     const ids: string[] = [];
     for (const version of ["1", "2", "3"]) {
       const id = await deployed(s, version);
