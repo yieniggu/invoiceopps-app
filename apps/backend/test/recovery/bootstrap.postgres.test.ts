@@ -359,7 +359,7 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
   const SAME_ORIGIN = { Host: "127.0.0.1", Origin: "http://127.0.0.1" };
   const NEW_PASSWORD = "a-new-permanent-password-1";
 
-  it("sees no invoice data after the password change, with or without a real context", async () => {
+  it("is blocked until the password change, then reads tenant invoices read-only (CR-009)", async () => {
     const rut = randomRut();
     await createBootstrapService(prisma).bootstrap({
       name: "Ada Lovelace",
@@ -367,7 +367,8 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
       password: PASSWORD,
     });
     // A real organization and group with an invoice the administrator is not
-    // a member of: platform authority never reads tenant data.
+    // a member of: since CR-009 platform authority reads (never writes) it,
+    // but only once onboarding is complete.
     const author = await prisma.user.create({
       data: { name: "Author", rut: randomRut() },
     });
@@ -448,17 +449,26 @@ describe("RP0-03 bootstrapped administrator and invoice authorization", () => {
       )
       .set("Cookie", cookie);
 
-    for (const response of [
-      outsideContext,
-      unknownContext,
-      ungroupedScope,
-      detail,
-    ]) {
-      expect([403, 404]).toContain(response.status);
-      expect(response.body).not.toHaveProperty("invoices");
-      expect(response.body).not.toHaveProperty("invoice");
-      expect(JSON.stringify(response.body)).not.toContain(businessId);
-    }
+    // Platform authority reads the real organization, its group and the
+    // ungrouped scope without membership.
+    expect(outsideContext.status).toBe(200);
+    expect(JSON.stringify(outsideContext.body)).toContain(businessId);
+    expect(ungroupedScope.status).toBe(200);
+    expect(ungroupedScope.body.items).toEqual([]);
+    // A nonexistent organization or invoice is still a plain 404.
+    expect(unknownContext.status).toBe(404);
+    expect(detail.status).toBe(404);
+    expect(JSON.stringify(detail.body)).not.toContain(businessId);
+    const stored = await prisma.invoice.findFirstOrThrow({
+      where: { businessId },
+    });
+    const realDetail = await request(app)
+      .get(
+        `/api/v1/invoices/${stored.id}?organizationId=${organization.id}&groupId=${group.id}`,
+      )
+      .set("Cookie", cookie);
+    expect(realDetail.status).toBe(200);
+    expect(realDetail.body.invoice.businessId).toBe(businessId);
     const profile = await request(app)
       .get("/api/v1/auth/profile")
       .set("Cookie", cookie);

@@ -4,7 +4,9 @@ import type { Prisma } from "../../generated/prisma/client.js";
 // plus `deployModels`, MLOPS-05) stored per user on the organization membership and on the group membership. The role
 // of a member (ADMIN included) and the platform administrator status never
 // grant any of them, and no flag implies another one: delete-own and
-// delete-others are evaluated against the creator of each invoice.
+// delete-others are evaluated against the creator of each invoice. The only
+// exception is the read-only administrator access of the invoice read service
+// (CR-009), which never goes through these flags.
 
 export interface InvoicePermissions {
   readInvoices: boolean;

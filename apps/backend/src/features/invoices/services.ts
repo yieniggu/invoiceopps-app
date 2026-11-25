@@ -1,4 +1,8 @@
-import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
+import {
+  OrganizationRole,
+  type Prisma,
+  type PrismaClient,
+} from "../../generated/prisma/client.js";
 import { ApiError } from "../../http/errors.js";
 import { logEvent } from "../../http/logging.js";
 import { escapeLike, pageWindow } from "../../pagination.js";
@@ -18,6 +22,7 @@ import {
   type InvoicePermissions,
 } from "../groups/invoice-permissions.js";
 import { lockMembershipsForInvoiceWrite } from "../groups/locks.js";
+import { isPlatformAdministrator } from "../orgs/authority.js";
 import {
   enqueueInvoicePredictions,
   findEligibleDeployments,
@@ -508,17 +513,50 @@ export function createInvoiceReadService(
     );
   }
 
-  /** Nonexistent organization and non-member are indistinguishable. */
-  async function requireOrganizationMember(
+  /**
+   * Read access to the organization (CR-009). A session whose user is an
+   * organization ADMIN or the platform administrator reads every invoice of
+   * the organization and of all its groups without invoice flags or group
+   * membership (`adminRead`). This widening is read-only and lives only here:
+   * a Bearer token never gets it (it is evaluated by its scopes and the
+   * owner's real permissions), a disabled organization and a pending
+   * temporary password still answer 403, and a nonexistent organization or a
+   * non-member without that authority is indistinguishable (404).
+   */
+  async function resolveReadAccess(
     transaction: Prisma.TransactionClient,
     userId: string,
     organizationId: string,
-  ) {
+    token: ApiTokenContext | null,
+  ): Promise<{ adminRead: boolean }> {
     const membership = await transaction.organizationMembership.findUnique({
       where: { userId_organizationId: { userId, organizationId } },
-      select: { userId: true },
+      select: { role: true },
     });
-    if (!membership) throw notFound();
+    if (token) {
+      if (!membership) throw notFound();
+      return { adminRead: false };
+    }
+    const administers =
+      membership?.role === OrganizationRole.ADMIN ||
+      (await isPlatformAdministrator(transaction, userId));
+    if (!administers) {
+      if (!membership) throw notFound();
+      return { adminRead: false };
+    }
+    const organization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { enabled: true },
+    });
+    if (!organization) throw notFound();
+    const user = await transaction.user.findUnique({
+      where: { id: userId },
+      select: { mustChangePassword: true },
+    });
+    if (!organization.enabled || !user || user.mustChangePassword) {
+      throw forbidden();
+    }
+    return { adminRead: true };
   }
 
   /**
@@ -559,39 +597,64 @@ export function createInvoiceReadService(
     requireTokenOrganization(token, organizationId);
   }
 
+  /**
+   * Authorizes a read of one scope (`groupId` null is the organization
+   * scope). An administrator read (CR-009) needs no flag; everyone else needs
+   * the effective `readInvoices` of the scope, and a token is additionally
+   * narrowed by its own scopes.
+   */
+  async function authorizeRead(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    organizationId: string,
+    groupId: string | null,
+    token: ApiTokenContext | null,
+    adminRead: boolean,
+  ) {
+    if (adminRead) return;
+    const effective =
+      groupId === null
+        ? await loadEffectivePermissions(transaction, {
+            userId,
+            organizationId,
+            groupId: null,
+          })
+        : await requireGroupRead(transaction, userId, organizationId, groupId);
+    if (groupId === null && !effective.readInvoices) throw forbidden();
+    assertTokenAllows(
+      token,
+      groupId,
+      effective,
+      (allowed) => allowed.readInvoices,
+    );
+  }
+
   return {
     async listInvoices(userId, query, token) {
       const { organizationId, groupId } = query;
       return readSnapshot("invoice_list", async (transaction) => {
         await checkToken(transaction, userId, organizationId, token);
-        await requireOrganizationMember(transaction, userId, organizationId);
-        let effective: InvoicePermissions;
+        const { adminRead } = await resolveReadAccess(
+          transaction,
+          userId,
+          organizationId,
+          token,
+        );
         if (groupId !== undefined) {
           const group = await transaction.group.findFirst({
             where: { id: groupId, organizationId },
             select: { id: true },
           });
           if (!group) throw notFound();
-          effective = await requireGroupRead(
-            transaction,
-            userId,
-            organizationId,
-            groupId,
-          );
-        } else {
-          effective = await loadEffectivePermissions(transaction, {
-            userId,
-            organizationId,
-            groupId: null,
-          });
-          if (!effective.readInvoices) throw forbidden();
         }
         // Without a groupId the list spans the organization scope.
-        assertTokenAllows(
-          token,
+        await authorizeRead(
+          transaction,
+          userId,
+          organizationId,
           groupId ?? null,
-          effective,
-          (allowed) => allowed.readInvoices,
+          token,
+          adminRead,
         );
         const where = listWhere(query);
         // Sequential: the transaction owns one connection and both reads see
@@ -615,7 +678,12 @@ export function createInvoiceReadService(
     async getInvoice(userId, { invoiceId, organizationId, groupId }, token) {
       return readSnapshot("invoice_get", async (transaction) => {
         await checkToken(transaction, userId, organizationId, token);
-        await requireOrganizationMember(transaction, userId, organizationId);
+        const { adminRead } = await resolveReadAccess(
+          transaction,
+          userId,
+          organizationId,
+          token,
+        );
         const row = await transaction.invoice.findFirst({
           where: { id: invoiceId, organizationId, deletedAt: null },
           include: WITH_GROUP_NAME,
@@ -623,27 +691,13 @@ export function createInvoiceReadService(
         if (!row) throw notFound();
         // The context in the URL must match the invoice's real scope.
         if (groupId !== undefined && groupId !== row.groupId) throw notFound();
-        let effective: InvoicePermissions;
-        if (row.groupId === null) {
-          effective = await loadEffectivePermissions(transaction, {
-            userId,
-            organizationId,
-            groupId: null,
-          });
-          if (!effective.readInvoices) throw forbidden();
-        } else {
-          effective = await requireGroupRead(
-            transaction,
-            userId,
-            organizationId,
-            row.groupId,
-          );
-        }
-        assertTokenAllows(
-          token,
+        await authorizeRead(
+          transaction,
+          userId,
+          organizationId,
           row.groupId,
-          effective,
-          (allowed) => allowed.readInvoices,
+          token,
+          adminRead,
         );
         const predictions = await readInvoicePredictions(transaction, row);
         return {

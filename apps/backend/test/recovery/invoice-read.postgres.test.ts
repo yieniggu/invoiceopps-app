@@ -293,26 +293,237 @@ describe("RP0-11 list by organization (AC-01)", () => {
   });
 });
 
-describe("RP0-11 platform administrator has no implicit invoice access (CR-333)", () => {
-  it("answers 404 to the platform administrator on the list, like a non-member", async () => {
-    const asPlatform = await listAs(platformCookie, {
-      organizationId: orgA.id,
-    });
-    const asOutsider = await listAs(cookies.outsider, {
-      organizationId: orgA.id,
-    });
+describe("CR-009 read-only widening for administrators", () => {
+  const detailOf = (id: string | undefined, organizationId: string) =>
+    `/invoices/${id}?organizationId=${organizationId}`;
+  let orgAdmin: TestUser;
+  let orgAdminCookie: string;
+  let foreignAdmin: TestUser;
+  let foreignAdminCookie: string;
+  let disabledOrg: { id: string };
+  let pendingAdmin: TestUser;
+  let pendingAdminCookie: string;
 
-    expect(asPlatform.status).toBe(404);
-    expect(asPlatform.body).toEqual(asOutsider.body);
+  beforeAll(async () => {
+    // ADMIN of orgA with every flag false and in no group.
+    orgAdmin = await makeUser("Org Admin");
+    await join(orgAdmin.id, orgA.id, "ADMIN", NO_FLAGS);
+    orgAdminCookie = await cookieFor(orgAdmin);
+    // ADMIN of orgB only: nothing in orgA.
+    foreignAdmin = await makeUser("Foreign Admin");
+    await join(foreignAdmin.id, orgB.id, "ADMIN", NO_FLAGS);
+    foreignAdminCookie = await cookieFor(foreignAdmin);
+    disabledOrg = await makeOrg("read-disabled");
+    await prisma.organization.update({
+      where: { id: disabledOrg.id },
+      data: { enabled: false },
+    });
+    await join(orgAdmin.id, disabledOrg.id, "ADMIN", NO_FLAGS);
+    await seed(disabledOrg.id, creator.id, { businessId: "FAC-DIS" });
+    pendingAdmin = await makeUser("Pending Admin");
+    await join(pendingAdmin.id, orgA.id, "ADMIN", NO_FLAGS);
+    pendingAdminCookie = await cookieFor(pendingAdmin);
+    await prisma.user.update({
+      where: { id: pendingAdmin.id },
+      data: { mustChangePassword: true },
+    });
   });
 
-  it("answers 404 to the platform administrator on the detail, like a non-member", async () => {
-    const path = `/invoices/${row.O1}?organizationId=${orgA.id}`;
-    const asPlatform = await call("get", path, platformCookie);
-    const asOutsider = await call("get", path, cookies.outsider);
+  it("AC-01 lists every invoice of any organization for the platform administrator without membership", async () => {
+    const all = await listAs(platformCookie, { organizationId: orgA.id });
+    const group = await listAs(platformCookie, {
+      organizationId: orgA.id,
+      groupId: g1.id,
+    });
+    const ungrouped = await listAs(platformCookie, {
+      organizationId: orgA.id,
+      ungrouped: "true",
+    });
 
-    expect(asPlatform.status).toBe(404);
-    expect(asPlatform.body).toEqual(asOutsider.body);
+    expect(all.status).toBe(200);
+    expect(sorted(idsOf(all.body))).toEqual(sorted(ACTIVE_A()));
+    expect(all.body.total).toBe(6);
+    expect(sorted(idsOf(group.body))).toEqual(sorted([row.A1, row.A2]));
+    expect(sorted(idsOf(ungrouped.body))).toEqual(
+      sorted([row.O1, row.O2, row.O3]),
+    );
+  });
+
+  it("CR-010 reads as administrator when the platform administrator is also a USER member without flags", async () => {
+    const memberOrg = await makeOrg("read-platform-member");
+    const memberGroup = await makeGroup(memberOrg.id, "PG");
+    await join(platform.id, memberOrg.id, "USER", NO_FLAGS);
+    const grouped = await seed(memberOrg.id, creator.id, {
+      groupId: memberGroup.id,
+      businessId: "FAC-PM-G",
+    });
+    const ungrouped = await seed(memberOrg.id, creator.id, {
+      businessId: "FAC-PM-O",
+    });
+
+    const all = await listAs(platformCookie, { organizationId: memberOrg.id });
+    const group = await listAs(platformCookie, {
+      organizationId: memberOrg.id,
+      groupId: memberGroup.id,
+    });
+    const none = await listAs(platformCookie, {
+      organizationId: memberOrg.id,
+      ungrouped: "true",
+    });
+    const detail = await call(
+      "get",
+      `${detailOf(grouped.id, memberOrg.id)}&groupId=${memberGroup.id}`,
+      platformCookie,
+    );
+
+    expect(all.status).toBe(200);
+    expect(sorted(idsOf(all.body))).toEqual(sorted([grouped.id, ungrouped.id]));
+    expect(group.status).toBe(200);
+    expect(idsOf(group.body)).toEqual([grouped.id]);
+    expect(none.status).toBe(200);
+    expect(idsOf(none.body)).toEqual([ungrouped.id]);
+    expect(detail.status).toBe(200);
+  });
+
+  it("AC-01 keeps the list tenant-scoped, paginated and bounded", async () => {
+    const response = await listAs(platformCookie, {
+      organizationId: orgA.id,
+      pageSize: "2",
+      page: "2",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ page: 2, pageSize: 2, total: 6 });
+    expect(response.body.items).toHaveLength(2);
+    expect(idsOf(response.body)).not.toContain(row.X1);
+    expect(
+      (
+        await listAs(platformCookie, {
+          organizationId: orgA.id,
+          pageSize: "101",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("AC-01 shows the detail of organization and group invoices to the platform administrator", async () => {
+    const grouped = await call(
+      "get",
+      `${detailOf(row.A1, orgA.id)}&groupId=${g1.id}`,
+      platformCookie,
+    );
+    const ungrouped = await call(
+      "get",
+      detailOf(row.O1, orgA.id),
+      platformCookie,
+    );
+
+    expect(grouped.status).toBe(200);
+    expect(grouped.body.invoice.id).toBe(row.A1);
+    expect(ungrouped.status).toBe(200);
+  });
+
+  it("AC-01 answers 404 to the platform administrator for an unknown organization, invoice or foreign context", async () => {
+    expect(
+      (await listAs(platformCookie, { organizationId: MISSING })).status,
+    ).toBe(404);
+    expect(
+      (await call("get", detailOf(MISSING, orgA.id), platformCookie)).status,
+    ).toBe(404);
+    expect(
+      (await call("get", detailOf(row.X1, orgA.id), platformCookie)).status,
+    ).toBe(404);
+    expect(
+      (await call("get", detailOf(row.O1, orgB.id), platformCookie)).status,
+    ).toBe(404);
+  });
+
+  it("AC-02 lets an organization ADMIN read all invoices without flags or group membership", async () => {
+    const all = await listAs(orgAdminCookie, { organizationId: orgA.id });
+    const group = await listAs(orgAdminCookie, {
+      organizationId: orgA.id,
+      groupId: g2.id,
+    });
+    const ungrouped = await listAs(orgAdminCookie, {
+      organizationId: orgA.id,
+      ungrouped: "true",
+    });
+    const orgDetail = await call(
+      "get",
+      detailOf(row.O1, orgA.id),
+      orgAdminCookie,
+    );
+    const groupDetail = await call(
+      "get",
+      detailOf(row.A1, orgA.id),
+      orgAdminCookie,
+    );
+
+    expect(all.status).toBe(200);
+    expect(sorted(idsOf(all.body))).toEqual(sorted(ACTIVE_A()));
+    expect(idsOf(group.body)).toEqual([row.B1]);
+    expect(sorted(idsOf(ungrouped.body))).toEqual(
+      sorted([row.O1, row.O2, row.O3]),
+    );
+    expect(orgDetail.status).toBe(200);
+    expect(groupDetail.status).toBe(200);
+  });
+
+  it("AC-02 does not extend an ADMIN of one organization to another", async () => {
+    const list = await listAs(foreignAdminCookie, { organizationId: orgA.id });
+    const detail = await call(
+      "get",
+      detailOf(row.O1, orgA.id),
+      foreignAdminCookie,
+    );
+
+    expect(list.status).toBe(404);
+    expect(detail.status).toBe(404);
+  });
+
+  it("AC-03 keeps regular members on their per-scope permissions", async () => {
+    const hidden = await listAs(cookies.hiddenMember, {
+      organizationId: orgA.id,
+    });
+    const group = await listAs(cookies.hiddenMember, {
+      organizationId: orgA.id,
+      groupId: g1.id,
+    });
+    const outsider = await listAs(cookies.outsider, {
+      organizationId: orgA.id,
+    });
+
+    expect(hidden.status).toBe(403);
+    expect(group.status).toBe(404);
+    expect(outsider.status).toBe(404);
+  });
+
+  it("AC-04 still answers 403 for a disabled organization, administrators included", async () => {
+    const platformList = await listAs(platformCookie, {
+      organizationId: disabledOrg.id,
+    });
+    const adminList = await listAs(orgAdminCookie, {
+      organizationId: disabledOrg.id,
+    });
+    const stored = await prisma.invoice.findFirstOrThrow({
+      where: { organizationId: disabledOrg.id },
+    });
+    const platformDetail = await call(
+      "get",
+      detailOf(stored.id, disabledOrg.id),
+      platformCookie,
+    );
+
+    expect(platformList.status).toBe(403);
+    expect(adminList.status).toBe(403);
+    expect(platformDetail.status).toBe(403);
+  });
+
+  it("AC-04 keeps blocking an ADMIN with a pending temporary password", async () => {
+    const list = await listAs(pendingAdminCookie, { organizationId: orgA.id });
+
+    expect(list.status).not.toBe(200);
+    expect(list.body.error).toBeDefined();
   });
 });
 

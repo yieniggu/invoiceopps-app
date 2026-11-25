@@ -66,10 +66,10 @@ export function createInvoiceOperations(
         ),
         401: bearerUnauthenticatedResponse,
         403: bearerForbiddenResponse(
-          "the actor lacks readInvoices in this scope (organization flags for the whole organization or ungrouped invoices; organization OR group flags in a group), or the organization is disabled",
+          "a session actor that is neither the platform administrator nor an organization ADMIN lacks readInvoices in this scope (organization flags for the whole organization or ungrouped invoices; organization OR group flags in a group), or the organization is disabled. The platform administrator and organization ADMINs read every invoice of the organization read-only, but never through an API token (a token is evaluated by its scopes and the owner's real permissions)",
         ),
         404: notFoundResponse(
-          "the organization does not exist or the actor is not a member, the group does not belong to the organization, or the actor lacks organization read and is not a member of the group",
+          "the organization does not exist, the actor is neither a member nor the platform administrator, the group does not belong to the organization, or the actor is not an ADMIN, lacks organization read and is not a member of the group",
         ),
         503: retryableReadConflictResponse,
       },
@@ -95,10 +95,10 @@ export function createInvoiceOperations(
         ),
         401: bearerUnauthenticatedResponse,
         403: bearerForbiddenResponse(
-          "the actor lacks readInvoices in the invoice scope, or the organization is disabled",
+          "a session actor that is neither the platform administrator nor an organization ADMIN lacks readInvoices in the invoice scope, or the organization is disabled",
         ),
         404: notFoundResponse(
-          "the organization does not exist or the actor is not a member, the invoiceId is not a uuid, the invoice does not exist, is deleted or belongs to another organization, groupId does not match the invoice, or the actor cannot see the group; all answer the same body",
+          "the organization does not exist, the actor is neither a member nor the platform administrator, the invoiceId is not a uuid, the invoice does not exist, is deleted or belongs to another organization, groupId does not match the invoice, or the actor is not an ADMIN and cannot see the group; all answer the same body",
         ),
         503: retryableReadConflictResponse,
       },

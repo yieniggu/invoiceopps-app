@@ -359,6 +359,65 @@ describe("RP0-16 a token never widens the owner's permissions (AC-09)", () => {
     expect((await stored(invoice.id)).deletedAt).toBeNull();
   });
 
+  it("CR-009 never widens a token with the owner's ADMIN role: same 403/404 as before", async () => {
+    const s = await scenario();
+    const invoice = await seed(s.org.id, s.admin.id);
+    const grouped = await seed(s.org.id, s.admin.id, s.group.id);
+    // The scenario ADMIN has every flag false and is in no group.
+    const orgToken = await seedApiToken(prisma, {
+      userId: s.admin.id,
+      organizationId: s.org.id,
+    });
+    const groupToken = await seedApiToken(prisma, {
+      userId: s.admin.id,
+      organizationId: s.org.id,
+      groupId: s.group.id,
+    });
+
+    const orgList = await bearerList(orgToken.secret, s);
+    const orgDetail = await bearerDetail(orgToken.secret, s, invoice.id);
+    const groupList = await bearerList(groupToken.secret, s, s.group.id);
+    const groupDetail = await bearerDetail(
+      groupToken.secret,
+      s,
+      grouped.id,
+      s.group.id,
+    );
+    // The same owner through the session is widened.
+    const session = await call(
+      "get",
+      `/invoices?${scopeQuery(s)}`,
+      await cookieFor(s.admin),
+    );
+
+    expect(orgList.status).toBe(403);
+    expect(orgDetail.status).toBe(403);
+    expect(groupList.status).toBe(404);
+    expect(groupDetail.status).toBe(404);
+    expect(session.status).toBe(200);
+  });
+
+  it("CR-009 never widens a token owned by the platform administrator", async () => {
+    const s = await scenario();
+    const invoice = await seed(s.org.id, s.admin.id);
+    const issued = await seedApiToken(prisma, {
+      userId: platform.id,
+      organizationId: s.org.id,
+    });
+
+    const listed = await bearerList(issued.secret, s);
+    const detail = await bearerDetail(issued.secret, s, invoice.id);
+    const session = await call(
+      "get",
+      `/invoices?${scopeQuery(s)}`,
+      platformCookie,
+    );
+
+    expect(listed.status).toBe(404);
+    expect(detail.status).toBe(404);
+    expect(session.status).toBe(200);
+  });
+
   // Guard for CR-330: each of the four bearer operations hands the token to
   // its service. If a handler forgot it, the owner's full permissions would
   // let the request through and one of these would answer 2xx.
