@@ -270,7 +270,21 @@ test("RP0-20: the same rows cross the Admin panel, React, Swagger, curl and Pyth
       await expect(toggle).toHaveAttribute("aria-pressed", "true");
     }
     await addToGroup.getByRole("button", { name: "Agregar al grupo" }).click();
-    await expect(admin.getByText("Persona agregada al grupo.")).toBeVisible();
+    // The form no longer announces a success text: with the only group taken
+    // it says there is none left to add. The flags are proven later, when
+    // Bruno reads and creates in the group.
+    await expect(
+      addToGroup.getByText(
+        "No hay más grupos en esta organización para agregar a la persona.",
+      ),
+    ).toBeVisible();
+    // Bruno is now listed among the member's groups (a folded card titled
+    // with the group name).
+    await expect(
+      admin
+        .locator('section[aria-labelledby="member-groups-title"]')
+        .getByRole("button", { name: new RegExp(groupName) }),
+    ).toBeVisible();
 
     // Carla, a second member of the same group with other flags (read only).
     const carla = { name: `Carla ${token}`, rut: freshRut() };
@@ -319,7 +333,7 @@ test("RP0-20: the same rows cross the Admin panel, React, Swagger, curl and Pyth
     // keeps the scope chosen last, so the group invoice goes second.
     const groupInvoice = `GRP-${token}`;
     const organizationInvoice = `ORG-${token}`;
-    const scopeSelect = member.getByLabel("Alcance de la factura");
+    const scopeSelect = member.getByLabel("Grupo", { exact: true });
     await member.goto("/invoices/new");
     await fillInvoice(member, organizationInvoice);
     await expect(scopeSelect.locator("option:checked")).not.toHaveText(
@@ -513,18 +527,24 @@ test("RP0-20: the same rows cross the Admin panel, React, Swagger, curl and Pyth
 
     expect((await brunoSession.get(groupList)).status(), "session").toBe(403);
     expect((await bearer.get(groupList)).status(), "bearer").toBe(403);
-    // Carla's own flag is untouched; Ana (ADMIN, no invoice flags) gets none.
+    // Carla's own flag is untouched. Ana (ADMIN, no invoice flags) reads every
+    // invoice of her organization (CR-009) but gets no write permission.
     const carlaList = await carlaSession.get(groupList);
     expect(carlaList.status()).toBe(200);
     expect(await carlaList.text()).toContain(swaggerInvoice);
     const anaSession = await sessionOf(anaCredentials);
     sessions.push(anaSession);
+    const anaList = await anaSession.get(
+      `/api/v1/invoices?organizationId=${orgId}`,
+    );
+    expect(anaList.status(), "the ADMIN role reads the organization").toBe(200);
+    expect(await anaList.text()).toContain(swaggerInvoice);
     expect(
       (
-        await anaSession.get(`/api/v1/invoices?organizationId=${orgId}`)
+        await anaSession.delete(`/api/v1/invoices/${swaggerId}?${scope}`)
       ).status(),
-      "the ADMIN role alone grants no invoice access",
-    ).toBe(403);
+      "the ADMIN role grants no delete",
+    ).toBe(404);
 
     // ── G14: revoking in React stops Swagger and both clients at once ──
     await member.goto("/api-tokens");

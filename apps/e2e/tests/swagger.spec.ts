@@ -148,7 +148,7 @@ test("Swagger UI authorizes with a bearer token and exercises the invoice API fr
 
     // Authorization is not persisted: a reload starts logged out.
     await page.reload();
-    await page.getByRole("button", { name: "Authorize" }).click();
+    await page.getByRole("button", { name: "Authorize", exact: true }).click();
     const reopened = page.locator(".dialog-ux .modal-ux");
     const fresh = reopened.locator(".auth-container", {
       hasText: "bearerAuth",

@@ -50,11 +50,11 @@ test.describe("create an invoice", () => {
       ).toBeVisible();
       await app.shot("invoice-created");
 
-      // A group scope: the group joins the selector once the API lists it.
+      // A group scope: the group joins the group selector once the API lists it.
       await page.getByRole("button", { name: "Crear otra" }).click();
       await fill(groupInvoice);
       await page
-        .getByLabel("Alcance de la factura")
+        .getByLabel("Grupo", { exact: true })
         .selectOption({ label: group.name });
       await page.getByRole("button", { name: "Crear factura" }).click();
       await expect(

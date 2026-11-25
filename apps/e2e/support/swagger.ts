@@ -42,7 +42,7 @@ export async function liveJson<T>(block: Locator): Promise<T> {
 
 /** Authorize with the bearer scheme only, then close the dialog. */
 export async function authorizeBearer(page: Page, secret: string) {
-  await page.getByRole("button", { name: "Authorize" }).click();
+  await page.getByRole("button", { name: "Authorize", exact: true }).click();
   const dialog = page.locator(".dialog-ux .modal-ux");
   const bearer = dialog.locator(".auth-container", { hasText: "bearerAuth" });
   await bearer.locator("input[type=text]").fill(secret);

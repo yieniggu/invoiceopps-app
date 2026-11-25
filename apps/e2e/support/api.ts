@@ -1,4 +1,8 @@
-import { request, type APIRequestContext } from "@playwright/test";
+import {
+  request,
+  type APIRequestContext,
+  type APIResponse,
+} from "@playwright/test";
 
 import { BASE_URL } from "./env.ts";
 import {
@@ -38,10 +42,24 @@ export class Api {
     data?: unknown,
     headers?: Record<string, string>,
   ): Promise<T> {
-    const response = await this.context[method](`/api/v1${path}`, {
+    // The API answers 503 RETRYABLE_CONFLICT when a concurrent change made it
+    // roll the operation back: nothing was applied, so the same request (same
+    // Idempotency-Key) is retried a bounded number of times.
+    let response = await this.context[method](`/api/v1${path}`, {
       data,
       headers,
     });
+    for (
+      let attempt = 1;
+      attempt < MAX_ATTEMPTS && (await isRetryableConflict(response));
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+      response = await this.context[method](`/api/v1${path}`, {
+        data,
+        headers,
+      });
+    }
     if (!response.ok()) {
       throw new Error(
         `${method.toUpperCase()} ${path} failed (${response.status()}): ${await response.text()}`,
@@ -71,5 +89,17 @@ export async function settlePassword(credentials: {
     });
   } finally {
     await api.dispose();
+  }
+}
+
+const MAX_ATTEMPTS = 3;
+
+async function isRetryableConflict(response: APIResponse) {
+  if (response.status() !== 503) return false;
+  try {
+    const body = (await response.json()) as { error?: { code?: string } };
+    return body.error?.code === "RETRYABLE_CONFLICT";
+  } catch {
+    return false;
   }
 }

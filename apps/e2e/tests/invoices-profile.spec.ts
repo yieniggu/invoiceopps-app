@@ -1,12 +1,21 @@
+import type { Page } from "@playwright/test";
+
 import { expect, isMobile, test } from "../support/test.ts";
 import { Api } from "../support/api.ts";
 import { ALL_FLAGS, createScenario } from "../support/scenario.ts";
 import { notice } from "../support/notice.ts";
-import { selectGroupScope } from "../support/invoices.ts";
+import {
+  GROUP_SELECT,
+  ORGANIZATION_SELECT,
+  selectGroupScope,
+} from "../support/invoices.ts";
 import { sidebarNav } from "../support/layout.ts";
 import { login, organizations, people, seededIds } from "../support/seeded.ts";
 
-const SCOPE = "Ver facturas de";
+const organizationSelect = (page: Page) =>
+  page.getByLabel(ORGANIZATION_SELECT, { exact: true });
+const groupSelect = (page: Page) =>
+  page.getByLabel(GROUP_SELECT, { exact: true });
 
 test.describe("invoices", () => {
   test("lists, searches and opens the detail of a group's invoices", async ({
@@ -48,7 +57,10 @@ test.describe("invoices", () => {
     await expect(page.getByLabel("Buscar por número o proveedor")).toHaveValue(
       "Pacífico",
     );
-    await expect(page.getByLabel(SCOPE)).toHaveValue(/^group:/);
+    await expect(organizationSelect(page)).toContainText(
+      organizations.acme.name,
+    );
+    await expect(groupSelect(page)).toHaveValue(/^group:/);
   });
 
   test("a member without invoice read access sees the empty state", async ({
@@ -61,7 +73,8 @@ test.describe("invoices", () => {
       page.getByRole("heading", { level: 1, name: "Facturas" }),
     ).toBeVisible();
     await expect(page.getByText("Aún no puedes ver facturas")).toBeVisible();
-    await expect(page.getByLabel(SCOPE)).toHaveCount(0);
+    await expect(organizationSelect(page)).toHaveCount(0);
+    await expect(groupSelect(page)).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^FAC-/ })).toHaveCount(0);
     await app.shot("invoices-member-without-read");
   });
@@ -90,7 +103,8 @@ test.describe("invoices", () => {
     );
     await page.goto("/invoices");
     await expect(page.getByText("Aún no puedes ver facturas")).toBeVisible();
-    await expect(page.getByLabel(SCOPE)).toHaveCount(0);
+    await expect(organizationSelect(page)).toHaveCount(0);
+    await expect(groupSelect(page)).toHaveCount(0);
   });
 
   test("a direct link to an invoice that does not exist says so", async ({
@@ -117,6 +131,129 @@ test.describe("invoices", () => {
     await app.openAs(login(people.loner), "/invoices");
     await expect(page.getByText("Aún no puedes ver facturas")).toBeVisible();
     await app.shot("invoices-no-organization");
+  });
+
+  test("an organization ADMIN without invoice flags reads every invoice of the organization and its groups", async ({
+    page,
+    app,
+  }) => {
+    // A private organization: the ADMIN has no flag and belongs to no group,
+    // the member creates the invoices.
+    const s = await createScenario({
+      members: 1,
+      groups: 1,
+      memberFlags: ALL_FLAGS,
+    });
+    try {
+      const [member] = s.members;
+      const [group] = s.groups;
+      const creator = await Api.signIn(member.credentials);
+      try {
+        for (const [index, groupId] of [null, group!.id].entries()) {
+          await creator.call(
+            "post",
+            "/invoices",
+            {
+              organizationId: s.org.id,
+              groupId,
+              businessId: groupId ? "ADM-GRUPO" : "ADM-ORG",
+              supplierName: "Proveedor administrador",
+              amountPesos: 2000 + index,
+              currency: "CLP",
+              issuedOn: "2026-10-01",
+              dueOn: "2026-11-01",
+              businessStatus: "PENDING",
+            },
+            { "Idempotency-Key": `e2e-admin-${s.org.id}-${index}` },
+          );
+        }
+      } finally {
+        await creator.dispose();
+      }
+
+      await app.openAs(s.admin.credentials, "/invoices");
+      // «Todos» is the default: the whole organization, group invoices included.
+      await expect(page.getByRole("link", { name: "ADM-ORG" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "ADM-GRUPO" })).toBeVisible();
+      await expect(organizationSelect(page)).toBeVisible();
+      await expect(groupSelect(page)).toBeVisible();
+      await app.shot("invoices-admin-organization");
+
+      await selectGroupScope(page, {
+        organization: s.org.name,
+        group: group!.name,
+      });
+      await expect(page.getByRole("link", { name: "ADM-GRUPO" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "ADM-ORG" })).toHaveCount(0);
+      await page.getByRole("link", { name: "ADM-GRUPO" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "ADM-GRUPO" }),
+      ).toBeVisible();
+      // Read only: an ADMIN without flags cannot delete.
+      await expect(
+        page.getByRole("button", { name: "Eliminar factura" }),
+      ).toHaveCount(0);
+      // Back restores both selects.
+      await page.getByRole("link", { name: "Volver a facturas" }).click();
+      await expect(organizationSelect(page)).toContainText(s.org.name);
+      await expect(groupSelect(page)).toHaveValue(/^group:/);
+      await expect(page.getByRole("link", { name: "ADM-GRUPO" })).toBeVisible();
+    } finally {
+      await s.dispose();
+    }
+  });
+
+  test("the platform administrator reads the invoices of an organization it does not belong to", async ({
+    page,
+    app,
+  }) => {
+    const s = await createScenario({
+      members: 1,
+      groups: 1,
+      memberFlags: ALL_FLAGS,
+    });
+    try {
+      const [member] = s.members;
+      const [group] = s.groups;
+      const creator = await Api.signIn(member.credentials);
+      try {
+        await creator.call(
+          "post",
+          "/invoices",
+          {
+            organizationId: s.org.id,
+            groupId: group!.id,
+            businessId: "PLAT-GRUPO",
+            supplierName: "Proveedor plataforma",
+            amountPesos: 3000,
+            currency: "CLP",
+            issuedOn: "2026-10-01",
+            dueOn: "2026-11-01",
+            businessStatus: "PENDING",
+          },
+          { "Idempotency-Key": `e2e-platform-${s.org.id}` },
+        );
+      } finally {
+        await creator.dispose();
+      }
+
+      await app.openAs(login(people.platform), "/invoices");
+      await expect(organizationSelect(page)).toBeVisible();
+      await selectGroupScope(page, {
+        organization: s.org.name,
+        group: group!.name,
+      });
+      await expect(
+        page.getByRole("link", { name: "PLAT-GRUPO" }),
+      ).toBeVisible();
+      await app.shot("invoices-platform-admin");
+      await page.getByRole("link", { name: "PLAT-GRUPO" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "PLAT-GRUPO" }),
+      ).toBeVisible();
+    } finally {
+      await s.dispose();
+    }
   });
 
   test("deletes an invoice after confirming and it is gone after a reload", async ({
@@ -226,7 +363,10 @@ test.describe("profile", () => {
       const [person] = s.members;
       await app.openAs(person.credentials, "/profile");
       await expect(
-        page.getByRole("heading", { level: 2, name: "Identidad" }),
+        page.getByRole("heading", { level: 1, name: "Mi perfil" }),
+      ).toBeVisible();
+      await expect(
+        page.locator("header.page-header").getByText(person.name),
       ).toBeVisible();
       // Email and username are unique among users: one pair per person.
       const email = `persona.${person.id}@example.com`;
@@ -242,6 +382,59 @@ test.describe("profile", () => {
     } finally {
       await s.dispose();
     }
+  });
+
+  test("changes the password from the profile and stays signed in", async ({
+    page,
+    app,
+  }) => {
+    // A person of its own: the change revokes every session of that person.
+    const s = await createScenario({ members: 1 });
+    try {
+      const [person] = s.members;
+      await app.openAs(person.credentials, "/profile");
+      const current = page.getByLabel("Contraseña actual");
+      const next = page.getByLabel("Contraseña nueva");
+      const submit = page.getByRole("button", { name: "Cambiar contraseña" });
+
+      await current.fill("wrong-password");
+      await next.fill(`New-${person.id.slice(0, 8)}-pass`);
+      await submit.click();
+      await expect(
+        page.getByText("La contraseña actual no es correcta."),
+      ).toBeVisible();
+      await expect(current).toHaveAttribute("aria-invalid", "true");
+
+      await current.fill(person.credentials.password);
+      await submit.click();
+      await expect(notice(page, "Contraseña actualizada.")).toBeVisible();
+      await expect(page).toHaveURL(/\/profile$/);
+      await expect(page.getByLabel("Contraseña actual")).toHaveValue("");
+      await app.shot("profile-password-changed");
+
+      // The rotated session cookie keeps the person signed in.
+      await page.reload();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Mi perfil" }),
+      ).toBeVisible();
+    } finally {
+      await s.dispose();
+    }
+  });
+
+  test("lists the organizations with role and groups", async ({
+    page,
+    app,
+  }) => {
+    await app.openAs(login(people.carla), "/profile");
+    const organizationsList = page.getByRole("region", {
+      name: "Organizaciones",
+    });
+    await expect(
+      organizationsList.getByText(organizations.acme.name),
+    ).toBeVisible();
+    await expect(organizationsList.getByText("Contabilidad")).toBeVisible();
+    await app.shot("profile-organizations");
   });
 
   test("the change-password route is only for forced changes", async ({

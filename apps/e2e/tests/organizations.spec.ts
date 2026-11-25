@@ -259,7 +259,22 @@ test.describe("organizations", () => {
       ).toHaveAttribute("aria-pressed", "true");
 
       await page.getByRole("button", { name: "Agregar al grupo" }).click();
-      await expect(page.getByText("Persona agregada al grupo.")).toBeVisible();
+      // The button's "Agregado al grupo" state is brief; assert the lasting
+      // result instead: the member now has a group card (titled with the name
+      // of one of the scenario's groups) and the empty-state line is gone.
+      const memberGroups = page.locator(
+        'section[aria-labelledby="member-groups-title"]',
+      );
+      await expect(
+        memberGroups.getByRole("button", {
+          name: new RegExp(s.groups.map(({ name }) => name).join("|")),
+        }),
+      ).toHaveCount(1);
+      await expect(
+        memberGroups.getByText(
+          "Esta persona no pertenece a ningún grupo de la organización.",
+        ),
+      ).toHaveCount(0);
       await expect(
         page.getByRole("heading", { level: 2, name: "Grupos" }),
       ).toBeVisible();
