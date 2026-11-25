@@ -523,7 +523,7 @@ describe("CR-001 mounted session isolation", () => {
       api.patch.mockReturnValueOnce(pending.promise);
       await start();
       navigate("Facturas");
-      fireEvent.change(screen.getByLabelText("Ver facturas de"), {
+      fireEvent.change(screen.getByLabelText("Grupo"), {
         target: {
           value: `group:${namedId("org", "A")}:${namedId("group", "A")}`,
         },

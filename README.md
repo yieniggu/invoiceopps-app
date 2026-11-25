@@ -29,18 +29,25 @@ esta base; sus instrucciones operativas fueron retiradas de este README.
    o nombre de usuario. Nombre, RUT y roles no se editan allí.
 3. En **Organizaciones** (`/organizations`), abre una organización vigente; en
    **Grupos** (`/groups`), abre un grupo al que perteneces con «Ver grupo». La
-   organización o el grupo cuyas facturas ves se eligen solo con el selector
-   «Ver facturas de» de **Facturas**. Si el acceso se revoca, la opción
+   organización y el grupo cuyas facturas ves se eligen solo con los selectores
+   «Organización» y «Grupo» de **Facturas**. Si el acceso se revoca, la opción
    desaparece del selector y la selección vuelve a la predeterminada.
 4. Desde **Panel principal** (`/dashboard`), abre el trabajo deseado. El panel
    muestra tu organización y accesos, no totales financieros o métricas que la API no
    ofrece.
 5. **Facturas** (`/invoices`) es la bandeja de facturas. El menú la ofrece a
-   quien tiene algún permiso de facturas (no se deduce del rol ADMIN). El
-   selector «Ver facturas de» ofrece «Toda la organización» y «Sin grupo
-   asignado» (con lectura de organización) y cada grupo con lectura efectiva; con
-   varias organizaciones, cada opción nombra la suya. Sin ninguna opción de
-   lectura se explica el motivo y no se consulta la API. La organización o el
+   quien tiene algún permiso de facturas, a quien es ADMIN de alguna
+   organización y al administrador de plataforma. El administrador de plataforma
+   y los ADMIN de una organización leen (solo lectura) todas las facturas de la
+   organización y de todos sus grupos, sin ser miembros de ellos; crear y
+   eliminar siguen dependiendo de los permisos. Un token de API nunca amplía
+   esa lectura. «Organización» ofrece todas las organizaciones al
+   administrador de plataforma y, al resto, aquellas donde es ADMIN o tiene
+   lectura de facturas (de la organización o de algún grupo). «Grupo» ofrece
+   «Todos» y «Sin grupo asignado» (con lectura de organización, ADMIN o
+   administrador de plataforma) y cada grupo con lectura efectiva; quien solo
+   lee algunos grupos no ve «Todos» ni «Sin grupo asignado». Sin ninguna opción
+   de lectura se explica el motivo y no se consulta la API. La organización o el
    grupo, el estado, las fechas de emisión, el texto (número o proveedor) y la
    página viajan en la URL (`organizationId`, `groupId` o `ungrouped=true`,
    `businessStatus`, `issuedFrom`, `issuedTo`, `q`, `page`); cambiar la selección o un filtro vuelve
@@ -322,7 +329,8 @@ definas `HOST=0.0.0.0` fuera de un contenedor.
 
 `/health/live` confirma que el proceso HTTP está disponible. `/health/ready`
 consulta PostgreSQL y devuelve `503` con una respuesta segura si la base de datos
-no está disponible.
+no está disponible; también responde `503` con `MIGRATIONS_PENDING` cuando faltan
+migraciones por aplicar.
 
 Antes de entregar cambios, ejecuta:
 

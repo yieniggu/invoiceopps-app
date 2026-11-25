@@ -9,24 +9,12 @@ import type { useInvoiceCreateForm } from "../hooks/useInvoiceCreateForm";
 
 type Form = ReturnType<typeof useInvoiceCreateForm>;
 
-function ScopeOptions({ options }: { options: readonly CreateScopeOption[] }) {
-  const organizations = [...new Set(options.map((o) => o.organizationId))];
-  return (
-    <>
-      {organizations.map((organizationId) => {
-        const own = options.filter((o) => o.organizationId === organizationId);
-        return (
-          <optgroup key={organizationId} label={own[0]?.organizationName}>
-            {own.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </optgroup>
-        );
-      })}
-    </>
-  );
+/** One entry per organization where the person can create, in profile order. */
+function organizationChoices(options: readonly CreateScopeOption[]) {
+  const seen = new Map<string, string>();
+  for (const { organizationId, organizationName } of options)
+    if (!seen.has(organizationId)) seen.set(organizationId, organizationName);
+  return [...seen].map(([id, name]) => ({ id, name }));
 }
 
 /** A label, its control and the persistent message that describes it. */
@@ -97,6 +85,10 @@ export function InvoiceCreateForm({
 }) {
   const { values, errors, pending, change, register } = form;
   const titleId = useId();
+  const organizations = organizationChoices(options);
+  const groups = options.filter(
+    ({ organizationId }) => organizationId === form.scope?.organizationId,
+  );
   return (
     <form
       id="invoice-create-form"
@@ -109,21 +101,47 @@ export function InvoiceCreateForm({
     >
       <h2 id={titleId}>Datos de la factura</h2>
       <Field
-        id="invoice-create-scope"
-        name="scope"
-        label="Alcance de la factura"
+        id="invoice-create-organization"
+        name="organization"
+        label="Organización"
       >
         {(props) => (
           <select
             {...props}
-            ref={register("scope")}
+            value={form.scope?.organizationId ?? ""}
+            onChange={(event) =>
+              !pending && form.selectOrganization(event.target.value)
+            }
+            aria-disabled={pending || undefined}
+          >
+            {organizations.map(({ id, name }) => (
+              <option key={id} value={id} data-organization-id={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
+      <Field id="invoice-create-group" name="group" label="Grupo">
+        {(props) => (
+          <select
+            {...props}
             value={form.scope?.value ?? ""}
             onChange={(event) =>
               !pending && form.selectScope(event.target.value)
             }
             aria-disabled={pending || undefined}
           >
-            <ScopeOptions options={options} />
+            {groups.map(({ value, label, organizationId, groupId }) => (
+              <option
+                key={value}
+                value={value}
+                data-organization-id={organizationId}
+                data-group-id={groupId ?? undefined}
+              >
+                {label}
+              </option>
+            ))}
           </select>
         )}
       </Field>

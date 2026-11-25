@@ -160,14 +160,14 @@ describe("APP12 S1 CR003-008 regressions", () => {
     const api = http();
     await start("Facturas");
     const selector = await screen.findByRole("combobox", {
-      name: "Ver facturas de",
+      name: "Grupo",
     });
     selector.focus();
     fireEvent.change(selector, {
       target: { value: `group:${organization.id}:${GROUP_B}` },
     });
     expect(document.activeElement).toBe(
-      screen.getByRole("combobox", { name: "Ver facturas de" }),
+      screen.getByRole("combobox", { name: "Grupo" }),
     );
     await waitFor(() =>
       expect(
@@ -177,7 +177,7 @@ describe("APP12 S1 CR003-008 regressions", () => {
       ).toBe(true),
     );
     expect(document.activeElement).toBe(
-      screen.getByRole("combobox", { name: "Ver facturas de" }),
+      screen.getByRole("combobox", { name: "Grupo" }),
     );
   });
   it.each(["/api/v1/invoices", DETAIL])(

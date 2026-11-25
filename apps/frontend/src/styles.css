@@ -257,7 +257,7 @@ button:focus-visible {
 }
 
 /* Top-level page sections: a thin rule and more air, no card. */
-:is(.screen-stack, .screen-grid)
+:is(.screen-stack, .screen-grid, .profile-main, .profile-layout)
   > :is(section, form[aria-labelledby]):not(
     .context-card,
     .dash-card,
@@ -296,10 +296,6 @@ button:focus-visible {
   align-items: start;
 }
 
-.screen-wide {
-  grid-column: 1 / -1;
-}
-
 .app-shell h1 {
   font-size: clamp(1.75rem, 4vw, 2.75rem);
   line-height: 1.15;
@@ -317,7 +313,7 @@ button:focus-visible {
   color: var(--color-text);
 }
 
-.app-shell :where(.card-list, .membership-list, .member-list) {
+.app-shell :where(.card-list, .member-list) {
   list-style: none;
   padding: 0;
   display: grid;
@@ -344,7 +340,6 @@ button:focus-visible {
   background: transparent;
 }
 
-.membership-list li,
 .member-list li,
 .action-row {
   display: flex;
@@ -384,8 +379,7 @@ button:focus-visible {
   text-underline-offset: 0.2em;
 }
 
-.app-shell
-  :where(.member-list span, .membership-list strong, .membership-list span) {
+.app-shell :where(.member-list span) {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2019,6 +2013,18 @@ input.secret-value {
   min-width: 13rem;
 }
 
+/* On a phone the scope selects take the full row, like the search below. */
+@media (max-width: 40rem) {
+  .toolbar-field-select {
+    flex: 1 1 100%;
+  }
+
+  .toolbar-field-select select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .toolbar-date-pair {
   display: flex;
   flex-wrap: wrap;
@@ -2656,4 +2662,79 @@ button.is-pending .pending-label {
   position: absolute;
   inset: 0;
   margin: auto;
+}
+
+/* Profile: account and password on the left, organizations on the right from
+   64rem; one column below. Sections are separated by a rule, not boxed. */
+.profile-layout {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.profile-main {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+/* Their rule and spacing come from the top-level section rule above. */
+.profile-main > :is(section, form[aria-labelledby]),
+.profile-side {
+  align-content: start;
+  min-width: 0;
+}
+
+@media (min-width: 64rem) {
+  .profile-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    column-gap: 3rem;
+  }
+}
+
+.org-list {
+  display: grid;
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* `.app-shell ul` indents lists; these rows and chips align with the heading. */
+.app-shell :is(.org-list, .org-list .chip-list) {
+  padding: 0;
+}
+
+/* The password form is the section's only body: same spacing as Cuenta. */
+.profile-main section > form {
+  margin-block-start: 0;
+}
+
+.org-list > li {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.org-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.org-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.org-list .chip-list li {
+  overflow-wrap: anywhere;
+}
+
+.profile-identity-name {
+  overflow-wrap: anywhere;
 }

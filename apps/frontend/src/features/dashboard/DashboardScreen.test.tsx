@@ -130,8 +130,22 @@ describe("DashboardScreen cards", () => {
     expect(screen.getByRole("link", { name: "Ir a facturas" })).toBeTruthy();
   });
 
-  it("hides the invoices card and its link without any invoice flag", () => {
+  it("shows the invoices card to the platform administrator without any invoice flag (CR-009)", () => {
     renderDashboard({ ...profile, isPlatformAdministrator: true });
+    expect(screen.getByRole("region", { name: "Facturas" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Ir a facturas" })).toBeTruthy();
+  });
+
+  it("shows the invoices card to an organization ADMIN without any invoice flag (CR-009)", () => {
+    renderDashboard({
+      ...profile,
+      memberships: [membership(profile.memberships[0]!.organization, "ADMIN")],
+    });
+    expect(screen.getByRole("region", { name: "Facturas" })).toBeTruthy();
+  });
+
+  it("hides the invoices card and its link without any invoice flag nor administration", () => {
+    renderDashboard();
     expect(screen.queryByRole("region", { name: "Facturas" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Ir a facturas" })).toBeNull();
     expect(

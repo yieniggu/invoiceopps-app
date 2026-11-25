@@ -217,7 +217,7 @@ async function navigate(name: string) {
 describe("APP12 S8 global acceptance characterization", () => {
   it.each([
     ["Panel principal", "Tu espacio de trabajo"],
-    ["Mi perfil", "Datos de contacto"],
+    ["Mi perfil", "Cuenta"],
     ["Organizaciones", "Academia S8"],
     ["Grupos", "Academia S8"],
     ["Facturas", "Facturas"],
@@ -331,7 +331,7 @@ describe("APP12 S8 global acceptance characterization", () => {
     render(<App />);
     await navigate("Facturas");
     // The context is chosen in the Facturas selector and lives in the URL.
-    fireEvent.change(await screen.findByLabelText("Ver facturas de"), {
+    fireEvent.change(await screen.findByLabelText("Grupo"), {
       target: { value: `group:${organization.id}:${id(3)}` },
     });
     await screen.findByRole("table", { name: "Facturas" });
@@ -365,13 +365,13 @@ describe("APP12 S8 global acceptance characterization", () => {
         screen.getByRole("region", { name: "Tu espacio de trabajo" })
           .textContent,
       ).toContain("Elige una organización o grupo para empezar.");
-      // No invoice permission, so no «Facturas» entry (a platform
-      // administrator is not a member of any organization).
+      // CR-009: a platform administrator reads every organization's invoices
+      // (read-only), so «Facturas» is offered to it and only to it.
       expect(
         within(screen.getByRole("navigation")).queryByRole("link", {
           name: "Facturas",
-        }),
-      ).toBeNull();
+        }) !== null,
+      ).toBe(platform);
       await navigate("Políticas");
       expect(screen.queryByLabelText("Propietario")).toBeNull();
       expect(

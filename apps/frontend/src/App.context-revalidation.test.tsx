@@ -25,7 +25,12 @@ const group = {
   members: [],
 };
 const READ = { ...NO_PERMISSIONS, readInvoices: true };
-function profileOf(access: { organizationRead: boolean; groupRead: boolean }) {
+function profileOf(
+  access: { organizationRead: boolean; groupRead: boolean },
+  // The member screens are an ADMIN's; CR-009 makes an ADMIN read every
+  // invoice, so the revoked profile below is a plain member.
+  role: "ADMIN" | "USER" = "ADMIN",
+) {
   return {
     id: "00000000-0000-4000-8000-00000000000a",
     name: "Ada",
@@ -36,7 +41,7 @@ function profileOf(access: { organizationRead: boolean; groupRead: boolean }) {
     memberships: [
       {
         organization,
-        role: "ADMIN",
+        role,
         permissions: access.organizationRead ? READ : NO_PERMISSIONS,
         groups: access.groupRead
           ? [
@@ -54,7 +59,10 @@ function profileOf(access: { organizationRead: boolean; groupRead: boolean }) {
 // Reads the whole organization (logout test) or only the group (the rest).
 const orgReader = profileOf({ organizationRead: true, groupRead: false });
 const groupReader = profileOf({ organizationRead: false, groupRead: true });
-const revoked = profileOf({ organizationRead: false, groupRead: false });
+const revoked = profileOf(
+  { organizationRead: false, groupRead: false },
+  "USER",
+);
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -213,6 +221,19 @@ function navigate(name: string) {
 }
 const GROUP_ROWS = "Proveedor 00000000-0000-4000-a000-ffdfcbaf90da";
 
+/** An ADMIN opens the whole organization: choose the group, as the URL does. */
+async function chooseGroup() {
+  const selector = await screen.findByLabelText("Grupo");
+  await waitFor(() =>
+    expect(
+      within(selector).queryByRole("option", { name: "Grupo A" }),
+    ).not.toBeNull(),
+  );
+  fireEvent.change(selector, {
+    target: { value: `group:${organization.id}:${group.id}` },
+  });
+}
+
 /**
  * Opens Facturas on the group, then removes the person from that group on its
  * screens. The removal is what makes the profile revalidate.
@@ -225,6 +246,7 @@ async function leaveTheGroup(
   render(<App />);
   await screen.findByRole("navigation");
   navigate("Facturas");
+  await chooseGroup();
   await screen.findByText(GROUP_ROWS);
   navigate("Grupos");
   fireEvent.click(
@@ -265,7 +287,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     );
     await visit("/invoices");
     expect(await screen.findByText("Aún no puedes ver facturas")).toBeTruthy();
-    expect(screen.queryByLabelText("Ver facturas de")).toBeNull();
+    expect(screen.queryByLabelText("Grupo")).toBeNull();
     expect(screen.queryByText(GROUP_ROWS)).toBeNull();
     expect(api.protectedRequests.slice(boundary)).toEqual([]);
     expect(api.unexpected).toEqual([]);
@@ -274,25 +296,34 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
   it("keeps reading the group when the refreshed profile still grants it", async () => {
     const api = http(groupReader);
     await leaveTheGroup(api, groupReader);
+    // Checked from before the selection: every protected request is either the
+    // «Todos» list of this organization or the list of this group.
     const boundary = api.protectedRequests.length;
     navigate("Facturas");
+    await chooseGroup();
     await screen.findByText(GROUP_ROWS);
     expect(
       screen.getByRole<HTMLSelectElement>("combobox", {
-        name: "Ver facturas de",
+        name: "Grupo",
       }).value,
-    ).toBe(
-      "group:00000000-0000-4000-9000-f9e9c6048aeb:00000000-0000-4000-a000-ffdfcbaf90da",
-    );
-    expect(
-      api.protectedRequests
-        .slice(boundary)
-        .every(
-          (path) =>
-            new URL(path, "http://test.invalid").searchParams.get("groupId") ===
-            "00000000-0000-4000-a000-ffdfcbaf90da",
-        ),
-    ).toBe(true);
+    ).toBe(`group:${organization.id}:${group.id}`);
+    const scopes = api.protectedRequests.slice(boundary).map((path) => {
+      const params = new URL(path, "http://test.invalid").searchParams;
+      return {
+        organizationId: params.get("organizationId"),
+        groupId: params.get("groupId"),
+        ungrouped: params.get("ungrouped"),
+      };
+    });
+    const todos = {
+      organizationId: organization.id,
+      groupId: null,
+      ungrouped: null,
+    };
+    const thisGroup = { ...todos, groupId: group.id };
+    expect(scopes).toContainEqual(thisGroup);
+    for (const scope of scopes)
+      expect([todos, thisGroup]).toContainEqual(scope);
     expect(api.unexpected).toEqual([]);
   });
 
@@ -302,6 +333,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
     // The refresh failed: nothing new is confirmed, so the last profile stands
     // (the API still answers 403 to anything that is no longer allowed).
     navigate("Facturas");
+    await chooseGroup();
     await screen.findByText(GROUP_ROWS);
     api.failProfileReads(false);
     act(() => {
@@ -309,7 +341,7 @@ describe("APP12 S1 authorization context revalidation regressions", () => {
       focusManager.setFocused(true);
     });
     expect(await screen.findByText("Aún no puedes ver facturas")).toBeTruthy();
-    expect(screen.queryByLabelText("Ver facturas de")).toBeNull();
+    expect(screen.queryByLabelText("Grupo")).toBeNull();
     expect(screen.queryByText(GROUP_ROWS)).toBeNull();
     expect(
       within(screen.getByRole("navigation")).queryByRole("link", {

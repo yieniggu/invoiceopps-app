@@ -341,7 +341,7 @@ describe("APP-04 organization groups", () => {
     description: null,
   });
 
-  it("keeps platform authority out of groups and invoices for an administrator without memberships", async () => {
+  it("keeps platform authority out of groups but offers it read-only invoices for an administrator without memberships (CR-009)", async () => {
     const transport = mockTransport({
       "GET /api/v1/auth/profile": () =>
         jsonResponse({
@@ -366,12 +366,12 @@ describe("APP-04 organization groups", () => {
     expect(
       await screen.findByText(/No tienes organizaciones asignadas/),
     ).toBeTruthy();
-    // Platform authority is not an invoice permission: no «Facturas» entry.
+    // The platform administrator reads every organization's invoices.
     expect(
-      within(screen.getByRole("navigation")).queryByRole("link", {
+      within(screen.getByRole("navigation")).getByRole("link", {
         name: "Facturas",
       }),
-    ).toBeNull();
+    ).toBeTruthy();
     expect(
       transport.requests.some(
         ({ path }) =>

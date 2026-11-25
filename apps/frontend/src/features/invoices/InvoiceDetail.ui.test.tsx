@@ -198,6 +198,13 @@ describe("invoice detail (AC-19)", () => {
       businessStatus: "PENDING",
       q: "prov",
     });
+    // AC-07: both selects are restored from the URL.
+    expect(
+      (screen.getByLabelText("Organización") as HTMLSelectElement).value,
+    ).toBe(norte.id);
+    expect((screen.getByLabelText("Grupo") as HTMLSelectElement).value).toBe(
+      `group:${norte.id}:${contabilidad.id}`,
+    );
     expect(transport.calls(`GET ${detailPath(found.id)}`)).toHaveLength(1);
   });
 

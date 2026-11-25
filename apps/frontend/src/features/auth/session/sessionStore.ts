@@ -23,6 +23,11 @@ export interface SessionSnapshot {
   readonly endedBy: SessionEnd | null;
   /** Changes with every client; screens are remounted per generation. */
   readonly generation: number;
+  /**
+   * The same person starts over where they are (a password change from the
+   * profile): the route guard must not send them back to the panel.
+   */
+  readonly keepRoute: boolean;
 }
 
 /**
@@ -48,10 +53,38 @@ export class SessionStore {
 
   getSnapshot = () => this.snapshot;
 
-  /** Start over with an ephemeral client (after login or password change). */
-  begin(from: QueryClient = this.snapshot.client) {
+  /**
+   * Start over with an ephemeral client (after login or password change).
+   * With `keepRoute` the same person continues in place: their cached profile
+   * seeds the new partition (already stale, so it is refetched at once) and the
+   * screens render without going through the loading state. Another identity
+   * is never seeded.
+   */
+  begin(
+    from: QueryClient = this.snapshot.client,
+    { keepRoute = false }: { keepRoute?: boolean } = {},
+  ) {
     if (from !== this.snapshot.client) return;
-    this.replace("unknown", null);
+    const { phase, identityId } = this.snapshot;
+    // Read before replacing: retiring the client drops its caches.
+    const profile =
+      keepRoute && phase === "identity" && identityId
+        ? from.getQueryData<Profile>(profileKey(identityId))
+        : undefined;
+    if (profile && identityId) {
+      this.replace(
+        "identity",
+        identityId,
+        (client) =>
+          client.setQueryData(profileKey(identityId), profile, {
+            updatedAt: 0,
+          }),
+        null,
+        true,
+      );
+      return;
+    }
+    this.replace("unknown", null, undefined, null, keepRoute);
   }
 
   /**
@@ -88,11 +121,12 @@ export class SessionStore {
     identityId: string | null,
     generation: number,
     endedBy: SessionEnd | null,
+    keepRoute = false,
   ): SessionSnapshot {
     const client: QueryClient = createQueryClient({
       onUnauthorized: () => this.end(client),
     });
-    return { client, phase, identityId, endedBy, generation };
+    return { client, phase, identityId, endedBy, generation, keepRoute };
   }
 
   private replace(
@@ -100,6 +134,7 @@ export class SessionStore {
     identityId: string | null,
     seed?: (client: QueryClient) => void,
     endedBy: SessionEnd | null = null,
+    keepRoute = false,
   ) {
     const previous = this.snapshot;
     retireQueryClient(previous.client);
@@ -108,6 +143,7 @@ export class SessionStore {
       identityId,
       previous.generation + 1,
       endedBy,
+      keepRoute,
     );
     seed?.(next.client);
     this.snapshot = next;

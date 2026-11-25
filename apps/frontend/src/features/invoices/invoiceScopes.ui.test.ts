@@ -8,6 +8,9 @@ import {
   scopeToSearch,
   defaultInvoiceScopeOption,
   hasInvoiceAccess,
+  firstScopeOfOrganization,
+  invoiceGroupChoices,
+  invoiceOrganizationChoices,
   invoiceScopeOptions,
   resolveInvoiceScope,
 } from "./invoiceScopes";
@@ -66,7 +69,7 @@ describe("invoiceScopeOptions", () => {
       ]),
     );
     expect(options.map(({ label }) => label)).toEqual([
-      "Toda la organización",
+      "Todos",
       "Sin grupo asignado",
       "Contabilidad",
       "Compras",
@@ -135,23 +138,18 @@ describe("invoiceScopeOptions", () => {
         ({ organizationName, label }) => `${organizationName} · ${label}`,
       ),
     ).toEqual([
-      "Academia Norte · Toda la organización",
+      "Academia Norte · Todos",
       "Academia Norte · Sin grupo asignado",
       "Instituto Sur · Contabilidad",
     ]);
   });
 
-  it("describes each scope in words for the inbox subtitle and the empty state", () => {
+  it("describes each scope in words for the empty state", () => {
     const options = invoiceScopeOptions(
       profileOf([
         membershipOf(norte, READ, [{ group: contabilidad, effective: READ }]),
       ]),
     );
-    expect(options.map(({ summary }) => summary)).toEqual([
-      "Toda la organización · Academia Norte",
-      "Sin grupo asignado · Academia Norte",
-      "Grupo Contabilidad · Academia Norte",
-    ]);
     expect(options.map(({ place }) => place)).toEqual([
       "Academia Norte",
       "Academia Norte sin grupo asignado",
@@ -188,7 +186,7 @@ describe("invoiceScopeOptions with the organization groups", () => {
       orgGroups(compras, contabilidad, finanzas),
     );
     expect(options.map(({ label }) => label)).toEqual([
-      "Toda la organización",
+      "Todos",
       "Sin grupo asignado",
       "Contabilidad",
       "Compras",
@@ -219,10 +217,10 @@ describe("invoiceScopeOptions with the organization groups", () => {
         ({ organizationName, label }) => `${organizationName} · ${label}`,
       ),
     ).toEqual([
-      "Academia Norte · Toda la organización",
+      "Academia Norte · Todos",
       "Academia Norte · Sin grupo asignado",
       "Academia Norte · Finanzas",
-      "Instituto Sur · Toda la organización",
+      "Instituto Sur · Todos",
       "Instituto Sur · Sin grupo asignado",
     ]);
     expect(options.at(2)?.context).toEqual({
@@ -399,20 +397,94 @@ describe("hasInvoiceAccess", () => {
     expect(hasInvoiceAccess(profileOf(memberships))).toBe(true);
   });
 
-  it("is false without any flag, whatever the role", () => {
+  it("is false for a member without any flag", () => {
     expect(hasInvoiceAccess(profileOf([]))).toBe(false);
     expect(
       hasInvoiceAccess(
         profileOf([
-          {
-            ...membershipOf(norte, NO_PERMISSIONS, [
-              { group: contabilidad, effective: NO_PERMISSIONS },
-            ]),
-            role: "ADMIN",
-          },
+          membershipOf(norte, NO_PERMISSIONS, [
+            { group: contabilidad, effective: NO_PERMISSIONS },
+          ]),
         ]),
       ),
     ).toBe(false);
+  });
+
+  // CR-009: administering an organization now reads its invoices.
+  it("is true for an organization ADMIN without any flag", () => {
+    expect(
+      hasInvoiceAccess(profileOf([{ ...membershipOf(norte), role: "ADMIN" }])),
+    ).toBe(true);
+  });
+
+  it("is true for the platform administrator without memberships", () => {
+    expect(
+      hasInvoiceAccess({ memberships: [], isPlatformAdministrator: true }),
+    ).toBe(true);
+  });
+});
+
+describe("administrator scopes (CR-009)", () => {
+  const admin = { ...membershipOf(norte), role: "ADMIN" };
+
+  it("offers an ADMIN without flags every group the organization lists", () => {
+    const options = invoiceScopeOptions(
+      profileOf([admin]),
+      new Map([[norte.id, [contabilidad, compras]]]),
+    );
+
+    expect(options.map(({ label }) => label)).toEqual([
+      "Todos",
+      "Sin grupo asignado",
+      "Contabilidad",
+      "Compras",
+    ]);
+  });
+
+  it("offers the platform administrator every organization of the directory", () => {
+    const options = invoiceScopeOptions(
+      { memberships: [], isPlatformAdministrator: true },
+      new Map([[sur.id, [finanzas]]]),
+      [norte, sur],
+    );
+
+    expect(invoiceOrganizationChoices(options)).toEqual([
+      { id: norte.id, name: norte.name },
+      { id: sur.id, name: sur.name },
+    ]);
+    expect(
+      invoiceGroupChoices(options, sur.id).map(({ label }) => label),
+    ).toEqual(["Todos", "Sin grupo asignado", "Finanzas"]);
+    expect(firstScopeOfOrganization(options, sur.id)?.context).toEqual({
+      kind: "organization",
+      organizationId: sur.id,
+    });
+  });
+
+  it("does not list organizations of the directory to a regular member", () => {
+    const options = invoiceScopeOptions(
+      profileOf([membershipOf(norte, READ)]),
+      new Map(),
+      [norte, sur],
+    );
+
+    expect(invoiceOrganizationChoices(options).map(({ id }) => id)).toEqual([
+      norte.id,
+    ]);
+  });
+
+  it("keeps a group-only reader on its groups and opens the first one", () => {
+    const options = invoiceScopeOptions(
+      profileOf([
+        membershipOf(norte, NO_PERMISSIONS, [
+          { group: compras, effective: READ },
+        ]),
+      ]),
+      new Map([[norte.id, [contabilidad, compras]]]),
+    );
+
+    expect(options.map(({ label }) => label)).toEqual(["Compras"]);
+    expect(firstScopeOfOrganization(options, norte.id)?.label).toBe("Compras");
   });
 });
 

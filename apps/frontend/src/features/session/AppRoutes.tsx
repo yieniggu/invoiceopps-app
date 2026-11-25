@@ -2,7 +2,6 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router";
 
 import { ErrorBoundary } from "../../components/ErrorBoundary";
-import { PageHeader } from "../../components/PageHeader";
 import { Skeleton } from "../../components/Skeleton";
 import type { Profile } from "../auth/types";
 import { AdminUserScreen } from "../admin/screens/AdminUserScreen";
@@ -102,18 +101,7 @@ export function AppRoutes({
         path="api-tokens"
         element={<ApiTokensScreen profile={profile} />}
       />
-      <Route
-        path="profile"
-        element={
-          <div className="screen-stack">
-            <PageHeader
-              title="Mi perfil"
-              description="Consulta tus datos y actualiza tu información de contacto."
-            />
-            <ProfileScreen profile={profile} />
-          </div>
-        }
-      />
+      <Route path="profile" element={<ProfileScreen profile={profile} />} />
       <Route
         path="organizations"
         element={

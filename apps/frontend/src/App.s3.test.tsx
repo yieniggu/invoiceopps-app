@@ -164,7 +164,7 @@ describe("APP12 S3 invoice presentation HTTP boundary", () => {
   });
 
   it.each([
-    [403, "Ya no tienes permiso"],
+    [403, "No tienes acceso a las facturas de esta organización."],
     [400, "no son válidos"],
     [500, "No fue posible cargar las facturas."],
   ])(

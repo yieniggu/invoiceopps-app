@@ -23,6 +23,10 @@ export const orgsKey = (
     ? ([...identity(identityId), "orgs"] as const)
     : ([...identity(identityId), "orgs", params] as const);
 
+/** Every organization at once (inbox selector); under the orgs prefix. */
+export const orgsAllKey = (identityId: string) =>
+  [...orgsKey(identityId), "all"] as const;
+
 /** Directory of users (platform administrator): prefix without params. */
 export const adminUsersKey = (identityId: string, params?: object) =>
   params === undefined

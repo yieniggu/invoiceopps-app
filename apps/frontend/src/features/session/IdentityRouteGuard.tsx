@@ -11,7 +11,7 @@ import { paths } from "../navigation/paths";
  * survives every partition change.
  */
 export function IdentityRouteGuard({ store }: { store: SessionStore }) {
-  const { identityId } = useSyncExternalStore(
+  const { identityId, keepRoute } = useSyncExternalStore(
     store.subscribe,
     store.getSnapshot,
   );
@@ -20,11 +20,11 @@ export function IdentityRouteGuard({ store }: { store: SessionStore }) {
 
   // Router synchronisation with an external store, not data fetching.
   useLayoutEffect(() => {
-    if (previous.current && previous.current !== identityId) {
+    if (previous.current && previous.current !== identityId && !keepRoute) {
       navigate(paths.dashboard, { replace: true });
     }
     previous.current = identityId;
-  }, [identityId, navigate]);
+  }, [identityId, keepRoute, navigate]);
 
   return null;
 }

@@ -131,7 +131,7 @@ describe("entry point (AC-01)", () => {
       () => created(),
     );
     renderApp({ route: "/invoices" });
-    await screen.findByLabelText("Ver facturas de");
+    await screen.findByLabelText("Grupo");
     expect(screen.queryByRole("link", { name: "Nueva factura" })).toBeNull();
   });
 
@@ -160,7 +160,8 @@ describe("entry point (AC-01)", () => {
 
 describe("selector contract anchors", () => {
   const ANCHORS = [
-    ["Alcance de la factura", "invoice-create-scope", "scope"],
+    ["Organización", "invoice-create-organization", "organization"],
+    ["Grupo", "invoice-create-group", "group"],
     ["Número de factura", "invoice-create-business-id", "businessId"],
     ["Proveedor", "invoice-create-supplier-name", "supplierName"],
     ["Monto en pesos (CLP)", "invoice-create-amount", "amount"],
@@ -199,8 +200,13 @@ describe("selector contract anchors", () => {
   });
 });
 
-describe("scope selector (AC-03)", () => {
-  it("offers only scopes where create is effective, grouped per organization", async () => {
+describe("organization and group selectors (AC-03)", () => {
+  const optionTexts = (label: string) =>
+    within(screen.getByLabelText(label))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+  it("offers only organizations and groups where create is effective", async () => {
     createTransport(
       () =>
         profileFixture({
@@ -221,32 +227,44 @@ describe("scope selector (AC-03)", () => {
       },
     );
     await openForm();
-    const select = screen.getByLabelText("Alcance de la factura");
-    expect(
-      within(select)
-        .getAllByRole("group")
-        .map((group) => [
-          group.getAttribute("label"),
-          within(group)
-            .getAllByRole("option")
-            .map((option) => option.textContent),
-        ]),
-    ).toEqual([
-      ["Academia Norte", ["Contabilidad"]],
-      ["Instituto Sur", ["Organización (sin grupo)"]],
+    expect(optionTexts("Organización")).toEqual([
+      "Academia Norte",
+      "Instituto Sur",
     ]);
+    // Create comes from a group only: no «Sin grupo asignado» there.
+    expect(optionTexts("Grupo")).toEqual(["Contabilidad"]);
+    set("Organización", sur.id);
+    expect(optionTexts("Grupo")).toEqual(["Sin grupo asignado"]);
   });
 
-  it("adds the groups the organization lists to an organization-wide creator", async () => {
+  it("resets the group to the first one of the chosen organization", async () => {
     createTransport(creator, () => created());
     await openForm();
     await waitFor(() =>
-      expect(
-        within(screen.getByLabelText("Alcance de la factura"))
-          .getAllByRole("option")
-          .map((option) => option.textContent),
-      ).toEqual(["Organización (sin grupo)", "Contabilidad", "Finanzas"]),
+      expect(optionTexts("Grupo")).toEqual([
+        "Sin grupo asignado",
+        "Contabilidad",
+        "Finanzas",
+      ]),
     );
+    set("Grupo", `group:${norte.id}:${contabilidad.id}`);
+    set("Organización", norte.id);
+    expect((screen.getByLabelText("Grupo") as HTMLSelectElement).value).toBe(
+      `organization:${norte.id}`,
+    );
+  });
+
+  it("exposes the ids of every option for automation", async () => {
+    createTransport(creator, () => created());
+    await openForm();
+    await waitFor(() => expect(optionTexts("Grupo")).toHaveLength(3));
+    const org = screen.getByRole("option", { name: "Academia Norte" });
+    expect(org.getAttribute("data-organization-id")).toBe(norte.id);
+    const group = screen.getByRole("option", { name: "Contabilidad" });
+    expect(group.getAttribute("data-organization-id")).toBe(norte.id);
+    expect(group.getAttribute("data-group-id")).toBe(contabilidad.id);
+    const none = screen.getByRole("option", { name: "Sin grupo asignado" });
+    expect(none.hasAttribute("data-group-id")).toBe(false);
   });
 });
 
@@ -279,7 +297,7 @@ describe("creating an invoice (AC-01, AC-02)", () => {
     const transport = createTransport(creator, () => created());
     await openForm();
     await fillForm({ amount: "12500" });
-    set("Alcance de la factura", `group:${norte.id}:${contabilidad.id}`);
+    set("Grupo", `group:${norte.id}:${contabilidad.id}`);
     submit();
     await screen.findByRole("heading", { name: "Factura creada" });
     expect(posts(transport)[0].body).toMatchObject({
@@ -293,8 +311,8 @@ describe("creating an invoice (AC-01, AC-02)", () => {
     const transport = createTransport(creator, () => created());
     await openForm();
     await fillForm();
-    set("Alcance de la factura", `group:${norte.id}:${contabilidad.id}`);
-    set("Alcance de la factura", `organization:${norte.id}`);
+    set("Grupo", `group:${norte.id}:${contabilidad.id}`);
+    set("Grupo", `organization:${norte.id}`);
     submit();
     await screen.findByRole("heading", { name: "Factura creada" });
     expect(Object.hasOwn(posts(transport)[0].body, "groupId")).toBe(false);
@@ -455,7 +473,7 @@ describe("uncertain attempts (AC-02)", () => {
     await waitFor(() =>
       expect(screen.getByRole("option", { name: "Contabilidad" })).toBeTruthy(),
     );
-    set("Alcance de la factura", `group:${norte.id}:${contabilidad.id}`);
+    set("Grupo", `group:${norte.id}:${contabilidad.id}`);
     submit();
     await screen.findByRole("button", { name: "Crear como operación nueva" });
     expect(posts(transport)).toHaveLength(1);
@@ -528,8 +546,10 @@ describe("focus around a request (CR-328)", () => {
     expect(document.activeElement).toBe(supplier);
     expect(supplier.readOnly).toBe(true);
     expect(supplier.disabled).toBe(false);
-    const scope = screen.getByLabelText("Alcance de la factura");
-    expect(scope.getAttribute("aria-disabled")).toBe("true");
+    for (const label of ["Organización", "Grupo"])
+      expect(screen.getByLabelText(label).getAttribute("aria-disabled")).toBe(
+        "true",
+      );
     // A change while pending is ignored.
     fireEvent.change(supplier, { target: { value: "Otro" } });
     expect(supplier.value).toBe("Proveedor local");
@@ -949,7 +969,7 @@ describe("after success (AC-04)", () => {
       client.setQueryData(key, { items: [] });
 
     await fillForm();
-    set("Alcance de la factura", `group:${norte.id}:${contabilidad.id}`);
+    set("Grupo", `group:${norte.id}:${contabilidad.id}`);
     submit();
     await screen.findByRole("heading", { name: "Factura creada" });
 

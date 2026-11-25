@@ -17,14 +17,24 @@ export function useLoginMutation() {
   });
 }
 
-/** A new password rotates the server session: start a fresh partition. */
-export function useChangePasswordMutation() {
+/**
+ * A new password rotates the server session: start a fresh partition. With
+ * `onChanged` the person stays on the current route (it runs just before the
+ * rotation, which remounts every screen); without it they return to the panel.
+ */
+export function useChangePasswordMutation({
+  onChanged,
+}: { onChanged?: () => void } = {}) {
   const store = useSessionStore();
   const client = useQueryClient();
   return useMutation({
     mutationFn: requestChangePassword,
     meta: { sensitive: true },
-    onSuccess: () => store.begin(client),
+    onSuccess: () => {
+      // Before the rotation: it remounts every screen below the store.
+      onChanged?.();
+      store.begin(client, { keepRoute: onChanged !== undefined });
+    },
   });
 }
 

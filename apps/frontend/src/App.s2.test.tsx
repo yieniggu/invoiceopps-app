@@ -193,7 +193,7 @@ function navigate(name: string) {
 }
 /** The invoice context is chosen in the Facturas selector. */
 async function chooseContext(value: string) {
-  fireEvent.change(await screen.findByLabelText("Ver facturas de"), {
+  fireEvent.change(await screen.findByLabelText("Grupo"), {
     target: { value },
   });
 }
@@ -259,9 +259,7 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     const save = pending<Response>();
     api.patch.mockReturnValueOnce(save.promise);
     await start("Mi perfil");
-    expect(
-      screen.getByRole("region", { name: "Membresías del perfil" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Organizaciones" })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Nombre" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "RUT" })).toBeNull();
     fireEvent.change(
@@ -311,23 +309,21 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
   it("chooses the invoice context in the inbox selector and keeps it in the URL, not in a hidden global", async () => {
     const api = http();
     await start("Facturas");
-    // Two organizations: one group of options per organization, and there is no
-    // individual-owner option any more (invoices belong to an organization or
-    // to one of its groups).
-    const selector = await screen.findByLabelText("Ver facturas de");
+    // Two organizations: «Organización» picks one and «Grupo» its scopes; there
+    // is no individual-owner option any more (invoices belong to an
+    // organization or to one of its groups).
+    const organization = await screen.findByLabelText("Organización");
     expect(
-      within(selector)
-        .getAllByRole("group")
-        .map((group) => [
-          group.getAttribute("label"),
-          within(group)
-            .getAllByRole("option")
-            .map((option) => option.textContent),
-        ]),
-    ).toEqual([
-      ["Academia A", ["Toda la organización", "Sin grupo asignado"]],
-      ["Academia B", ["Toda la organización", "Sin grupo asignado"]],
-    ]);
+      within(organization)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Academia A", "Academia B"]);
+    expect(
+      within(screen.getByLabelText("Grupo"))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Todos", "Sin grupo asignado"]);
+    fireEvent.change(organization, { target: { value: organizations[1].id } });
     await chooseContext(`ungrouped:${organizations[1].id}`);
     await waitFor(() =>
       expect(
@@ -780,23 +776,23 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
           path.toString() === "/api/v1/organizations?page=1&pageSize=20",
       ),
     ).toBe(true);
+    // CR-009: the platform administrator reads the invoices of every
+    // organization (read-only), so «Facturas» offers the directory too.
     navigate("Facturas");
     await screen.findByText(/Todavía no hay facturas/);
+    expect(
+      within(await screen.findByLabelText("Organización"))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Organización externa", "Academia A", "Academia B"]);
     navigate("Grupos");
     expect(
       await screen.findByRole("link", { name: "Ver grupo Equipo 1" }),
     ).toBeTruthy();
+    // The groups screens still list only the person's own groups.
     expect(
       screen.queryByRole("link", { name: "Ver grupo Equipo externo" }),
     ).toBeNull();
-    navigate("Facturas");
-    await screen.findByText(/Todavía no hay facturas/);
-    expect(screen.queryByRole("option", { name: /Equipo externo/ })).toBeNull();
-    expect(
-      api.fetchMock.mock.calls.some(([path]) =>
-        path.toString().includes("outside"),
-      ),
-    ).toBe(false);
   });
 
   // Computed CSS contracts are not browser geometry, native keyboard or visual QA.
@@ -813,9 +809,11 @@ describe("APP12 S2 identity and authorized workspace presentation", () => {
     );
     await start("Mi perfil");
     render(<style>{readFileSync("src/styles.css", "utf8")}</style>);
-    const identity = within(
-      screen.getByRole("region", { name: "Identidad" }),
-    ).getByText(longName);
+    const header = screen
+      .getByRole("heading", { level: 1, name: "Mi perfil" })
+      .closest("header");
+    if (!header) throw new Error("Missing profile header");
+    const identity = within(header).getByText(longName);
     expect(identity.textContent).toBe(longName);
     expect(getComputedStyle(identity).overflowWrap).toBe("anywhere");
     navigate("Grupos");

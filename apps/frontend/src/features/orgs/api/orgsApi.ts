@@ -35,6 +35,36 @@ export const listOrganizations = (
     signal,
   });
 
+/**
+ * Pages of organizations the directory is read through when every one is
+ * needed at once (inbox selector): at most 50 pages of 100, i.e. 5000
+ * organizations, whatever `total` says.
+ */
+export const MAX_ORGANIZATION_PAGES = 50;
+
+/**
+ * Every organization the actor sees (all of them for the platform
+ * administrator), page by page and bounded: the first page tells `total`, the
+ * rest is read four at a time. `truncated` is true when the bound left some
+ * out, so the screen can say so instead of hiding them silently.
+ */
+export async function listAllOrganizations(signal?: AbortSignal) {
+  const first = await listOrganizations(FIRST_PAGE, signal);
+  const pages = Math.min(
+    Math.ceil(first.total / MAX_PAGE_SIZE),
+    MAX_ORGANIZATION_PAGES,
+  );
+  const rest = await mapWithConcurrency(
+    Array.from({ length: Math.max(pages - 1, 0) }, (_, index) => index + 2),
+    MAX_CONCURRENT_REQUESTS,
+    (page) => listOrganizations({ page, pageSize: MAX_PAGE_SIZE }, signal),
+  );
+  return {
+    organizations: [first, ...rest].flatMap((page) => page.organizations),
+    truncated: first.total > MAX_ORGANIZATION_PAGES * MAX_PAGE_SIZE,
+  };
+}
+
 export const updateOrganization = (
   organizationId: string,
   input: UpdateOrganizationInput,

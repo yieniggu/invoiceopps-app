@@ -52,7 +52,15 @@ function NewInvoiceLink() {
   );
 }
 
-function listErrorText(error: unknown, forbidden: boolean) {
+/**
+ * A 403 on a scope that never loaded is plain «no access» (for instance an
+ * ADMIN of a disabled organization: the API answers the same FORBIDDEN code, so
+ * the cause cannot be told apart). One that follows rows that were on screen is
+ * a permission that went away while the profile is being refreshed.
+ */
+function listErrorText(error: unknown, forbidden: boolean, hadRows: boolean) {
+  if (forbidden && !hadRows)
+    return "No tienes acceso a las facturas de esta organización.";
   if (forbidden)
     return "Ya no tienes permiso para ver estas facturas. Estamos actualizando tus permisos.";
   if (isApiError(error) && error.status === 400)
@@ -162,7 +170,6 @@ function InvoiceInbox({
     <>
       <PageHeader
         title="Facturas"
-        description={selected.summary}
         action={
           inverted ? (
             canCreate ? (
@@ -226,7 +233,7 @@ function InvoiceInbox({
               <p role="alert">
                 {page !== undefined
                   ? "No fue posible actualizar las facturas; lo que ves puede estar desactualizado."
-                  : listErrorText(error, forbidden)}
+                  : listErrorText(error, forbidden, query.dataUpdatedAt > 0)}
               </p>
               <button
                 ref={retry}
@@ -284,7 +291,7 @@ function InvoiceInbox({
                 compact
                 icon={ReceiptText}
                 title={`Todavía no hay facturas en ${selected.place}`}
-                description="Cuando se registren facturas aparecerán aquí. Puedes elegir otro alcance en «Ver facturas de»."
+                description="Cuando se registren facturas aparecerán aquí. Puedes elegir otra organización o grupo."
               />
             )
           ) : null}
@@ -338,22 +345,32 @@ function InvoiceInbox({
 export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
   const [params] = useSearchParams();
   const notice = useRouteNotice();
+  const requested = scopeFromSearch(params);
   const {
     options,
     loadingOrganizationIds,
+    awaitingOrganizations,
+    organizationsTruncated,
+    organizationsFailed,
     groupsFailed,
     groupsFetching,
     retryGroups,
-  } = useInvoiceScopeOptions(profile);
+  } = useInvoiceScopeOptions(profile, requested?.organizationId);
   const selected = resolveInvoiceScope(options, params);
+  const requestedListed =
+    requested !== undefined &&
+    options.some(({ value }) => value === invoiceScopeValue(requested));
   // A URL naming a group the profile does not list may still be readable by an
-  // organization-wide reader: wait for the organization's groups instead of
-  // listing another scope under that URL.
-  const requested = scopeFromSearch(params);
+  // organization-wide reader: wait for the organization's groups (or, for the
+  // platform administrator, for the directory of organizations) instead of
+  // listing another scope under that URL. The platform administrator also
+  // waits for the directory when the URL names no organization, so the default
+  // is chosen once (no first membership scope that then jumps).
   const awaitingGroups =
-    requested?.kind === "group" &&
-    loadingOrganizationIds.includes(requested.organizationId) &&
-    !options.some(({ value }) => value === invoiceScopeValue(requested));
+    !requestedListed &&
+    ((requested?.kind === "group" &&
+      loadingOrganizationIds.includes(requested.organizationId)) ||
+      (awaitingOrganizations && !requestedListed));
   const filters = invoiceFiltersFromSearch(params);
   const canCreate = hasCreateAccess(profile);
 
@@ -362,11 +379,17 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
       <Toast message={notice.message} noticeId={notice.id} />
       {/* The status region stays mounted and only its content changes. */}
       <div role="status" className="groups-status">
-        {groupsFailed ? (
+        {organizationsTruncated ? (
+          <p className="muted">
+            Hay más organizaciones de las que se pueden listar aquí.
+          </p>
+        ) : null}
+        {groupsFailed || organizationsFailed ? (
           <div className="inbox-alert">
             <p>
-              No fue posible cargar todos los grupos de tu organización. Solo
-              ves los que ya conocemos.
+              {organizationsFailed
+                ? "No fue posible cargar todas las organizaciones. Solo ves las que ya conocemos."
+                : "No fue posible cargar todos los grupos de tu organización. Solo ves los que ya conocemos."}
             </p>
             <button
               type="button"
@@ -407,11 +430,10 @@ export function InvoiceInboxScreen({ profile }: { profile: Profile }) {
             action={canCreate ? <NewInvoiceLink /> : undefined}
           />
           {/* Nothing to wait for: the (empty) answer is already on screen.
-              No option means no organization-wide read and no group read in
-              any membership, so useInvoiceScopeOptions starts no groups query
-              (it only asks for organizations with organization read, which
-              always yield options). Loading or error cannot coexist with
-              "no scope", so "ready" is truthful. */}
+              No option means no administrator, no organization-wide read and no
+              group read in any membership, so useInvoiceScopeOptions starts no
+              groups query; the platform directory is awaited above. Loading
+              cannot coexist with "no scope", so "ready" is truthful. */}
           <p
             id="invoices-results"
             data-testid="invoices-results"

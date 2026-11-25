@@ -19,7 +19,7 @@ export interface CreateScopeOption {
   canRead: boolean;
 }
 
-export const ORGANIZATION_SCOPE_LABEL = "Organización (sin grupo)";
+export const ORGANIZATION_SCOPE_LABEL = "Sin grupo asignado";
 
 /**
  * Scopes with effective create, in profile order: per organization the

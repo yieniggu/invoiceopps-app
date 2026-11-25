@@ -49,7 +49,7 @@ describe("createScopeOptions", () => {
         organizationId,
       ]),
     ).toEqual([
-      ["Organización (sin grupo)", null, norte.id],
+      ["Sin grupo asignado", null, norte.id],
       ["Contabilidad", contabilidad.id, norte.id],
     ]);
   });
@@ -79,7 +79,7 @@ describe("createScopeOptions", () => {
       listed,
     );
     expect(options.map(({ label }) => label)).toEqual([
-      "Organización (sin grupo)",
+      "Sin grupo asignado",
       "Contabilidad",
       "Finanzas",
     ]);
@@ -95,8 +95,8 @@ describe("createScopeOptions", () => {
       ]),
     );
     expect(options.map(({ label, canRead }) => [label, canRead])).toEqual([
-      ["Organización (sin grupo)", true],
-      ["Organización (sin grupo)", false],
+      ["Sin grupo asignado", true],
+      ["Sin grupo asignado", false],
       ["Compras", true],
     ]);
   });

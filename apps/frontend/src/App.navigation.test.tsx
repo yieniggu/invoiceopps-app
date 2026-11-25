@@ -177,10 +177,14 @@ function navigate(navigation: HTMLElement, name: string) {
 }
 
 function selectGroupB() {
+  // Grupo B belongs to the second organization: pick it first, then its group.
+  fireEvent.change(screen.getByLabelText("Organización"), {
+    target: { value: ORG_B },
+  });
   const option = screen.getByRole<HTMLOptionElement>("option", {
     name: "Grupo B",
   });
-  fireEvent.change(screen.getByLabelText("Ver facturas de"), {
+  fireEvent.change(screen.getByLabelText("Grupo"), {
     target: { value: option.value },
   });
 }
@@ -293,9 +297,9 @@ describe("APP12 S1 navigation and shared context", () => {
     expect(screen.queryByRole("option", { name: /Academia B/ })).toBeNull();
     expect(screen.queryByRole("option", { name: /Grupo B/ })).toBeNull();
     // Back on the default context of the organization that is left.
-    expect(
-      screen.getByLabelText<HTMLSelectElement>("Ver facturas de").value,
-    ).toBe(`organization:${ORG_A}`);
+    expect(screen.getByLabelText<HTMLSelectElement>("Grupo").value).toBe(
+      `organization:${ORG_A}`,
+    );
     await screen.findByText(`Proveedor org:${ORG_A}`);
     expect(
       api.lists.mock.calls
@@ -358,7 +362,7 @@ describe("APP12 S1 navigation and shared context", () => {
     try {
       render(<App />);
       navigate(await screen.findByRole("navigation"), "Facturas");
-      await screen.findByLabelText("Ver facturas de");
+      await screen.findByLabelText("Grupo");
       await waitFor(() =>
         expect(
           api.lists.mock.calls.some(([url]) => scopeOf(url) === `org:${ORG_A}`),

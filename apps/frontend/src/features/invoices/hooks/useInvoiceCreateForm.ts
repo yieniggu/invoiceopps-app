@@ -78,16 +78,15 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
   const [afterFailure, setAfterFailure] = useState(false);
   const [restarts, setRestarts] = useState(0);
   const attempt = useRef<Attempt | null>(null);
-  const fields = useRef<Partial<Record<DraftField | "scope", HTMLElement>>>({});
+  const fields = useRef<Partial<Record<DraftField, HTMLElement>>>({});
 
   // A scope that is no longer offered gives way to the first one.
   const scope = options.find(({ value }) => value === scopeValue) ?? options[0];
 
-  const register =
-    (field: DraftField | "scope") => (element: HTMLElement | null) => {
-      if (element) fields.current[field] = element;
-      else delete fields.current[field];
-    };
+  const register = (field: DraftField) => (element: HTMLElement | null) => {
+    if (element) fields.current[field] = element;
+    else delete fields.current[field];
+  };
 
   const change = <K extends keyof InvoiceDraft>(
     field: K,
@@ -221,6 +220,12 @@ export function useInvoiceCreateForm(options: readonly CreateScopeOption[]) {
     change,
     scope,
     selectScope: setScopeValue,
+    // Changing the organization resets the group to that organization's first.
+    selectOrganization: (organizationId: string) =>
+      setScopeValue(
+        options.find((option) => option.organizationId === organizationId)
+          ?.value,
+      ),
     errors,
     failure,
     confirming,

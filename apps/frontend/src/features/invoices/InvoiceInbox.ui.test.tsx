@@ -48,6 +48,27 @@ afterEach(() => {
 const LIST = "GET /api/v1/invoices";
 
 const ORG_GROUPS = `GET /api/v1/organizations/${norte.id}/groups`;
+const SUR_GROUPS = `GET /api/v1/organizations/${sur.id}/groups`;
+const ORGS = "GET /api/v1/organizations";
+
+/** One page of the organization directory (GET /organizations). */
+const organizationsPage = (
+  organizations: Array<{ id: string; name: string }>,
+  { total = organizations.length, page = 1 } = {},
+) =>
+  jsonResponse({
+    organizations: organizations.map(({ id, name }) => ({
+      id,
+      name,
+      slug: name.toLowerCase().replace(/\s+/g, "-"),
+      description: null,
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })),
+    page,
+    pageSize: 100,
+    total,
+  });
 
 /**
  * Transport for the inbox: the profile, the legacy catalogue, the list and the
@@ -57,8 +78,10 @@ function inboxTransport(
   profile: () => Record<string, unknown>,
   list: RouteHandler,
   orgGroups: RouteHandler = () => groupsOf(contabilidad),
+  extra: Record<string, RouteHandler> = {},
 ) {
   return mockTransport({
+    ...extra,
     "GET /api/v1/auth/profile": () => jsonResponse({ profile: profile() }),
     "GET /api/v1/groups": () => jsonResponse({ groups: [] }),
     [LIST]: list,
@@ -70,7 +93,7 @@ const optionValue = (name: string) =>
   (screen.getByRole("option", { name }) as HTMLOptionElement).value;
 
 const selectContext = async (name: string) => {
-  const selector = await screen.findByLabelText("Ver facturas de");
+  const selector = await screen.findByLabelText("Grupo");
   fireEvent.change(selector, { target: { value: optionValue(name) } });
 };
 
@@ -98,18 +121,18 @@ describe("context selector (AC-14)", () => {
       () => invoicePage([]),
     );
     renderApp({ route: "/invoices" });
-    const selector = await screen.findByLabelText("Ver facturas de");
+    const selector = await screen.findByLabelText("Grupo");
     expect(
       within(selector)
         .getAllByRole("option")
         .map((option) => option.textContent),
-    ).toEqual(["Toda la organización", "Sin grupo asignado", "Contabilidad"]);
+    ).toEqual(["Todos", "Sin grupo asignado", "Contabilidad"]);
   });
 
   it("renders a single screen root", async () => {
     inboxTransport(orgReader, () => invoicePage([]));
     renderApp({ route: "/invoices" });
-    await screen.findByLabelText("Ver facturas de");
+    await screen.findByLabelText("Grupo");
     expect(document.querySelectorAll('[data-screen="invoices"]')).toHaveLength(
       1,
     );
@@ -118,7 +141,7 @@ describe("context selector (AC-14)", () => {
   it("offers only the group when the person reads just that group", async () => {
     inboxTransport(groupReader, () => invoicePage([]));
     renderApp({ route: "/invoices" });
-    const selector = await screen.findByLabelText("Ver facturas de");
+    const selector = await screen.findByLabelText("Grupo");
     expect(
       within(selector)
         .getAllByRole("option")
@@ -126,8 +149,8 @@ describe("context selector (AC-14)", () => {
     ).toEqual(["Compras"]);
   });
 
-  it("groups the options by organization when there are several organizations", async () => {
-    inboxTransport(
+  it("offers each organization in «Organización» and its own scopes in «Grupo»", async () => {
+    const transport = inboxTransport(
       () =>
         profileFixture({
           memberships: [
@@ -140,20 +163,29 @@ describe("context selector (AC-14)", () => {
       () => invoicePage([]),
     );
     renderApp({ route: "/invoices" });
-    const selector = await screen.findByLabelText("Ver facturas de");
-    expect(
-      within(selector)
-        .getAllByRole("group")
-        .map((group) => [
-          group.getAttribute("label"),
-          within(group)
-            .getAllByRole("option")
-            .map((option) => option.textContent),
-        ]),
-    ).toEqual([
-      ["Academia Norte", ["Toda la organización", "Sin grupo asignado"]],
-      ["Instituto Sur", ["Compras"]],
+    const organization = await screen.findByLabelText("Organización");
+    const labels = (select: HTMLElement) =>
+      within(select)
+        .getAllByRole("option")
+        .map((option) => option.textContent);
+    expect(labels(organization)).toEqual(["Academia Norte", "Instituto Sur"]);
+    expect(labels(screen.getByLabelText("Grupo"))).toEqual([
+      "Todos",
+      "Sin grupo asignado",
     ]);
+    // Changing the organization resets the group to its first scope.
+    fireEvent.change(organization, { target: { value: sur.id } });
+    await waitFor(() =>
+      expect(labels(screen.getByLabelText("Grupo"))).toEqual(["Compras"]),
+    );
+    await waitFor(() =>
+      expect(queryOf(transport.calls(LIST).at(-1)!)).toMatchObject({
+        organizationId: sur.id,
+        groupId: compras.id,
+      }),
+    );
+    expect(search().get("organizationId")).toBe(sur.id);
+    expect(search().get("groupId")).toBe(compras.id);
   });
 
   it("lists the whole organization by default, without a group filter", async () => {
@@ -185,7 +217,7 @@ describe("context selector (AC-14)", () => {
       () =>
         profileFixture({
           memberships: [
-            membership(norte, "ADMIN", {
+            membership(norte, "USER", {
               permissions: {
                 ...READ,
                 readInvoices: false,
@@ -198,17 +230,7 @@ describe("context selector (AC-14)", () => {
     );
     renderApp({ route: "/invoices" });
     expect(await screen.findByText("Aún no puedes ver facturas")).toBeTruthy();
-    expect(screen.queryByLabelText("Ver facturas de")).toBeNull();
-    expect(transport.calls(LIST)).toHaveLength(0);
-  });
-
-  it("shows the same empty state to a platform administrator without memberships", async () => {
-    const transport = inboxTransport(
-      () => profileFixture({ isPlatformAdministrator: true }),
-      () => invoicePage([]),
-    );
-    renderApp({ route: "/invoices" });
-    expect(await screen.findByText("Aún no puedes ver facturas")).toBeTruthy();
+    expect(screen.queryByLabelText("Grupo")).toBeNull();
     expect(transport.calls(LIST)).toHaveLength(0);
   });
 
@@ -224,7 +246,7 @@ describe("context selector (AC-14)", () => {
     renderApp({ route: "/invoices" });
     await screen.findByRole("table", { name: "Facturas" });
     for (const label of [
-      "Ver facturas de",
+      "Grupo",
       "Desde",
       "Hasta",
       "Buscar por número o proveedor",
@@ -292,8 +314,8 @@ describe("requests, URL state and page reset (AC-15)", () => {
       pageSize: "20",
     });
     expect(
-      (screen.getByLabelText("Ver facturas de") as HTMLSelectElement)
-        .selectedOptions[0]?.textContent,
+      (screen.getByLabelText("Grupo") as HTMLSelectElement).selectedOptions[0]
+        ?.textContent,
     ).toBe("Contabilidad");
     expect(
       (screen.getByRole("radio", { name: "Aprobadas" }) as HTMLInputElement)
@@ -364,7 +386,7 @@ describe("requests, URL state and page reset (AC-15)", () => {
     [
       "context",
       () =>
-        fireEvent.change(screen.getByLabelText("Ver facturas de"), {
+        fireEvent.change(screen.getByLabelText("Grupo"), {
           target: { value: optionValue("Sin grupo asignado") },
         }),
       { ungrouped: "true" },
@@ -638,7 +660,7 @@ describe("revoked access (AC-17)", () => {
       ).toBeGreaterThan(profileCalls),
     );
     expect(await screen.findByText("Aún no puedes ver facturas")).toBeTruthy();
-    expect(screen.queryByLabelText("Ver facturas de")).toBeNull();
+    expect(screen.queryByLabelText("Grupo")).toBeNull();
   });
 
   it("a 403 that the profile does not confirm still hides the rows and does not loop", async () => {
@@ -661,6 +683,22 @@ describe("revoked access (AC-17)", () => {
     );
     expect(transport.calls(LIST)).toHaveLength(2);
     expect(transport.calls("GET /api/v1/auth/profile")).toHaveLength(2);
+  });
+
+  it("tells an ADMIN whose organization answers 403 that there is no access (CR-015)", async () => {
+    const transport = inboxTransport(
+      () => profileFixture({ memberships: [membership(norte, "ADMIN")] }),
+      () => errorResponse(403, "FORBIDDEN"),
+    );
+    renderApp({ route: "/invoices" });
+
+    expect(
+      await screen.findByText(
+        "No tienes acceso a las facturas de esta organización.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Estamos actualizando tus permisos/)).toBeNull();
+    expect(transport.calls(LIST)).toHaveLength(1);
   });
 
   it("a 401 uses the existing unauthorized flow", async () => {
@@ -724,19 +762,35 @@ describe("navigation entry (AC-18)", () => {
     expect(await screen.findByRole("link", { name: "Facturas" })).toBeTruthy();
   });
 
-  it("hides «Facturas» for an organization ADMIN without invoice flags and for a platform administrator", async () => {
+  it("shows «Facturas» to an organization ADMIN without invoice flags (CR-009)", async () => {
     inboxTransport(
-      () =>
-        profileFixture({
-          isPlatformAdministrator: true,
-          memberships: [membership(norte, "ADMIN")],
-        }),
+      () => profileFixture({ memberships: [membership(norte, "ADMIN")] }),
+      () => invoicePage([]),
+    );
+    renderApp({ route: "/profile" });
+    expect(await screen.findByRole("link", { name: "Facturas" })).toBeTruthy();
+  });
+
+  it("shows «Facturas» to a platform administrator without memberships (CR-009)", async () => {
+    inboxTransport(
+      () => profileFixture({ isPlatformAdministrator: true }),
+      () => invoicePage([]),
+      () => groupsOf(),
+      { [ORGS]: () => organizationsPage([norte, sur]) },
+    );
+    renderApp({ route: "/profile" });
+    expect(await screen.findByRole("link", { name: "Facturas" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Tokens API/ })).toBeNull();
+  });
+
+  it("keeps «Facturas» hidden for a member without any invoice flag", async () => {
+    inboxTransport(
+      () => profileFixture({ memberships: [membership(norte, "USER")] }),
       () => invoicePage([]),
     );
     renderApp({ route: "/profile" });
     await screen.findByRole("heading", { level: 1, name: "Mi perfil" });
     expect(navLink()).toBeNull();
-    expect(screen.queryByRole("link", { name: /Tokens API/ })).toBeNull();
   });
 
   it("leaves the other entries untouched", async () => {
@@ -755,7 +809,7 @@ describe("navigation entry (AC-18)", () => {
 
 describe("groups of an organization-wide reader (groupName variance)", () => {
   const optionLabels = () =>
-    within(screen.getByLabelText("Ver facturas de"))
+    within(screen.getByLabelText("Grupo"))
       .getAllByRole("option")
       .map((option) => option.textContent);
 
@@ -768,7 +822,7 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
     renderApp({ route: "/invoices" });
     await waitFor(() =>
       expect(optionLabels()).toEqual([
-        "Toda la organización",
+        "Todos",
         "Sin grupo asignado",
         "Contabilidad",
         "Finanzas",
@@ -791,7 +845,7 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
     renderApp({ route: "/invoices" });
     expect(await screen.findByRole("link", { name: "FAC-1" })).toBeTruthy();
     expect(optionLabels()).toEqual([
-      "Toda la organización",
+      "Todos",
       "Sin grupo asignado",
       "Contabilidad",
     ]);
@@ -818,7 +872,7 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
     expect(notice.closest("[role]")?.getAttribute("role")).toBe("status");
     expect(transport.calls(ORG_GROUPS).length).toBe(1);
     expect(optionLabels()).toEqual([
-      "Toda la organización",
+      "Todos",
       "Sin grupo asignado",
       "Contabilidad",
     ]);
@@ -871,8 +925,8 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
     expect(queryOf(transport.calls(LIST)[0]!).groupId).toBe(finanzas.id);
     expect(search().get("groupId")).toBe(finanzas.id);
     expect(
-      (screen.getByLabelText("Ver facturas de") as HTMLSelectElement)
-        .selectedOptions[0]?.textContent,
+      (screen.getByLabelText("Grupo") as HTMLSelectElement).selectedOptions[0]
+        ?.textContent,
     ).toBe("Finanzas");
   });
 
@@ -937,17 +991,18 @@ describe("groups of an organization-wide reader (groupName variance)", () => {
 describe("header, toolbar and states of the redesigned inbox", () => {
   const FILTERED = `/invoices?organizationId=${norte.id}&groupId=${contabilidad.id}&businessStatus=APPROVED&issuedFrom=2026-01-01&issuedTo=2026-02-01&q=acme&page=3`;
 
-  it("names the selected scope in words under the title", async () => {
+  it("does not repeat the selected scope as a subtitle under the title", async () => {
     inboxTransport(orgReader, () => invoicePage([invoice(1)]));
     renderApp({ route: "/invoices" });
     await screen.findByRole("table", { name: "Facturas" });
     expect(
-      screen.getByText("Toda la organización · Academia Norte"),
-    ).toBeTruthy();
+      screen.queryByText("Toda la organización · Academia Norte"),
+    ).toBeNull();
     await selectContext("Contabilidad");
+    await screen.findByRole("table", { name: "Facturas" });
     expect(
-      await screen.findByText("Grupo Contabilidad · Academia Norte"),
-    ).toBeTruthy();
+      screen.queryByText("Grupo Contabilidad · Academia Norte"),
+    ).toBeNull();
   });
 
   it.each([
@@ -2046,9 +2101,7 @@ describe("re-review 3: focus (CR-403, CR-404, CR-405, CR-407)", () => {
       new PointerEvent("click", { bubbles: true, pointerType: "touch" }),
     );
     await waitFor(() => expect(search().has("businessStatus")).toBe(false));
-    expect(document.activeElement).toBe(
-      screen.getByLabelText("Ver facturas de"),
-    );
+    expect(document.activeElement).toBe(screen.getByLabelText("Grupo"));
   });
 });
 
@@ -2211,7 +2264,7 @@ describe("automation contract: results state", () => {
       () =>
         profileFixture({
           memberships: [
-            membership(norte, "ADMIN", {
+            membership(norte, "USER", {
               permissions: { ...READ, readInvoices: false },
             }),
           ],
@@ -2297,5 +2350,200 @@ describe("automation contract: results state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
     await waitFor(() => expect(stateOf()).toBe("error"), { timeout: 5_000 });
     expect(screen.getByRole("link", { name: "FAC-1" })).toBeTruthy();
+  });
+});
+
+describe("administrator inbox (CR-009: AC-05, AC-06, AC-07)", () => {
+  const labels = (select: HTMLElement) =>
+    within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+  it("offers the platform administrator every organization and all the groups of the selected one", async () => {
+    const transport = inboxTransport(
+      () => profileFixture({ isPlatformAdministrator: true }),
+      () => invoicePage([]),
+      () => groupsOf(contabilidad, compras, finanzas),
+      {
+        [ORGS]: () => organizationsPage([norte, sur]),
+        [SUR_GROUPS]: () =>
+          jsonResponse({
+            groups: [
+              {
+                id: compras.id,
+                organizationId: sur.id,
+                name: "Soporte",
+                description: null,
+              },
+            ],
+          }),
+      },
+    );
+    renderApp({ route: "/invoices" });
+
+    const organization = await screen.findByLabelText("Organización");
+    expect(labels(organization)).toEqual(["Academia Norte", "Instituto Sur"]);
+    await waitFor(() =>
+      expect(labels(screen.getByLabelText("Grupo"))).toEqual([
+        "Todos",
+        "Sin grupo asignado",
+        "Contabilidad",
+        "Compras",
+        "Finanzas",
+      ]),
+    );
+    expect(queryOf(transport.calls(LIST)[0]!)).toEqual({
+      organizationId: norte.id,
+      page: "1",
+      pageSize: "20",
+    });
+    // Only the selected organization's groups are asked for.
+    expect(transport.calls(SUR_GROUPS)).toHaveLength(0);
+
+    // AC-07: changing the organization resets the group to «Todos».
+    fireEvent.change(screen.getByLabelText("Grupo"), {
+      target: { value: optionValue("Finanzas") },
+    });
+    await waitFor(() => expect(search().get("groupId")).toBe(finanzas.id));
+    fireEvent.change(organization, { target: { value: sur.id } });
+    await waitFor(() =>
+      expect(labels(screen.getByLabelText("Grupo"))).toEqual([
+        "Todos",
+        "Sin grupo asignado",
+        "Soporte",
+      ]),
+    );
+    expect((screen.getByLabelText("Grupo") as HTMLSelectElement).value).toBe(
+      `organization:${sur.id}`,
+    );
+    expect(search().get("organizationId")).toBe(sur.id);
+    expect(search().get("groupId")).toBeNull();
+    expect(search().get("ungrouped")).toBeNull();
+  });
+
+  it("reads every page of the directory, bounded, so no organization is hidden", async () => {
+    const pages: string[] = [];
+    inboxTransport(
+      () => profileFixture({ isPlatformAdministrator: true }),
+      () => invoicePage([]),
+      () => groupsOf(),
+      {
+        [ORGS]: (request) => {
+          const page = new URLSearchParams(request.search).get("page") ?? "1";
+          pages.push(page);
+          return organizationsPage(page === "1" ? [norte] : [sur], {
+            total: 250,
+            page: Number(page),
+          });
+        },
+      },
+    );
+    renderApp({ route: "/invoices" });
+
+    await screen.findByLabelText("Organización");
+    await waitFor(() => expect([...pages].sort()).toEqual(["1", "2", "3"]));
+  });
+
+  it("opens a URL naming another organization of the directory without falling back", async () => {
+    const transport = inboxTransport(
+      () => profileFixture({ isPlatformAdministrator: true }),
+      () => invoicePage([]),
+      () => groupsOf(),
+      { [ORGS]: () => organizationsPage([norte, sur]) },
+    );
+    renderApp({ route: `/invoices?organizationId=${sur.id}&ungrouped=true` });
+
+    await screen.findByLabelText("Organización");
+    await waitFor(() =>
+      expect(queryOf(transport.calls(LIST)[0]!)).toEqual({
+        organizationId: sur.id,
+        ungrouped: "true",
+        page: "1",
+        pageSize: "20",
+      }),
+    );
+    expect(
+      (screen.getByLabelText("Organización") as HTMLSelectElement).value,
+    ).toBe(sur.id);
+    expect((screen.getByLabelText("Grupo") as HTMLSelectElement).value).toBe(
+      `ungrouped:${sur.id}`,
+    );
+  });
+
+  it("waits for the directory before choosing the default organization of a platform administrator with memberships (CR-011)", async () => {
+    const directory = deferred<Response>();
+    const transport = inboxTransport(
+      () =>
+        profileFixture({
+          isPlatformAdministrator: true,
+          memberships: [membership(sur, "USER")],
+        }),
+      () => invoicePage([invoice(1)]),
+      () => groupsOf(contabilidad),
+      {
+        [ORGS]: () => directory.promise,
+        [SUR_GROUPS]: () => groupsOf(),
+      },
+    );
+    renderApp({ route: "/invoices" });
+
+    // The directory is pending: the skeleton shows and nothing is asked.
+    await waitFor(() =>
+      expect(
+        transport.calls("GET /api/v1/auth/profile").length,
+      ).toBeGreaterThan(0),
+    );
+    await waitFor(() => expect(transport.calls(ORGS)).toHaveLength(1));
+    expect(await screen.findByText("Cargando facturas")).toBeTruthy();
+    expect(transport.calls(LIST)).toHaveLength(0);
+    expect(transport.calls(SUR_GROUPS)).toHaveLength(0);
+
+    directory.resolve(organizationsPage([norte, sur]));
+    await screen.findByRole("link", { name: "FAC-1" });
+    expect(transport.calls(LIST)).toHaveLength(1);
+    expect(queryOf(transport.calls(LIST)[0]!).organizationId).toBe(norte.id);
+    expect(transport.calls(SUR_GROUPS)).toHaveLength(0);
+  });
+
+  it("lets an organization ADMIN without flags read the whole organization and all its groups", async () => {
+    const transport = inboxTransport(
+      () => profileFixture({ memberships: [membership(norte, "ADMIN")] }),
+      () => invoicePage([]),
+      () => groupsOf(contabilidad, compras),
+    );
+    renderApp({ route: "/invoices" });
+
+    const group = await screen.findByLabelText("Grupo");
+    await waitFor(() =>
+      expect(labels(group)).toEqual([
+        "Todos",
+        "Sin grupo asignado",
+        "Contabilidad",
+        "Compras",
+      ]),
+    );
+    expect(transport.calls(ORGS)).toHaveLength(0);
+    expect(queryOf(transport.calls(LIST)[0]!).organizationId).toBe(norte.id);
+  });
+
+  it("keeps a group-only reader without «Todos» and on its first readable group", async () => {
+    inboxTransport(groupReader, () => invoicePage([]));
+    renderApp({ route: "/invoices" });
+
+    const group = await screen.findByLabelText("Grupo");
+    expect(labels(group)).toEqual(["Compras"]);
+    expect((group as HTMLSelectElement).value).toBe(
+      `group:${norte.id}:${compras.id}`,
+    );
+  });
+
+  it("offers a regular member with organization read only its own organizations", async () => {
+    const transport = inboxTransport(orgReader, () => invoicePage([]));
+    renderApp({ route: "/invoices" });
+
+    expect(labels(await screen.findByLabelText("Organización"))).toEqual([
+      "Academia Norte",
+    ]);
+    expect(transport.calls(ORGS)).toHaveLength(0);
   });
 });

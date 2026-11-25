@@ -9,7 +9,12 @@ import {
   MAX_QUERY_LENGTH,
   MIN_FILTER_DATE,
 } from "../invoiceFilters";
-import type { InvoiceScopeOption } from "../invoiceScopes";
+import {
+  firstScopeOfOrganization,
+  invoiceGroupChoices,
+  invoiceOrganizationChoices,
+  type InvoiceScopeOption,
+} from "../invoiceScopes";
 import {
   BUSINESS_STATUSES,
   type BusinessStatus,
@@ -42,38 +47,6 @@ const STATUS_CHOICES: ReadonlyArray<{
     label: STATUS_PLURALS[status],
   })),
 ];
-
-function ScopeOptions({ options }: { options: readonly InvoiceScopeOption[] }) {
-  const organizations = [...new Set(options.map((o) => o.organizationId))];
-  const render = ({ value, label }: InvoiceScopeOption) => (
-    <option key={value} value={value}>
-      {label}
-    </option>
-  );
-  if (organizations.length === 1) {
-    const groups = options.filter(({ context }) => context.kind === "group");
-    return (
-      <>
-        {options.filter(({ context }) => context.kind !== "group").map(render)}
-        {groups.length > 0 ? (
-          <optgroup label="Grupos">{groups.map(render)}</optgroup>
-        ) : null}
-      </>
-    );
-  }
-  return (
-    <>
-      {organizations.map((organizationId) => {
-        const own = options.filter((o) => o.organizationId === organizationId);
-        return (
-          <optgroup key={organizationId} label={own[0]?.organizationName}>
-            {own.map(render)}
-          </optgroup>
-        );
-      })}
-    </>
-  );
-}
 
 /**
  * A date filter. Typing reports partial dates (a year of one to three digits),
@@ -136,7 +109,7 @@ function DateFilter({
 }
 
 /**
- * Scope selector and filters in one toolbar. Everything shown is the URL's: a
+ * Organization and group selectors and filters in one toolbar. Everything shown is the URL's: a
  * change only asks the screen to navigate, and the page goes back to the
  * first. «Limpiar filtros» exists only while a filter is set and keeps the
  * scope.
@@ -168,20 +141,45 @@ export function InvoiceFilterBar({
    */
   focusSearch: boolean;
 }) {
+  const organizationSelectId = useId();
   const scopeId = useId();
   const statusName = useId();
   const fromId = useId();
   const toId = useId();
   const scopeSelect = useRef<HTMLSelectElement>(null);
+  const organizations = invoiceOrganizationChoices(options);
+  const groups = invoiceGroupChoices(options, selected.organizationId);
   useEffect(() => {
     if (searchKey > 0 && !focusSearch) scopeSelect.current?.focus();
   }, [searchKey, focusSearch]);
   return (
     <div className="invoice-toolbar">
       <div className="toolbar-row">
-        <div className="toolbar-field">
+        <div className="toolbar-field toolbar-field-select">
+          <label htmlFor={organizationSelectId} className="toolbar-label">
+            Organización
+          </label>
+          <select
+            id={organizationSelectId}
+            value={selected.organizationId}
+            onChange={(event) => {
+              const next = firstScopeOfOrganization(
+                options,
+                event.target.value,
+              );
+              if (next) onScopeChange(next);
+            }}
+          >
+            {organizations.map(({ id, name }) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="toolbar-field toolbar-field-select">
           <label htmlFor={scopeId} className="toolbar-label">
-            Ver facturas de
+            Grupo
           </label>
           <select
             ref={scopeSelect}
@@ -194,7 +192,11 @@ export function InvoiceFilterBar({
               if (next) onScopeChange(next);
             }}
           >
-            <ScopeOptions options={options} />
+            {groups.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="toolbar-field toolbar-grow">

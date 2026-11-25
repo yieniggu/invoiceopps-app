@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { profileFixture } from "../../../test/transport";
 import type { Profile } from "../types";
+import { profileKey } from "./queryKeys";
 import { SessionStore } from "./sessionStore";
 
 const ada = profileFixture() as unknown as Profile;
@@ -100,5 +101,71 @@ describe("a retired partition stays empty and idle", () => {
 
     expect(store.getSnapshot().client).toBe(adaClient);
     expect(adaClient.getQueryData(["keep"])).toBe(1);
+  });
+});
+
+describe("keepRoute", () => {
+  const adaClientOf = (store: SessionStore) => {
+    store.accept(store.getSnapshot().client, ada);
+    return store.getSnapshot().client;
+  };
+
+  it("is false by default and after a plain begin", () => {
+    const store = new SessionStore();
+    expect(store.getSnapshot().keepRoute).toBe(false);
+    store.begin(adaClientOf(store));
+    expect(store.getSnapshot().keepRoute).toBe(false);
+  });
+
+  it("is exposed by begin with keepRoute and reset by accept and end", () => {
+    const store = new SessionStore();
+    store.begin(adaClientOf(store), { keepRoute: true });
+    expect(store.getSnapshot().keepRoute).toBe(true);
+
+    // Another person answering ends the continuation.
+    store.accept(store.getSnapshot().client, bruno);
+    expect(store.getSnapshot().keepRoute).toBe(false);
+
+    store.begin(store.getSnapshot().client, { keepRoute: true });
+    expect(store.getSnapshot().keepRoute).toBe(true);
+    store.end(store.getSnapshot().client, "logout");
+    expect(store.getSnapshot().keepRoute).toBe(false);
+  });
+
+  it("seeds the new partition with the same person's stale profile", () => {
+    const store = new SessionStore();
+    const before = adaClientOf(store);
+
+    store.begin(before, { keepRoute: true });
+
+    const after = store.getSnapshot();
+    expect(after.client).not.toBe(before);
+    expect(after.phase).toBe("identity");
+    expect(after.identityId).toBe(ada.id);
+    const state = after.client.getQueryState(profileKey(ada.id));
+    expect(state?.data).toEqual(ada);
+    // Fresh for no time at all: the first observer refetches it.
+    expect(
+      after.client
+        .getQueryCache()
+        .find({ queryKey: profileKey(ada.id) })
+        ?.isStaleByTime(30_000),
+    ).toBe(true);
+    expect(before.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it("does not seed without keepRoute or without a cached profile", () => {
+    const store = new SessionStore();
+    store.begin(adaClientOf(store));
+    expect(store.getSnapshot().phase).toBe("unknown");
+    expect(store.getSnapshot().client.getQueryCache().getAll()).toHaveLength(0);
+
+    const other = new SessionStore();
+    const client = adaClientOf(other);
+    client.clear();
+    other.begin(client, { keepRoute: true });
+    expect(other.getSnapshot().phase).toBe("unknown");
+    expect(other.getSnapshot().identityId).toBeNull();
+    expect(other.getSnapshot().keepRoute).toBe(true);
   });
 });
