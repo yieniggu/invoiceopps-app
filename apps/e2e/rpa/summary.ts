@@ -118,7 +118,7 @@ function matches(row: SummaryRowInput): boolean {
   const { result, detail } = parseExpected(row.expected);
   if (row.result !== result) return false;
   if (result === "REJECTED_FIELD") return row.field === detail;
-  if (result === "REJECTED" || result === "SKIPPED")
+  if (result === "REJECTED" || result === "ERROR" || result === "SKIPPED")
     return row.error_code === detail;
   return true;
 }

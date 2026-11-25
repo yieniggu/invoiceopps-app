@@ -132,7 +132,7 @@ const invoiceBatchRows: FixtureRow[] = [
     issued: ISSUED,
     due: DUE,
     status: "PENDING",
-    expected: "SKIPPED:SCOPE_NOT_AVAILABLE",
+    expected: "ERROR:GROUP_NOT_FOUND",
     note: "Group the account is not offered",
   },
   {
@@ -224,11 +224,16 @@ const invoiceBatchRows: FixtureRow[] = [
 /**
  * Classroom demo: valid and invalid cases only. No `fault` rows (the demo has
  * no fault injection, so every row must end in its `expected` on its own).
+ * Rows target `{{GROUP}}`, except d12 (a group the account does not have) and
+ * d13 (blank group: organization-level creation, only valid for an account
+ * with organization-level create). The class robot requires `in_GroupName`, so
+ * the same file also drives the UiPath lab with d13 as an extra case.
  * Supplier names are made up.
  */
 const demoRows: FixtureRow[] = [
   {
     id: "d01",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-001",
     supplier: "Ferretería Aurora Demo",
     amount: 185000,
@@ -236,7 +241,7 @@ const demoRows: FixtureRow[] = [
     due: DUE,
     status: "PENDING",
     expected: "CREATED",
-    note: "Alcance de organización, estado PENDING",
+    note: "Estado PENDING",
   },
   {
     id: "d02",
@@ -248,10 +253,11 @@ const demoRows: FixtureRow[] = [
     due: DUE,
     status: "APPROVED",
     expected: "CREATED",
-    note: "Alcance de grupo, estado APPROVED",
+    note: "Estado APPROVED",
   },
   {
     id: "d03",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-003",
     supplier: "Transportes Cóndor Demo",
     amount: "320.000",
@@ -259,7 +265,7 @@ const demoRows: FixtureRow[] = [
     due: DUE,
     status: "APPROVED",
     expected: "CREATED",
-    note: "Organización, monto con separador de miles",
+    note: "Monto con separador de miles",
   },
   {
     id: "d04",
@@ -271,10 +277,11 @@ const demoRows: FixtureRow[] = [
     due: DUE,
     status: "REJECTED",
     expected: "CREATED",
-    note: "Alcance de grupo, estado REJECTED",
+    note: "Estado REJECTED",
   },
   {
     id: "d05",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-005",
     supplier: "Insumos Estrella Demo",
     amount: 99000,
@@ -282,10 +289,11 @@ const demoRows: FixtureRow[] = [
     due: DUE,
     status: "CANCELLED",
     expected: "CREATED",
-    note: "Organización, estado CANCELLED",
+    note: "Estado CANCELLED",
   },
   {
     id: "d06",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-006",
     supplier: null,
     amount: 28000,
@@ -297,6 +305,7 @@ const demoRows: FixtureRow[] = [
   },
   {
     id: "d07",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-007",
     supplier: "Logística Faro Demo",
     amount: "12500,5",
@@ -308,6 +317,7 @@ const demoRows: FixtureRow[] = [
   },
   {
     id: "d08",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-008",
     supplier: "Mantención Glaciar Demo",
     amount: 73000,
@@ -319,6 +329,7 @@ const demoRows: FixtureRow[] = [
   },
   {
     id: "d09",
+    group: "{{GROUP}}",
     businessId: null,
     supplier: "Limpieza Horizonte Demo",
     amount: 51000,
@@ -330,6 +341,7 @@ const demoRows: FixtureRow[] = [
   },
   {
     id: "d10",
+    group: "{{GROUP}}",
     businessId: `{{RUN}}-${"X".repeat(90)}`,
     supplier: "Imprenta Isla Demo",
     amount: 38000,
@@ -341,6 +353,7 @@ const demoRows: FixtureRow[] = [
   },
   {
     id: "d11",
+    group: "{{GROUP}}",
     businessId: "{{RUN}}-001",
     supplier: "Ferretería Aurora Demo",
     amount: 185000,
@@ -359,8 +372,20 @@ const demoRows: FixtureRow[] = [
     issued: ISSUED,
     due: DUE,
     status: "PENDING",
-    expected: "SKIPPED:SCOPE_NOT_AVAILABLE",
+    expected: "ERROR:GROUP_NOT_FOUND",
     note: "Grupo que la cuenta no tiene",
+  },
+  {
+    id: "d13",
+    group: "",
+    businessId: "{{RUN}}-013",
+    supplier: "Servicios Omega Demo",
+    amount: 56000,
+    issued: ISSUED,
+    due: DUE,
+    status: "PENDING",
+    expected: "CREATED",
+    note: "Sin grupo: creación a nivel de organización",
   },
 ];
 

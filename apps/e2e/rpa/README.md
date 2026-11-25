@@ -5,8 +5,9 @@ Decide **solo** con el contrato de selectores
 ([`docs/rpa-selector-contract.md`](../../../docs/rpa-selector-contract.md)):
 `data-testid`, `#id`, atributos `data-*`, `name` y `value` de las opciones. Nunca
 lee el texto en español ni clases CSS. La única comparación de texto es el
-nombre de la organización/grupo del Excel contra el `<optgroup label>` /
-`<option>` del selector de alcance (es un dato, no copy de la interfaz).
+nombre de la organización/grupo del Excel contra el texto exacto de los
+`<option>` de los selects de organización y de grupo (es un dato, no copy de la
+interfaz). Los nombres no son únicos: uno repetido se rechaza, no se adivina.
 
 - `contract.ts`: el mapa de selectores.
 - `excel.ts`: lectura del Excel de entrada y escritura del de salida.
@@ -173,23 +174,27 @@ hoja no las trae. `row_id` no puede repetirse (el error nombra los ids).
 
 Salida (las de entrada más estas):
 
-| Columna        | Significado                                                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `result`       | `CREATED`, `CREATED_AFTER_RETRY`, `CREATED_RECONCILED`, `REJECTED_FIELD`, `REJECTED`, `SKIPPED`, `UNCERTAIN`, `MANUAL_REVIEW`, `NOT_PROCESSED` |
-| `invoice_id`   | UUID de la factura creada                                                                                                                      |
-| `error_kind`   | `field`, `rejected`, `uncertain`, `burned`, `scope`, `session`, `credentials`, `onboarding`, `forbidden`, `reconcile`, `crash`…                |
-| `error_status` | código HTTP, vacío si no hubo respuesta                                                                                                        |
-| `error_code`   | `error.code` de la API, `SCOPE_NOT_AVAILABLE`, `ORGANIZATION_AMBIGUOUS`, `STATUS_NOT_AVAILABLE` o `RECONCILE_MISMATCH`                         |
-| `field`        | campo con error (`supplierName`, `amount`, `dueOn`, `businessId`…)                                                                             |
-| `message`      | texto de la interfaz, solo para personas y logs                                                                                                |
-| `attempts`     | envíos realizados (incluye reintentos)                                                                                                         |
-| `finished_at`  | marca de tiempo ISO                                                                                                                            |
+| Columna        | Significado                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `result`       | `CREATED`, `CREATED_AFTER_RETRY`, `CREATED_RECONCILED`, `REJECTED_FIELD`, `REJECTED`, `ERROR`, `SKIPPED`, `UNCERTAIN`, `MANUAL_REVIEW`, `NOT_PROCESSED`         |
+| `invoice_id`   | UUID de la factura creada                                                                                                                                       |
+| `error_kind`   | `field`, `rejected`, `uncertain`, `burned`, `scope`, `session`, `credentials`, `onboarding`, `forbidden`, `reconcile`, `crash`…                                 |
+| `error_status` | código HTTP, vacío si no hubo respuesta                                                                                                                         |
+| `error_code`   | `error.code` de la API, `ORGANIZATION_NOT_FOUND`, `GROUP_NOT_FOUND`, `ORGANIZATION_AMBIGUOUS`, `GROUP_AMBIGUOUS`, `STATUS_NOT_AVAILABLE` o `RECONCILE_MISMATCH` |
+| `field`        | campo con error (`supplierName`, `amount`, `dueOn`, `businessId`…)                                                                                              |
+| `message`      | texto de la interfaz, solo para personas y logs                                                                                                                 |
+| `attempts`     | envíos realizados (incluye reintentos)                                                                                                                          |
+| `finished_at`  | marca de tiempo ISO                                                                                                                                             |
 
 Códigos propios del bot:
 
-- `ORGANIZATION_AMBIGUOUS` (`SKIPPED`): `organization` vacía y la cuenta ve más
+- `ORGANIZATION_AMBIGUOUS` (`ERROR`): `organization` vacía y la cuenta ve más
   de una organización, o varias organizaciones ofrecidas comparten el nombre
   pedido; con una sola coincidencia se usa esa.
+- `GROUP_AMBIGUOUS` (`ERROR`): varios grupos de la organización elegida
+  comparten el nombre pedido.
+- `ORGANIZATION_NOT_FOUND` / `GROUP_NOT_FOUND` (`ERROR`): ninguna organización (o
+  ningún grupo de la organización elegida) tiene exactamente ese nombre.
 - `RECONCILE_MISMATCH` (`REJECTED` o `UNCERTAIN`): el número de factura ya existe
   pero monto, proveedor, fechas o alcance difieren de la fila (p. ej. una factura
   de una corrida anterior), o la fila no expone todos sus atributos `data-*` y no se puede confirmar; no se reporta

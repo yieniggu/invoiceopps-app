@@ -5,11 +5,12 @@ import {
   amountPesosFromText,
   invoiceMismatches,
   invoiceFactsFromAttributes,
-  pickScope,
+  pickGroup,
+  pickOrganization,
   redact,
   type ApiInvoice,
   type ExpectedInvoice,
-  type ScopeOption,
+  type SelectOption,
 } from "./matching.ts";
 
 const expected: ExpectedInvoice = {
@@ -173,60 +174,66 @@ test("DOM facts feed invoiceMismatches like the API item did", () => {
   ]);
 });
 
-const option = (
-  value: string,
-  text: string,
-  organization: string,
-): ScopeOption => ({ value, text, organization });
+const option = (value: string, text: string): SelectOption => ({
+  value,
+  text,
+});
 
-const offered = [
-  option("organization:o1", "Org Uno", "Org Uno"),
-  option("group:o1:g1", "Compras", "Org Uno"),
+const orgs = [option("o1", "Org Uno"), option("o2", "Org Dos")];
+const groups = [
+  option("organization:o1", "Sin grupo asignado"),
+  option("group:o1:g1", "Compras"),
 ];
 
-test("pickScope resolves a named organization and group", () => {
-  assert.deepEqual(pickScope(offered, "Org Uno", ""), {
+test("pickOrganization resolves an exact name and rejects unknown ones", () => {
+  assert.deepEqual(pickOrganization(orgs, "Org Dos"), {
     kind: "found",
-    choice: { value: "organization:o1", organizationId: "o1" },
+    choice: "o2",
   });
-  assert.deepEqual(pickScope(offered, "Org Uno", "Compras"), {
+  assert.deepEqual(pickOrganization(orgs, " Org Dos "), {
+    kind: "found",
+    choice: "o2",
+  });
+  assert.deepEqual(pickOrganization(orgs, "Org"), { kind: "missing" });
+  assert.deepEqual(pickOrganization(orgs, "org uno"), { kind: "missing" });
+});
+
+test("a blank organization uses the only offered one, else it is ambiguous", () => {
+  assert.deepEqual(pickOrganization([option("o1", "Org Uno")], ""), {
+    kind: "found",
+    choice: "o1",
+  });
+  assert.deepEqual(pickOrganization(orgs, ""), { kind: "ambiguous" });
+  assert.deepEqual(pickOrganization([], ""), { kind: "missing" });
+});
+
+test("two organizations sharing the wanted name are ambiguous, never the first", () => {
+  const twins = [option("o1", "Acme"), option("o2", "Acme")];
+  assert.deepEqual(pickOrganization(twins, "Acme"), { kind: "ambiguous" });
+});
+
+test("pickGroup resolves a named group and the blank organization scope", () => {
+  assert.deepEqual(pickGroup(groups, "Compras"), {
     kind: "found",
     choice: { value: "group:o1:g1", organizationId: "o1", groupId: "g1" },
   });
-  assert.deepEqual(pickScope(offered, "Org Uno", "Nada"), {
-    kind: "missing",
-  });
-  assert.deepEqual(pickScope(offered, "Otra", ""), { kind: "missing" });
-});
-
-test("a blank organization uses the only offered one", () => {
-  assert.deepEqual(pickScope(offered, "", ""), {
+  assert.deepEqual(pickGroup(groups, ""), {
     kind: "found",
     choice: { value: "organization:o1", organizationId: "o1" },
   });
-});
-
-test("a blank organization with several offered is ambiguous", () => {
-  const several = [...offered, option("organization:o2", "Org Dos", "Org Dos")];
-  assert.deepEqual(pickScope(several, "", ""), { kind: "ambiguous" });
-  assert.deepEqual(pickScope(several, "", "Compras"), { kind: "ambiguous" });
-  assert.deepEqual(pickScope(several, "Org Dos", ""), {
-    kind: "found",
-    choice: { value: "organization:o2", organizationId: "o2" },
+  assert.deepEqual(pickGroup(groups, "Nada"), { kind: "missing" });
+  assert.deepEqual(pickGroup(groups, "Sin grupo asignado"), {
+    kind: "missing",
+  });
+  assert.deepEqual(pickGroup([option("group:o1:g1", "Compras")], ""), {
+    kind: "missing",
   });
 });
 
-test("two organizations sharing the wanted label are ambiguous, never the first", () => {
-  const twins = [
-    option("organization:o1", "Acme", "Acme"),
-    option("group:o1:g1", "Compras", "Acme"),
-    option("organization:o2", "Acme", "Acme"),
-    option("group:o2:g2", "Compras", "Acme"),
-  ];
-  assert.deepEqual(pickScope(twins, "Acme", ""), { kind: "ambiguous" });
-  assert.deepEqual(pickScope(twins, "Acme", "Compras"), { kind: "ambiguous" });
-  // One organization with several groups under the same label is not ambiguous.
-  assert.deepEqual(pickScope(offered, "Org Uno", "Compras").kind, "found");
+test("two groups sharing the wanted name are ambiguous, never the first", () => {
+  const twins = [...groups, option("group:o1:g2", "Compras")];
+  assert.deepEqual(pickGroup(twins, "Compras"), { kind: "ambiguous" });
+  assert.deepEqual(pickGroup(twins, "").kind, "found");
 });
 
 test("redact removes every secret and caps the length", () => {

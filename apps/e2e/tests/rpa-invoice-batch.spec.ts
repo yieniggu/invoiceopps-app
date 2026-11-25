@@ -190,12 +190,16 @@ test.describe("RPA invoice batch bot", () => {
         expect(row.result, `${row.row_id} result`).toBe(result);
         if (result === "REJECTED_FIELD")
           expect(row.field, `${row.row_id} field`).toBe(detail);
-        if (result === "REJECTED" || result === "SKIPPED")
+        if (result === "REJECTED" || result === "ERROR" || result === "SKIPPED")
           expect(row.error_code, `${row.row_id} error_code`).toBe(detail);
         if (result.startsWith("CREATED"))
           expect(row.invoice_id, `${row.row_id} invoice_id`).not.toBe("");
         expect(row.finished_at, `${row.row_id} finished_at`).not.toBe("");
-        if (result !== "SKIPPED" && result !== "NOT_PROCESSED")
+        if (
+          result !== "ERROR" &&
+          result !== "SKIPPED" &&
+          result !== "NOT_PROCESSED"
+        )
           expect(
             Number(row.attempts),
             `${row.row_id} attempts`,

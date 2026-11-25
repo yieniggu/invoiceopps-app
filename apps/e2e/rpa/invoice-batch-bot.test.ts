@@ -28,6 +28,9 @@ interface Script {
   /** 1-based fill of the business id that throws (nothing was submitted). */
   failOnFill?: number;
   failure?: Error;
+  /** `<option>`s of the organization / group selects (default: one each). */
+  organizations?: { value: string; text: string }[];
+  groups?: { value: string; text: string }[];
   /** Every submit ends in an «uncertain» failure instead of success. */
   uncertain?: boolean;
   /** `goto` throws from this 1-based call on. */
@@ -48,8 +51,11 @@ function fakePage(script: Script = {}): Page {
   let submits = 0;
   let fills = 0;
   let gotos = 0;
-  const options = [
-    { value: "organization:org-1", text: "Org", organization: "Org" },
+  const organizations = script.organizations ?? [
+    { value: "org-1", text: "Org" },
+  ];
+  const groups = script.groups ?? [
+    { value: "organization:org-1", text: "Sin grupo asignado" },
   ];
   const timeout = () =>
     Object.assign(new Error("Timeout 45000ms exceeded."), {
@@ -71,7 +77,12 @@ function fakePage(script: Script = {}): Page {
           ? (script.fieldError?.message ?? "")
           : "",
       first: () => self,
-      evaluate: async () => (key === ids.scope ? options : []),
+      evaluate: async () =>
+        key === ids.organization
+          ? organizations
+          : key === ids.group
+            ? groups
+            : [],
       count: async () => {
         if (script.fieldError) return key.includes("aria-invalid") ? 1 : 0;
         if (key === ids.created) return script.uncertain ? 0 : 1;
@@ -326,5 +337,37 @@ test("reconciliation compares the row data-* anchors, without any request", asyn
   assert.deepEqual(
     (await lookup({ ...rowAnchors, "data-supplier": null }))?.mismatches,
     ["unverified"],
+  );
+});
+
+test("an unknown or repeated organization or group name is rejected, never guessed", async () => {
+  const bot = options(
+    fakePage({
+      organizations: [
+        { value: "o1", text: "Acme" },
+        { value: "o2", text: "Acme" },
+        { value: "o3", text: "Solo" },
+      ],
+      groups: [
+        { value: "organization:o3", text: "Sin grupo asignado" },
+        { value: "group:o3:g1", text: "Compras" },
+        { value: "group:o3:g2", text: "Compras" },
+      ],
+    }),
+  );
+  const outcomes = await bot.run([
+    { ...row("1"), organization: "Acme" },
+    { ...row("2"), organization: "Nope" },
+    { ...row("3"), organization: "Solo", group: "Compras" },
+    { ...row("4"), organization: "Solo", group: "Nope" },
+  ]);
+  assert.deepEqual(
+    outcomes.map((o) => [o.result, o.errorCode]),
+    [
+      ["ERROR", "ORGANIZATION_AMBIGUOUS"],
+      ["ERROR", "ORGANIZATION_NOT_FOUND"],
+      ["ERROR", "GROUP_AMBIGUOUS"],
+      ["ERROR", "GROUP_NOT_FOUND"],
+    ],
   );
 });

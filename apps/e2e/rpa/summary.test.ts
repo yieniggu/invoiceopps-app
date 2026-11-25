@@ -42,9 +42,9 @@ const rows: Row[] = [
   row({
     row_id: "d05",
     business_id: "RPA-x-005",
-    expected: "SKIPPED:SCOPE_NOT_AVAILABLE",
-    result: "SKIPPED",
-    error_code: "SCOPE_NOT_AVAILABLE",
+    expected: "ERROR:GROUP_NOT_FOUND",
+    result: "ERROR",
+    error_code: "GROUP_NOT_FOUND",
   }),
 ];
 
@@ -76,7 +76,7 @@ test("buildSummary counts results, expectations and persistence", () => {
     CREATED: 2,
     REJECTED_FIELD: 1,
     REJECTED: 1,
-    SKIPPED: 1,
+    ERROR: 1,
   });
   assert.equal(summary.createdCount, 2);
   assert.equal(summary.persistedCount, 2);
@@ -150,7 +150,7 @@ test("renderSummaryMarkdown renders a Spanish table with a mark per row", () => 
   assert.match(markdown, /\| RPA-x-002 \| CREATED \| CREATED \| ✓ \|/);
   assert.match(
     markdown,
-    /\| RPA-x-005 \| SKIPPED:SCOPE_NOT_AVAILABLE \| CREATED \| ✗ \|/,
+    /\| RPA-x-005 \| ERROR:GROUP_NOT_FOUND \| CREATED \| ✗ \|/,
   );
   assert.ok(markdown.includes("Resultado global: ✗"));
 });

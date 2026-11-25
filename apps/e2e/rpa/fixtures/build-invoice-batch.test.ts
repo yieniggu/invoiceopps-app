@@ -20,9 +20,9 @@ async function build(variant: keyof typeof variants) {
   }
 }
 
-test("demo-batch has 10 to 12 rows, none with a fault, each with an expectation", async () => {
+test("demo-batch has 10 to 13 rows, none with a fault, each with an expectation", async () => {
   const rows = await build("demo-batch");
-  assert.ok(rows.length >= 10 && rows.length <= 12, `${rows.length} rows`);
+  assert.ok(rows.length >= 10 && rows.length <= 13, `${rows.length} rows`);
   assert.equal(rows.length, variants["demo-batch"].length);
   for (const row of rows) {
     assert.equal(row.fault, "", `${row.rowId} must not carry a fault`);
@@ -40,7 +40,7 @@ test("demo-batch covers created, rejected, duplicate and unavailable-scope cases
     "REJECTED_FIELD:dueOn",
     "REJECTED_FIELD:businessId",
     "REJECTED:BUSINESS_ID_CONFLICT",
-    "SKIPPED:SCOPE_NOT_AVAILABLE",
+    "ERROR:GROUP_NOT_FOUND",
   ])
     assert.ok(expected.includes(wanted), `missing ${wanted}`);
   assert.ok(rows.some((row) => row.group === "{{GROUP}}"));

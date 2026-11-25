@@ -21,11 +21,12 @@ import {
 } from "./excel.ts";
 import {
   invoiceMismatches,
-  pickScope,
+  pickGroup,
+  pickOrganization,
   redact,
   invoiceFactsFromAttributes,
   type ScopeChoice,
-  type ScopeOption,
+  type SelectOption,
 } from "./matching.ts";
 
 /*
@@ -35,8 +36,9 @@ import {
  * (docs/rpa-selector-contract.md): `getByTestId`, `#id`, `data-*` attributes,
  * `name` and option `value`s. It never matches Spanish UI copy or CSS classes.
  * The one text comparison is the organization/group NAME from the Excel
- * against the `<optgroup label>` / `<option>` text of the scope selector: that
- * is data the person owns, not interface copy. `message` in the output is the
+ * against the `<option>` text of the organization and group selects: that
+ * is data the person owns, not interface copy. Names are not unique in the
+ * database, so a name offered twice is rejected, never guessed. `message` in the output is the
  * UI text kept for humans and logs; no branch reads it.
  */
 
@@ -103,6 +105,10 @@ const SETTLED = [
 
 /** `error_code` when the business id exists but is not the row's invoice. */
 const RECONCILE_MISMATCH = "RECONCILE_MISMATCH";
+
+/** How long a missing scope may still be loading, and how often to re-read. */
+const SCOPE_SETTLE_MS = 5_000;
+const SCOPE_POLL_MS = 200;
 
 export class InvoiceBatchBot {
   private readonly page: Page;
@@ -366,17 +372,22 @@ export class InvoiceBatchBot {
       if (!this.formClean) await this.openForm();
       const pick = await this.resolveScope(row);
       if (pick.kind === "ambiguous")
-        return result("SKIPPED", {
+        return result("ERROR", {
           errorKind: "scope",
-          errorCode: "ORGANIZATION_AMBIGUOUS",
+          errorCode: pick.what,
           message:
-            "The organization is not unique: the row has none and the account is offered several, or several offered organizations share its name.",
+            pick.what === "GROUP_AMBIGUOUS"
+              ? `Ambiguous group: several groups of the organization are named "${row.group}".`
+              : "Ambiguous organization: the row has none and the account is offered several, or several offered organizations share its name.",
         });
       if (pick.kind === "missing")
-        return result("SKIPPED", {
+        return result("ERROR", {
           errorKind: "scope",
-          errorCode: "SCOPE_NOT_AVAILABLE",
-          message: "The organization or group is not offered to this account.",
+          errorCode: pick.what,
+          message:
+            pick.what === "GROUP_NOT_FOUND"
+              ? `Group not found: "${row.group}".`
+              : `Organization not found: "${row.organization}".`,
         });
       const choice = pick.choice;
       this.scopes.set(row.rowId, choice);
@@ -477,21 +488,49 @@ export class InvoiceBatchBot {
     }
   }
 
-  /** The scope option the row asks for (see `pickScope`). */
-  private async resolveScope(row: BotRow) {
-    const options: ScopeOption[] = await this.page
-      .getByTestId(ids.scope)
-      .evaluate((select: HTMLSelectElement) =>
-        Array.from(select.options).map((option) => ({
-          value: option.value,
-          text: option.text.trim(),
-          organization:
-            option.parentElement instanceof HTMLOptGroupElement
-              ? option.parentElement.label.trim()
-              : "",
-        })),
-      );
-    return pickScope(options, row.organization, row.group);
+  /**
+   * The organization, then the group of that organization, the row asks for
+   * (see `pickOrganization`, `pickGroup`). The form adds an organization's
+   * groups once their list loads, so a missing group is only final after that
+   * list had time to arrive.
+   */
+  private async resolveScope(
+    row: BotRow,
+  ): Promise<
+    | { kind: "found"; choice: ScopeChoice }
+    | { kind: "missing"; what: "ORGANIZATION_NOT_FOUND" | "GROUP_NOT_FOUND" }
+    | { kind: "ambiguous"; what: "ORGANIZATION_AMBIGUOUS" | "GROUP_AMBIGUOUS" }
+  > {
+    const organization = pickOrganization(
+      await this.readOptions(ids.organization),
+      row.organization,
+    );
+    if (organization.kind === "ambiguous")
+      return { kind: "ambiguous", what: "ORGANIZATION_AMBIGUOUS" };
+    if (organization.kind === "missing")
+      return { kind: "missing", what: "ORGANIZATION_NOT_FOUND" };
+    await this.page
+      .getByTestId(ids.organization)
+      .selectOption(organization.choice);
+    const deadline = Date.now() + SCOPE_SETTLE_MS;
+    for (;;) {
+      const group = pickGroup(await this.readOptions(ids.group), row.group);
+      if (group.kind === "ambiguous")
+        return { kind: "ambiguous", what: "GROUP_AMBIGUOUS" };
+      if (group.kind === "found") return group;
+      if (Date.now() >= deadline)
+        return { kind: "missing", what: "GROUP_NOT_FOUND" };
+      await this.page.waitForTimeout(SCOPE_POLL_MS);
+    }
+  }
+
+  private async readOptions(id: string): Promise<SelectOption[]> {
+    return this.page.getByTestId(id).evaluate((select: HTMLSelectElement) =>
+      Array.from(select.options).map((option) => ({
+        value: option.value,
+        text: option.text.trim(),
+      })),
+    );
   }
 
   private async statusOffered(status: string): Promise<boolean> {
@@ -506,7 +545,10 @@ export class InvoiceBatchBot {
 
   private async fill(row: BotRow, choice: ScopeChoice): Promise<void> {
     const page = this.page;
-    await page.getByTestId(ids.scope).selectOption(choice.value);
+    await page
+      .getByTestId(ids.organization)
+      .selectOption(choice.organizationId);
+    await page.getByTestId(ids.group).selectOption(choice.value);
     await page.getByTestId(ids.businessId).fill(row.businessId);
     await page.getByTestId(ids.supplierName).fill(row.supplierName);
     await page.getByTestId(ids.amount).fill(row.amountPesos);

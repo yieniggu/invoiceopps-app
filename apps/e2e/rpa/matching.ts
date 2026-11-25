@@ -1,17 +1,16 @@
 /**
- * Pure decisions of the bot and of the demo summary: which scope a row asks
- * for, whether an invoice (read from the page or the API) is the one a row describes, and how to
+ * Pure decisions of the bot and of the demo summary: which organization and
+ * group a row asks for, whether an invoice (read from the page or the API) is the one a row describes, and how to
  * keep credentials out of error messages. No I/O, no Playwright.
  */
 
 import { scopeValue } from "./contract.ts";
 
-/** One `<option>` of the scope selector, as read from the page. */
-export interface ScopeOption {
+/** One `<option>` of the organization or the group select, as read from the page. */
+export interface SelectOption {
+  /** Organization id (organization select) or scope value (group select). */
   value: string;
   text: string;
-  /** Label of its `<optgroup>`, empty when it has none. */
-  organization: string;
 }
 
 export interface ScopeChoice {
@@ -20,51 +19,52 @@ export interface ScopeChoice {
   groupId?: string;
 }
 
-export type ScopePick =
-  | { kind: "found"; choice: ScopeChoice }
-  | { kind: "missing" }
-  /** A blank organization while several are offered, or a label shared by several. */
-  | { kind: "ambiguous" };
+/**
+ * Names are not unique in the database: the same name may be offered twice
+ * (two organizations, or one group name in two groups). A name that matches
+ * more than one option is never resolved by taking the first.
+ */
+export type NamePick<T> =
+  { kind: "found"; choice: T } | { kind: "missing" } | { kind: "ambiguous" };
 
 /**
- * The scope option for a row. Organization and group names are Excel data
- * compared with `<optgroup label>` / `<option>` text; everything else is the
- * option `value`. A blank organization is only resolved when exactly one
- * organization is offered: guessing would create the invoice in the wrong one.
+ * The organization a row asks for, by its exact name (Excel data, not
+ * interface copy). A blank name is only resolved when exactly one organization
+ * is offered: guessing would create the invoice in the wrong one.
  */
-export function pickScope(
-  options: readonly ScopeOption[],
+export function pickOrganization(
+  options: readonly SelectOption[],
   organization: string,
-  group: string,
-): ScopePick {
+): NamePick<string> {
   const wanted = organization.trim();
-  const wantedGroup = group.trim();
-  // Distinct organizations that match: all of them when the row names none,
-  // those under the wanted label otherwise. Two optgroups with the same label
-  // are two organizations; taking the first could create in the wrong one.
-  const candidates = new Set(
-    options.flatMap((option) => {
-      if (wanted !== "" && option.organization !== wanted) return [];
-      const parsed = scopeValue.parse(option.value);
-      return parsed ? [parsed.organizationId] : [];
-    }),
+  const matches = options.filter(
+    (option) => wanted === "" || option.text === wanted,
   );
-  if (candidates.size > 1) return { kind: "ambiguous" };
-  for (const option of options) {
-    if (wanted !== "" && option.organization !== wanted) continue;
+  if (matches.length > 1) return { kind: "ambiguous" };
+  const [only] = matches;
+  return only ? { kind: "found", choice: only.value } : { kind: "missing" };
+}
+
+/**
+ * The group a row asks for among the options of the chosen organization, by
+ * exact name. A blank group is the organization scope (no group assigned).
+ */
+export function pickGroup(
+  options: readonly SelectOption[],
+  group: string,
+): NamePick<ScopeChoice> {
+  const wanted = group.trim();
+  const matches = options.flatMap((option) => {
     const parsed = scopeValue.parse(option.value);
-    if (!parsed) continue;
-    const choice = { value: option.value, ...parsed };
-    if (wantedGroup === "" && parsed.groupId === undefined)
-      return { kind: "found", choice };
-    if (
-      wantedGroup !== "" &&
-      parsed.groupId !== undefined &&
-      option.text === wantedGroup
-    )
-      return { kind: "found", choice };
-  }
-  return { kind: "missing" };
+    if (!parsed) return [];
+    const isOrganization = parsed.groupId === undefined;
+    if (wanted === "" ? !isOrganization : isOrganization) return [];
+    if (wanted !== "" && option.text !== wanted) return [];
+    return [{ value: option.value, ...parsed }];
+  });
+  if (matches.length > 1) return { kind: "ambiguous" };
+  const [only] = matches;
+  return only ? { kind: "found", choice: only } : { kind: "missing" };
 }
 
 /** The facts of an invoice that a reconciliation compares. */

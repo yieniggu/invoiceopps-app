@@ -8,9 +8,9 @@ el bot de Playwright en `apps/e2e/rpa/invoice-batch-bot.ts`.
 ## Demo en un comando
 
 Para mostrar el bot en clase sin armar nada a mano: abre un navegador visible,
-crea una organización de prueba, procesa el Excel `demo-batch.xlsx` (12 filas:
-facturas válidas, campos inválidos, un duplicado y un grupo inexistente, sin
-fallas inyectadas), verifica en la API que cada factura creada existe y deja un
+crea una organización de prueba, procesa el Excel `demo-batch.xlsx` (13 filas:
+facturas válidas, una sin grupo, campos inválidos, un duplicado y un grupo
+inexistente, sin fallas inyectadas), verifica en la API que cada factura creada existe y deja un
 resumen.
 
 Requisitos (una sola vez, desde la raíz del repo):
@@ -88,8 +88,8 @@ En las tablas de abajo se usa la forma CSS; tradúcela con esta tabla.
 | Columna         | Uso                                                                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `row_id`        | identificador de la fila (para el reporte)                                                                               |
-| `organization`  | texto del `<optgroup label>` del select de alcance; vacío = cualquiera                                                   |
-| `group`         | texto del `<option>` del grupo; vacío = alcance de organización                                                          |
+| `organization`  | texto exacto del `<option>` de `#invoice-create-organization`; vacío = solo vale si hay una organización                 |
+| `group`         | texto exacto del `<option>` de `#invoice-create-group`; vacío = «Sin grupo asignado» (alcance de organización)           |
 | `business_id`   | número de factura                                                                                                        |
 | `supplier_name` | proveedor                                                                                                                |
 | `amount_pesos`  | monto en dígitos planos (`12500`). El fixture incluye montos mal formados a propósito (`12500,5`) para probar el rechazo |
@@ -129,7 +129,7 @@ filas siguientes quedan `NOT_PROCESSED`; una fila que cayó antes de pulsar
 (todas las filas ya tienen resultado) también cuenta como lote abortado.
 
 Valores de `result`: `CREATED`, `CREATED_AFTER_RETRY`, `CREATED_RECONCILED`,
-`REJECTED_FIELD`, `REJECTED`, `SKIPPED`, `UNCERTAIN`, `MANUAL_REVIEW`,
+`REJECTED_FIELD`, `REJECTED`, `ERROR`, `SKIPPED`, `UNCERTAIN`, `MANUAL_REVIEW`,
 `NOT_PROCESSED`.
 
 ## 2. Login
@@ -180,25 +180,38 @@ pulsar `#invoice-create-another` tras una creación) y esperar
 
 ### 4.2 Resolver el alcance
 
-Leer las opciones de `#invoice-create-scope` (`name="scope"`). Cada `<option>`
-está dentro de un `<optgroup label="<organización>">`:
+Los nombres de organización y de grupo no son únicos en la base de datos, así
+que cada select se valida antes de elegir:
 
-- `group` vacío → la opción con `value` `organization:<orgId>`.
-- `group` con texto → la opción cuyo texto es el grupo, `value`
-  `group:<orgId>:<groupId>`.
-- Si no hay coincidencia → `SKIPPED`, `error_code=SCOPE_NOT_AVAILABLE`. Siguiente
-  fila.
-- `organization` vacía solo vale si la cuenta ve **una** organización. Si ve
-  varias → `SKIPPED`, `error_code=ORGANIZATION_AMBIGUOUS` (no se adivina cuál).
+El bot TypeScript acepta un `group` en blanco (creación a nivel de organización,
+solo si la cuenta puede crear en la organización); el robot UiPath de la clase
+exige `in_GroupName` y se detiene al comenzar si viene vacío.
 
-JS para listar (Inject JS / Run JavaScript):
+1. Leer las opciones de `#invoice-create-organization` (`name="organization"`;
+   `value` = id de la organización). Contar las que tienen exactamente el texto
+   `organization`:
+   - 0 → `ERROR`, `error_code=ORGANIZATION_NOT_FOUND`. Siguiente fila.
+   - más de 1 → `ERROR`, `error_code=ORGANIZATION_AMBIGUOUS` (no se adivina).
+   - 1 → seleccionarla. `organization` vacía solo vale si la cuenta ve **una**
+     organización; si ve varias es ambigua.
+2. Leer las opciones de `#invoice-create-group` (`name="group"`), que cambian
+   con la organización. Los grupos llegan cuando la API los lista: esperar unos
+   segundos antes de dar un grupo por inexistente.
+   - `group` vacío → la opción `value` `organization:<orgId>` («Sin grupo
+     asignado»).
+   - `group` con texto → las opciones `group:<orgId>:<groupId>` con ese texto
+     exacto: 0 → `ERROR`, `GROUP_NOT_FOUND`; más de 1 → `ERROR`,
+     `GROUP_AMBIGUOUS`; 1 → esa.
+
+JS para listar (Inject JS / Run JavaScript), cambiando el id del select:
 
 ```js
 JSON.stringify(
-  [...document.querySelectorAll("#invoice-create-scope option")].map((o) => ({
+  [...document.querySelectorAll("#invoice-create-group option")].map((o) => ({
     value: o.value,
     text: o.text.trim(),
-    org: o.parentElement.tagName === "OPTGROUP" ? o.parentElement.label : "",
+    organizationId: o.dataset.organizationId,
+    groupId: o.dataset.groupId ?? null,
   })),
 );
 ```
@@ -208,15 +221,16 @@ Si `status` no está entre los `value` de `#invoice-create-business-status` →
 
 ### 4.3 Llenar
 
-| Campo     | Selector                          | `name`           | Valor                              |
-| --------- | --------------------------------- | ---------------- | ---------------------------------- |
-| Alcance   | `#invoice-create-scope`           | `scope`          | `value` de 4.2 (select)            |
-| Número    | `#invoice-create-business-id`     | `businessId`     | `business_id`                      |
-| Proveedor | `#invoice-create-supplier-name`   | `supplierName`   | `supplier_name`                    |
-| Monto     | `#invoice-create-amount`          | `amount`         | `amount_pesos`                     |
-| Estado    | `#invoice-create-business-status` | `businessStatus` | `status` (select; omitir si vacío) |
-| Emisión   | `#invoice-create-issued-on`       | `issuedOn`       | `yyyy-MM-dd`                       |
-| Vence     | `#invoice-create-due-on`          | `dueOn`          | `yyyy-MM-dd`                       |
+| Campo        | Selector                          | `name`           | Valor                              |
+| ------------ | --------------------------------- | ---------------- | ---------------------------------- |
+| Organización | `#invoice-create-organization`    | `organization`   | `value` de 4.2 paso 1 (select)     |
+| Grupo        | `#invoice-create-group`           | `group`          | `value` de 4.2 paso 2 (select)     |
+| Número       | `#invoice-create-business-id`     | `businessId`     | `business_id`                      |
+| Proveedor    | `#invoice-create-supplier-name`   | `supplierName`   | `supplier_name`                    |
+| Monto        | `#invoice-create-amount`          | `amount`         | `amount_pesos`                     |
+| Estado       | `#invoice-create-business-status` | `businessStatus` | `status` (select; omitir si vacío) |
+| Emisión      | `#invoice-create-issued-on`       | `issuedOn`       | `yyyy-MM-dd`                       |
+| Vence        | `#invoice-create-due-on`          | `dueOn`          | `yyyy-MM-dd`                       |
 
 Fecha no ISO en el Excel → dejar el campo vacío; la validación lo reportará.
 
@@ -373,7 +387,8 @@ function setValue(id, value) {
   );
 }
 setValue("invoice-create-issued-on", "2026-10-25");
-setValue("invoice-create-scope", "organization:<orgId>");
+setValue("invoice-create-organization", "<orgId>");
+setValue("invoice-create-group", "organization:<orgId>");
 ```
 
 ## 8. Selectores prohibidos

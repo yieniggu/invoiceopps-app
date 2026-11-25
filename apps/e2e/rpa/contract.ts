@@ -14,7 +14,8 @@ export const ids = {
   loginSubmit: "login-submit",
   loginError: "login-error",
   invoiceForm: "invoice-create-form",
-  scope: "invoice-create-scope",
+  organization: "invoice-create-organization",
+  group: "invoice-create-group",
   businessId: "invoice-create-business-id",
   supplierName: "invoice-create-supplier-name",
   amount: "invoice-create-amount",
@@ -135,7 +136,7 @@ export const css = {
     `[data-testid="${ids.invoicesRow}"][${attrs.businessId}="${cssString(businessId)}"]`,
 } as const;
 
-/** Value prefixes of the scope `<option>`s (`organization:<org>`, `group:<org>:<grp>`). */
+/** Values of the group `<option>`s (the organization `<option>` value is the organization id) (`organization:<org>`, `group:<org>:<grp>`). */
 export const scopeValue = {
   organization: (organizationId: string) => `organization:${organizationId}`,
   group: (organizationId: string, groupId: string) =>
